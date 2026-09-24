@@ -34,11 +34,12 @@ export const useContentInfo = (link: string, providerValue: string) => {
     gcTime: 60 * 60 * 1000, // 1 hour
     retry: 1,
     initialData: () => {
-      const cached =
-        cacheStorage.getString(cacheKey) || cacheStorage.getString(link);
+      const cached = cacheStorage.getString(cacheKey);
       if (cached) {
         try {
-          return JSON.parse(cached);
+          const info = JSON.parse(cached);
+          // Older builds could cache hero metadata here, which has no links.
+          return Array.isArray(info?.linkList) ? info : undefined;
         } catch {
           return undefined;
         }
