@@ -38,7 +38,7 @@ const useThemeStore = create<Theme>()(
       },
     }),
     {
-      name: 'content-storage',
+      name: 'theme-storage',
       //@ts-expect-error
       storage: createJSONStorage(() => storage),
     },
