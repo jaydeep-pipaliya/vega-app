@@ -131,6 +131,15 @@ const parseM3U8Playlist = async (
 
       if (line.includes('#EXT-X-ENDLIST')) {
         isLive = false;
+      } else if (line.startsWith('#EXT-X-KEY:')) {
+        // Segments are joined as raw bytes, so encrypted or byte range
+        // playlists would save a file that cannot be played.
+        const method = line.match(/METHOD=([^,\s]+)/)?.[1];
+        if (method && method !== 'NONE') {
+          throw new Error(`Encrypted HLS (${method}) cannot be downloaded`);
+        }
+      } else if (line.startsWith('#EXT-X-BYTERANGE')) {
+        throw new Error('HLS byte range playlists cannot be downloaded');
       } else if (line.includes('#EXT-X-MAP:')) {
         const uriMatch = line.match(/URI=["']?([^"']+)["']?/);
         if (uriMatch && uriMatch[1]) {
