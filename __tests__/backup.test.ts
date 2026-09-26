@@ -76,6 +76,7 @@ describe('backup', () => {
 
   it('includes only saved settings and skips device specific ones', () => {
     mockValues.set('hapticFeedback', false);
+    mockValues.set('useExternalPlayer', true);
     mockValues.set('subtitleFontSize', 20);
     mockValues.set('excludedQualities', ['480p']);
     mockValues.set('downloadLocation', 'content://tree/primary');
@@ -87,6 +88,7 @@ describe('backup', () => {
     expect(backup.version).toBe(BACKUP_VERSION);
     expect(backup.settings).toEqual({
       hapticFeedback: false,
+      useExternalPlayer: true,
       subtitleFontSize: 20,
       excludedQualities: ['480p'],
     });
@@ -101,6 +103,7 @@ describe('backup', () => {
     mockValues.set('providerModules', [
       {value: 'vega', version: '1.0.0', modules: {posts: 'code'}, cachedAt: 1},
     ]);
+    mockValues.set('disabledProviders', ['other']);
     mockContentState.provider = provider;
 
     const backup = parseBackup(JSON.stringify(createBackup()));
@@ -113,6 +116,7 @@ describe('backup', () => {
     expect(mockValues.get('installedProviders')).toEqual([provider]);
     expect(mockValues.get('providerSources')).toHaveLength(1);
     expect(mockValues.get('providerModules')).toHaveLength(1);
+    expect(mockValues.get('disabledProviders')).toEqual(['other']);
     expect(mockContentState.setInstalledProviders).toHaveBeenCalledWith([
       provider,
     ]);
@@ -142,6 +146,24 @@ describe('backup', () => {
     expect(mockValues.has('somethingElse')).toBe(false);
   });
 
+  it('skips providers missing fields the UI needs', () => {
+    const withoutType = {...provider, type: undefined};
+
+    restoreBackup({
+      app: 'vega',
+      version: BACKUP_VERSION,
+      createdAt: '',
+      settings: {},
+      providers: {
+        installed: [provider, withoutType as any],
+        sources: [],
+        modules: [],
+      },
+    });
+
+    expect(mockValues.get('installedProviders')).toEqual([provider]);
+  });
+
   it('rejects files that are not a Vega backup', () => {
     expect(() => parseBackup('not json')).toThrow('not a Vega backup');
     expect(() => parseBackup('{"app":"other","version":1}')).toThrow(
@@ -150,5 +172,8 @@ describe('backup', () => {
     expect(() =>
       parseBackup(JSON.stringify({app: 'vega', version: BACKUP_VERSION + 1})),
     ).toThrow('newer version');
+    expect(() =>
+      parseBackup(JSON.stringify({app: 'vega', version: BACKUP_VERSION})),
+    ).toThrow('incomplete');
   });
 });

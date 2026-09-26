@@ -2,6 +2,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import {mainStorage} from './storage/StorageService';
 import {SettingsKeys, settingsStorage} from './storage/SettingsStorage';
+import {ProvidersKeys} from './storage/ProvidersStorage';
 import {
   ExtensionKeys,
   type ProviderExtension,
@@ -18,7 +19,7 @@ type SettingType = 'bool' | 'string' | 'number' | 'array';
 // Download location and launcher icon are left out because they point to
 // device state (a folder permission and an activity alias) that a restore
 // cannot bring back.
-const BACKUP_SETTINGS: Partial<Record<SettingsKeys, SettingType>> = {
+const BACKUP_SETTINGS: Record<string, SettingType> = {
   [SettingsKeys.PRIMARY_COLOR]: 'string',
   [SettingsKeys.IS_CUSTOM_THEME]: 'bool',
   [SettingsKeys.SHOW_TAB_BAR_LABELS]: 'bool',
@@ -57,6 +58,11 @@ const BACKUP_SETTINGS: Partial<Record<SettingsKeys, SettingType>> = {
   [SettingsKeys.BYEDPI_ENABLED]: 'bool',
   [SettingsKeys.BYEDPI_CMD_ARGS]: 'string',
   [SettingsKeys.SKIP_IN_APP_WEBVIEW]: 'bool',
+  // Saved by the Preferences screen without a SettingsKeys entry.
+  disableDrawer: 'bool',
+  showRecentlyWatched: 'bool',
+  useExternalPlayer: 'bool',
+  alwaysExternalDownloader: 'bool',
 };
 
 type SettingValue = boolean | string | number | string[];
@@ -70,6 +76,7 @@ export interface VegaBackup {
     installed: ProviderExtension[];
     sources: ProviderSource[];
     modules: ProviderModule[];
+    disabled?: string[];
     selected?: ProviderExtension;
   };
 }
@@ -96,9 +103,7 @@ const isValidSetting = (value: unknown, type: SettingType) => {
     case 'number':
       return typeof value === 'number' && Number.isFinite(value);
     case 'array':
-      return (
-        Array.isArray(value) && value.every(item => typeof item === 'string')
-      );
+      return isStringArray(value);
   }
 };
 
@@ -119,9 +124,20 @@ const writeSetting = (key: string, type: SettingType, value: SettingValue) => {
   }
 };
 
-const isProvider = (value: unknown): value is ProviderExtension =>
-  typeof (value as ProviderExtension)?.value === 'string' &&
-  typeof (value as ProviderExtension)?.display_name === 'string';
+const isProvider = (value: unknown): value is ProviderExtension => {
+  const provider = value as ProviderExtension;
+  return (
+    typeof provider?.value === 'string' &&
+    typeof provider.display_name === 'string' &&
+    typeof provider.type === 'string' &&
+    typeof provider.version === 'string' &&
+    typeof provider.source?.author === 'string' &&
+    typeof provider.source?.url === 'string'
+  );
+};
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every(item => typeof item === 'string');
 
 const isProviderModule = (value: unknown): value is ProviderModule =>
   typeof (value as ProviderModule)?.value === 'string' &&
@@ -163,6 +179,7 @@ export const createBackup = (): VegaBackup => {
       modules:
         mainStorage.getArray<ProviderModule>(ExtensionKeys.PROVIDER_MODULES) ||
         [],
+      disabled: mainStorage.getArray<string>(ProvidersKeys.DISABLED_PROVIDERS),
       selected: selected?.value ? selected : undefined,
     },
   };
@@ -180,6 +197,17 @@ export const parseBackup = (text: string): VegaBackup => {
   }
   if (data.version > BACKUP_VERSION) {
     throw new Error('This backup was made by a newer version of Vega');
+  }
+  const {settings, providers} = data;
+  if (
+    !settings ||
+    typeof settings !== 'object' ||
+    Array.isArray(settings) ||
+    !Array.isArray(providers?.installed) ||
+    !Array.isArray(providers.sources) ||
+    !Array.isArray(providers.modules)
+  ) {
+    throw new Error('This backup file is incomplete');
   }
   return data;
 };
@@ -201,7 +229,8 @@ export const restoreBackup = (backup: VegaBackup): void => {
     source: settingsStorage.getAccentSource(),
   });
 
-  const {installed, sources, modules, selected} = backup.providers || {};
+  const {installed, sources, modules, disabled, selected} =
+    backup.providers || {};
   if (Array.isArray(installed)) {
     const providers = installed.filter(isProvider);
     mainStorage.setArray(ExtensionKeys.INSTALLED_PROVIDERS, providers);
@@ -218,6 +247,9 @@ export const restoreBackup = (backup: VegaBackup): void => {
       ExtensionKeys.PROVIDER_MODULES,
       modules.filter(isProviderModule),
     );
+  }
+  if (isStringArray(disabled)) {
+    mainStorage.setArray(ProvidersKeys.DISABLED_PROVIDERS, disabled);
   }
   if (isProvider(selected)) {
     useContentStore.getState().setProvider(selected);
@@ -242,7 +274,7 @@ export const exportBackup = async (): Promise<boolean> => {
     getBackupFileName(),
     'application/json',
   );
-  await FileSystem.writeAsStringAsync(
+  await FileSystem.StorageAccessFramework.writeAsStringAsync(
     fileUri,
     JSON.stringify(createBackup(), null, 2),
   );
