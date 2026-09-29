@@ -59,6 +59,7 @@ export const PlayPause = ({
             name={paused ? 'play-arrow' : 'pause'}
             size={70}
             color="rgba(255,255,255,0.94)"
+            style={Platform.isTV && paused ? {marginLeft: 4} : undefined}
           />
         )}
       </Control>

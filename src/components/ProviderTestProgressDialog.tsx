@@ -8,6 +8,8 @@ import type {
 import {useM3Colors} from '../theme/M3PaletteContext';
 import {readableOnColor} from '../theme/seeds';
 import MaterialDialogSurface from './ui/MaterialDialogSurface';
+import {TVFocusable} from './tv';
+import {isTV} from '../lib/tv';
 
 export type ProviderTestStepStatus =
   | 'pending'
@@ -149,18 +151,36 @@ const ProviderTestProgressDialog = ({
       )}
 
       {isFinished && (
-        <TouchableOpacity
+        isTV ? (
+        <TVFocusable
+          hasTVPreferredFocus
+          accessibilityRole="button"
+          accessibilityLabel="Done"
           testID="close-provider-test-progress"
-          className="mt-5 items-center px-4 py-3"
           style={{
             backgroundColor: colors.primary,
             borderRadius: 18,
+            marginTop: 20,
+            alignItems: 'center',
+            paddingHorizontal: 16,
+            paddingVertical: 12,
           }}
           onPress={onClose}>
           <Text className="font-semibold" style={{color: primaryContentColor}}>
             Done
           </Text>
-        </TouchableOpacity>
+        </TVFocusable>
+        ) : (
+          <TouchableOpacity
+            testID="close-provider-test-progress"
+            className="mt-5 items-center px-4 py-3"
+            style={{backgroundColor: colors.primary, borderRadius: 18}}
+            onPress={onClose}>
+            <Text className="font-semibold" style={{color: primaryContentColor}}>
+              Done
+            </Text>
+          </TouchableOpacity>
+        )
       )}
     </MaterialDialogSurface>
   );

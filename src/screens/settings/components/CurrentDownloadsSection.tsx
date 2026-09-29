@@ -13,7 +13,15 @@ import useDownloadsStore, {
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import CurrentDownloadRow from './CurrentDownloadRow';
 
-const CurrentDownloadsSection = ({primary}: {primary: string}) => {
+const CurrentDownloadsSection = ({
+  primary,
+  firstActionRef,
+  onFirstActionLayout,
+}: {
+  primary: string;
+  firstActionRef?: React.RefObject<View | null>;
+  onFirstActionLayout?: () => void;
+}) => {
   const colors = useM3Colors();
   const downloads = useDownloadsStore(selectCurrentDownloads);
 
@@ -42,11 +50,13 @@ const CurrentDownloadsSection = ({primary}: {primary: string}) => {
           </Text>
         </View>
       </View>
-      {downloads.map(item => (
+      {downloads.map((item, index) => (
         <CurrentDownloadRow
           key={item.id}
           item={item}
           primary={primary}
+          firstActionRef={index === 0 ? firstActionRef : undefined}
+          onFirstActionLayout={index === 0 ? onFirstActionLayout : undefined}
           onCancel={() => cancelDownload(item.id).catch(console.error)}
           onPause={() => pauseDownload(item.id).catch(console.error)}
           onResume={() => resumeDownload(item.id).catch(console.error)}

@@ -9,6 +9,8 @@ import {syncFromSharedFolder} from '../../../lib/sync/syncService';
 import IconButton from '../../../components/ui/IconButton';
 import SettingsRow from '../../../components/ui/SettingsRow';
 import SettingsSection from '../../../components/ui/SettingsSection';
+import {isTV} from '../../../lib/tv';
+import {getTVDefaultDownloadLocation} from '../../../lib/downloadLocation';
 
 type DownloadLocationPreferenceProps = {
   primary: string;
@@ -48,10 +50,20 @@ const DownloadLocationPreference = ({
         return;
       }
 
-      ToastAndroid.show('No folder selected', ToastAndroid.SHORT);
+      ToastAndroid.show(
+        isTV
+          ? 'Install a TV file manager with a folder picker to change the location'
+          : 'No folder selected',
+        ToastAndroid.LONG,
+      );
     } catch (error) {
       console.log('Error picking download folder:', error);
-      ToastAndroid.show('Unable to open folder picker', ToastAndroid.SHORT);
+      ToastAndroid.show(
+        isTV
+          ? 'Install a TV file manager with a folder picker to change the location'
+          : 'Unable to open folder picker',
+        ToastAndroid.LONG,
+      );
     } finally {
       setIsPickingFolder(false);
     }
@@ -64,33 +76,24 @@ const DownloadLocationPreference = ({
           title="Download location"
           description={downloadLocation}
           divider
-          trailing={
-            <IconButton
-              icon="folder-open-outline"
-              label="Choose download location"
-              disabled={isPickingFolder}
-              onPress={pickDownloadLocation}
-            />
-          }
+          icon="folder-open-outline"
+          onPress={pickDownloadLocation}
         />
         <SettingsRow
           title="Reset download location"
-          description="Choose a folder again on the next download"
+          description={isTV ? 'Use Vega app storage' : 'Choose a folder again on the next download'}
           divider={false}
-          trailing={
-            <IconButton
-              icon="restore"
-              label="Reset download location"
-              onPress={() => {
-                settingsStorage.resetDownloadLocation();
-                setDownloadLocation('Select a download folder');
-                ToastAndroid.show(
-                  'Download location cleared',
-                  ToastAndroid.SHORT,
-                );
-              }}
-            />
-          }
+          icon="restore"
+          onPress={() => {
+            settingsStorage.resetDownloadLocation();
+            setDownloadLocation(
+              isTV ? getTVDefaultDownloadLocation().label! : 'Select a download folder',
+            );
+            ToastAndroid.show(
+              'Download location cleared',
+              ToastAndroid.SHORT,
+            );
+          }}
         />
       </SettingsSection>
     </View>

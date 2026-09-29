@@ -1,4 +1,4 @@
-import {View, Text, StatusBar, TouchableOpacity} from 'react-native';
+import {View, Text, StatusBar, TouchableOpacity, UIManager, findNodeHandle} from 'react-native';
 import React from 'react';
 import {useState} from 'react';
 import useContentStore from '../lib/zustand/contentStore';
@@ -14,6 +14,8 @@ import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import {RootStackParamList} from '../App';
 import {useM3Colors} from '../theme/M3PaletteContext';
 import * as DocumentPicker from 'expo-document-picker';
+import {TVFocusable} from './tv';
+import {isTV} from '../lib/tv/constants';
 
 const Tutorial = () => {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
@@ -21,7 +23,29 @@ const Tutorial = () => {
   const {provider: currentProvider, installedProviders} = useContentStore(
     state => state,
   );
-  const [showTutorial, setShowTutorial] = useState<boolean>(!currentProvider);
+  const hasNoProvider =
+    !currentProvider ||
+    !currentProvider.value ||
+    !installedProviders ||
+    installedProviders.length === 0;
+  const [showTutorial, setShowTutorial] = useState<boolean>(hasNoProvider);
+  const installButtonRef = React.useRef<View>(null);
+
+  // A fresh TV install can leave native focus on the full-screen React root.
+  // Request focus after the tutorial button has mounted so the first D-pad
+  // press starts from a real control.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!isTV || !showTutorial) return;
+      const timer = setTimeout(() => {
+        const handle = findNodeHandle(installButtonRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+      }, 450);
+      return () => clearTimeout(timer);
+    }, [showTutorial]),
+  );
 
   // Handle default provider setup
   React.useEffect(() => {
@@ -59,12 +83,16 @@ const Tutorial = () => {
       });
     }
 
-    navigation.navigate('TabStack', {
-      screen: 'SettingsStack',
-      params: {
+    const parentNav = navigation.getParent();
+    if (parentNav) {
+      (parentNav as any).navigate('SettingsStack', {
         screen: 'Extensions',
-      },
-    });
+      });
+    } else {
+      (navigation as any).navigate('SettingsStack', {
+        screen: 'Extensions',
+      });
+    }
   };
 
   const handlePlayLocalFile = async () => {
@@ -97,8 +125,15 @@ const Tutorial = () => {
 
   return showTutorial ? (
     <View
-      style={{backgroundColor: colors.background}}
-      className="absolute inset-0 z-50 justify-center items-center w-full h-full">
+      style={{
+        flex: 1,
+        width: '100%',
+        height: '100%',
+        backgroundColor: colors.background || '#121212',
+        justifyContent: 'center',
+        alignItems: 'center',
+      }}
+      className="z-50">
       <Animated.View
         entering={FadeInRight.duration(500)}
         className="rounded-2xl p-6 w-full max-w-sm items-center">
@@ -129,48 +164,63 @@ const Tutorial = () => {
           Connect your cloud provider to play network streams or play local
           content.
         </Text>
-        <TouchableOpacity
+        <TVFocusable
+          ref={installButtonRef}
           onPress={handleGoToExtensions}
-          className="px-6 py-3 rounded-xl w-full flex-row items-center justify-center"
-          style={{backgroundColor: colors.primary}}>
-          <MaterialCommunityIcons
-            name="download"
-            size={20}
-            color={colors.onPrimary}
-          />
-          <Text
-            style={{
-              color: colors.onPrimary,
-              fontSize: 16,
-              fontWeight: '600',
-              marginLeft: 8,
-            }}>
-            Install Cloud Providers
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+          hasTVPreferredFocus={true}
+          accessibilityLabel="Install Cloud Providers"
+          accessibilityRole="button"
+          borderRadius={12}
+          focusBorderColor={colors.onPrimary}
+          style={{width: '100%'}}>
+          <View
+            className="px-6 py-3 rounded-xl w-full flex-row items-center justify-center"
+            style={{backgroundColor: colors.primary}}>
+            <MaterialCommunityIcons
+              name="download"
+              size={20}
+              color={colors.onPrimary}
+            />
+            <Text
+              style={{
+                color: colors.onPrimary,
+                fontSize: 16,
+                fontWeight: '600',
+                marginLeft: 8,
+              }}>
+              Install Cloud Providers
+            </Text>
+          </View>
+        </TVFocusable>
+        <TVFocusable
           onPress={handlePlayLocalFile}
-          className="px-6 py-3 rounded-xl w-full flex-row items-center justify-center mt-3"
-          style={{
-            backgroundColor: colors.secondaryContainer,
-            borderColor: colors.outline,
-            borderWidth: 1,
-          }}>
-          <MaterialCommunityIcons
-            name="play-circle-outline"
-            size={20}
-            color={colors.onSecondaryContainer}
-          />
-          <Text
+          accessibilityLabel="Play local file"
+          accessibilityRole="button"
+          borderRadius={12}
+          style={{width: '100%', marginTop: 12}}>
+          <View
+            className="px-6 py-3 rounded-xl w-full flex-row items-center justify-center"
             style={{
-              color: colors.onSecondaryContainer,
-              fontSize: 16,
-              fontWeight: '600',
-              marginLeft: 8,
+              backgroundColor: colors.secondaryContainer,
+              borderColor: colors.outline,
+              borderWidth: 1,
             }}>
-            Play local file
-          </Text>
-        </TouchableOpacity>
+            <MaterialCommunityIcons
+              name="play-circle-outline"
+              size={20}
+              color={colors.onSecondaryContainer}
+            />
+            <Text
+              style={{
+                color: colors.onSecondaryContainer,
+                fontSize: 16,
+                fontWeight: '600',
+                marginLeft: 8,
+              }}>
+              Play local file
+            </Text>
+          </View>
+        </TVFocusable>
       </Animated.View>
     </View>
   ) : null;

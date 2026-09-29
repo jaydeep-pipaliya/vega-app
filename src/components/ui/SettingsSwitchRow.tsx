@@ -1,6 +1,8 @@
-import React from 'react';
-import {Switch, View} from 'react-native';
+import React, {useCallback, useRef, useState} from 'react';
+import {findNodeHandle, Pressable, Switch, View} from 'react-native';
 import {useM3Colors} from '../../theme/M3PaletteContext';
+import {isTV} from '../../lib/tv';
+import {TVFocusable} from '../tv';
 import AppText from './Text';
 
 interface SettingsSwitchRowProps {
@@ -9,23 +11,43 @@ interface SettingsSwitchRowProps {
   value: boolean;
   onValueChange: (value: boolean) => void;
   divider?: boolean;
+  nextFocusUp?: number | null;
 }
 
-const SettingsSwitchRow = ({
+const SettingsSwitchRow = React.forwardRef<View, SettingsSwitchRowProps>(({
   title,
   description,
   value,
   onValueChange,
   divider = true,
-}: SettingsSwitchRowProps) => {
+  nextFocusUp,
+}: SettingsSwitchRowProps, forwardedRef) => {
   const colors = useM3Colors();
+  const rowRef = useRef<View>(null);
+  const [rowHandle, setRowHandle] = useState<number | null>(null);
+  const setRefs = useCallback((node: View | null) => {
+    rowRef.current = node;
+    if (typeof forwardedRef === 'function') forwardedRef(node);
+    else if (forwardedRef) forwardedRef.current = node;
+  }, [forwardedRef]);
 
-  return (
+  const onLayout = useCallback(() => {
+    if (rowRef.current) {
+      setRowHandle(findNodeHandle(rowRef.current));
+    }
+  }, []);
+
+  const renderContent = (isFocused: boolean) => (
     <View
       className="min-h-16 flex-row items-center px-4 py-3"
       style={{
-        borderBottomColor: colors.outlineVariant,
+        backgroundColor: isFocused
+          ? colors.surfaceContainerHighest
+          : 'transparent',
+        borderRadius: isFocused ? 12 : 0,
+        borderBottomColor: divider ? colors.outlineVariant : 'transparent',
         borderBottomWidth: divider ? 1 : 0,
+        width: '100%',
       }}>
       <View className="mr-4 flex-1">
         <AppText role="bodyLarge" style={{color: colors.onSurface}}>
@@ -42,7 +64,11 @@ const SettingsSwitchRow = ({
       <Switch
         accessibilityLabel={title}
         value={value}
-        onValueChange={onValueChange}
+        disabled={isTV}
+        focusable={false}
+        pointerEvents={isTV ? 'none' : 'auto'}
+        importantForAccessibility={isTV ? 'no' : 'auto'}
+        onValueChange={isTV ? undefined : onValueChange}
         thumbColor={value ? colors.onPrimary : colors.outline}
         trackColor={{
           false: colors.surfaceContainerHighest,
@@ -51,6 +77,38 @@ const SettingsSwitchRow = ({
       />
     </View>
   );
-};
 
-export default SettingsSwitchRow;
+  if (isTV) {
+    return (
+      <TVFocusable
+        ref={setRefs}
+        onLayout={onLayout}
+        onPress={() => onValueChange(!value)}
+        nextFocusRight={rowHandle}
+        nextFocusUp={nextFocusUp}
+        focusScale={1.02}
+        borderRadius={12}
+        accessibilityRole="switch"
+        accessibilityState={{checked: value}}
+        accessibilityLabel={title}
+        style={{width: '100%'}}>
+        {({focused}) => renderContent(focused)}
+      </TVFocusable>
+    );
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{checked: value}}
+      accessibilityLabel={title}
+      onPress={() => onValueChange(!value)}
+      style={({pressed}) => ({
+        opacity: pressed ? 0.8 : 1,
+      })}>
+      {renderContent(false)}
+    </Pressable>
+  );
+});
+
+export default React.memo(SettingsSwitchRow);

@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {Linking, TouchableOpacity, View} from 'react-native';
+import {Linking, Pressable, View, findNodeHandle} from 'react-native';
 import {AntDesign, Feather, MaterialCommunityIcons} from '@expo/vector-icons';
 import Animated, {
   FadeIn,
@@ -14,6 +14,8 @@ import Animated, {
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import {socialLinks} from '../../../lib/constants';
 import {settingsStorage} from '../../../lib/storage';
+import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
+import {isTV} from '../../../lib/tv';
 
 const sparklePositions = [
   {top: 3, left: 18},
@@ -27,6 +29,7 @@ interface GitHubStarButtonProps {
 }
 
 const GitHubStarButton = ({primary}: GitHubStarButtonProps) => {
+  const focusBorderColor = useTVFocusBorderColor(primary);
   const [celebrating, setCelebrating] = useState(false);
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({
@@ -57,8 +60,28 @@ const GitHubStarButton = ({primary}: GitHubStarButtonProps) => {
     setCelebrating(false);
   };
 
+  const [isFocused, setIsFocused] = useState(false);
+  const buttonRef = React.useRef<View>(null);
+  const [buttonHandle, setButtonHandle] = useState<number | null>(null);
+
   return (
-    <TouchableOpacity activeOpacity={0.85} onPress={openGitHub}>
+    <Pressable
+      ref={buttonRef as any}
+      onLayout={() => setButtonHandle(findNodeHandle(buttonRef.current))}
+      nextFocusDown={isTV ? buttonHandle ?? undefined : undefined}
+      accessibilityRole="button"
+      accessibilityLabel="Star Vega on GitHub"
+      focusable={isTV ? true : undefined}
+      isTVSelectable={isTV ? true : undefined}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
+      onPress={openGitHub}
+      style={({pressed}) => ({
+        borderColor: isTV && isFocused ? focusBorderColor : 'transparent',
+        borderWidth: isTV && isFocused ? 2 : 0,
+        borderRadius: 16,
+        transform: [{scale: isTV && isFocused ? 1.03 : pressed ? 0.96 : 1}],
+      })}>
       <Animated.View
         className="flex-row items-center justify-between p-4"
         style={animatedStyle}>
@@ -89,7 +112,7 @@ const GitHubStarButton = ({primary}: GitHubStarButtonProps) => {
         </View>
         <Feather name="external-link" size={20} color="gray" />
       </Animated.View>
-    </TouchableOpacity>
+    </Pressable>
   );
 };
 

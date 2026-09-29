@@ -4,8 +4,9 @@ import {
   TouchableOpacity,
   Modal,
   Pressable,
+  BackHandler,
 } from 'react-native';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { startActivityAsync, ActivityAction } from 'expo-intent-launcher';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -16,6 +17,8 @@ import SettingsSliderRow from '../../components/ui/SettingsSliderRow';
 import SettingsSection from '../../components/ui/SettingsSection';
 import AppText from '../../components/ui/Text';
 import { useM3Colors } from '../../theme/M3PaletteContext';
+import { TVFocusable, TVFocusGuide } from '../../components/tv';
+import { isTV } from '../../lib/tv';
 
 const FONT_OPTIONS = [
   { id: 'default', name: 'Default (System)', fontFam: undefined },
@@ -74,7 +77,7 @@ const EDGE_COLOR_OPTIONS = [
   { color: '#FFFF00', name: 'Yellow' },
 ] as const;
 
-const SubtitlePreference = () => {
+const SubtitlePreference = ({navigation}: any) => {
   const colors = useM3Colors();
 
   const [fontSize, setFontSize] = useState(
@@ -107,6 +110,36 @@ const SubtitlePreference = () => {
   const [colorModalVisible, setColorModalVisible] = useState(false);
   const [edgeModalVisible, setEdgeModalVisible] = useState(false);
   const [edgeColorModalVisible, setEdgeColorModalVisible] = useState(false);
+
+  useEffect(() => {
+    if (!isTV) {
+      return;
+    }
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (fontModalVisible) {
+        setFontModalVisible(false);
+        return true;
+      }
+      if (colorModalVisible) {
+        setColorModalVisible(false);
+        return true;
+      }
+      if (edgeModalVisible) {
+        setEdgeModalVisible(false);
+        return true;
+      }
+      if (edgeColorModalVisible) {
+        setEdgeColorModalVisible(false);
+        return true;
+      }
+      if (navigation?.canGoBack?.()) {
+        navigation.goBack();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [fontModalVisible, colorModalVisible, edgeModalVisible, edgeColorModalVisible, navigation]);
 
   const handleSelectFont = (fontId: string) => {
     settingsStorage.setSubtitleFontFamily(fontId);
@@ -197,16 +230,40 @@ const SubtitlePreference = () => {
   }
 
   return (
-    <ScrollView
-      className="h-full w-full bg-m3-background"
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 40, paddingTop: 20 }}>
-      <View className="px-5">
-        <AppText
-          role="headlineLargeEmphasized"
-          className="text-m3-on-background">
-          Subtitle Preferences
-        </AppText>
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusDown={true} style={{flex: 1}}>
+      <ScrollView
+        focusable={false}
+        accessible={false}
+        className="h-full w-full bg-m3-background"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 40, paddingTop: 20 }}>
+        <View className="px-5">
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12}}>
+            <TVFocusable
+              hasTVPreferredFocus={isTV}
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              onPress={() => navigation.goBack()}
+              borderRadius={22}
+              style={{
+                alignItems: 'center',
+                height: 44,
+                justifyContent: 'center',
+                marginRight: 10,
+                width: 44,
+              }}>
+              <MaterialCommunityIcons
+                name="arrow-left"
+                size={28}
+                color={colors.onBackground}
+              />
+            </TVFocusable>
+            <AppText
+              role="headlineLargeEmphasized"
+              className="text-m3-on-background">
+              Subtitle Preferences
+            </AppText>
+          </View>
         <AppText
           role="bodyLarge"
           className="mb-5 mt-1 text-m3-on-surface-variant">
@@ -271,8 +328,9 @@ const SubtitlePreference = () => {
               </View>
 
               {/* Background Theme Switcher */}
-              <TouchableOpacity
-                activeOpacity={0.7}
+              <TVFocusable
+                accessibilityRole="button"
+                accessibilityLabel={previewBg === 'dark' ? 'Switch to light background preview' : 'Switch to dark background preview'}
                 onPress={() => {
                   if (settingsStorage.isHapticFeedbackEnabled()) {
                     ReactNativeHapticFeedback.trigger('effectTick', {
@@ -282,6 +340,8 @@ const SubtitlePreference = () => {
                   }
                   setPreviewBg(prev => (prev === 'dark' ? 'light' : 'dark'));
                 }}
+                borderRadius={20}
+                focusScale={1.05}
                 style={{
                   flexDirection: 'row',
                   alignItems: 'center',
@@ -316,7 +376,7 @@ const SubtitlePreference = () => {
                   }}>
                   {previewBg === 'dark' ? 'White BG' : 'Dark BG'}
                 </AppText>
-              </TouchableOpacity>
+              </TVFocusable>
             </View>
           </View>
 
@@ -499,49 +559,63 @@ const SubtitlePreference = () => {
         animationType="fade"
         onRequestClose={() => setFontModalVisible(false)}>
         <Pressable
+          focusable={false}
+          accessible={false}
           className="flex-1 justify-center items-center bg-black/60 px-5"
           onPress={() => setFontModalVisible(false)}>
-          <Pressable
-            className="w-full max-w-sm rounded-3xl p-5"
-            style={{ backgroundColor: colors.surfaceContainerHigh }}
-            onPress={e => e.stopPropagation()}>
-            <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
-              Select Font Style
-            </AppText>
-            {FONT_OPTIONS.map(opt => {
-              const selected = opt.id === fontFamily;
-              return (
-                <TouchableOpacity
-                  key={opt.id}
-                  activeOpacity={0.7}
-                  className="flex-row items-center justify-between py-3 px-3 rounded-2xl mb-1"
-                  style={{
-                    backgroundColor: selected
-                      ? colors.secondaryContainer
-                      : 'transparent',
-                  }}
-                  onPress={() => handleSelectFont(opt.id)}>
-                  <AppText
+          <TVFocusGuide autoFocus={true} trapFocusRight={true}>
+            <Pressable
+              focusable={false}
+              className="w-full max-w-sm rounded-3xl p-5"
+              style={{ backgroundColor: colors.surfaceContainerHigh }}
+              onPress={e => e.stopPropagation()}>
+              <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
+                Select Font Style
+              </AppText>
+              {FONT_OPTIONS.map(opt => {
+                const selected = opt.id === fontFamily;
+                return (
+                  <TVFocusable
+                    key={opt.id}
+                    hasTVPreferredFocus={isTV && selected}
+                    borderRadius={16}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt.name}
                     style={{
-                      fontFamily: opt.fontFam,
-                      fontSize: 16,
-                      color: selected
-                        ? colors.onSecondaryContainer
-                        : colors.onSurface,
-                    }}>
-                    {opt.name}
-                  </AppText>
-                  {selected && (
-                    <MaterialIcons
-                      name="check"
-                      size={20}
-                      color={colors.onSecondaryContainer}
-                    />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 16,
+                      marginBottom: 4,
+                      backgroundColor: selected
+                        ? colors.secondaryContainer
+                        : 'transparent',
+                    }}
+                    onPress={() => handleSelectFont(opt.id)}>
+                    <AppText
+                      style={{
+                        fontFamily: opt.fontFam,
+                        fontSize: 16,
+                        color: selected
+                          ? colors.onSecondaryContainer
+                          : colors.onSurface,
+                      }}>
+                      {opt.name}
+                    </AppText>
+                    {selected && (
+                      <MaterialIcons
+                        name="check"
+                        size={20}
+                        color={colors.onSecondaryContainer}
+                      />
+                    )}
+                  </TVFocusable>
+                );
+              })}
+            </Pressable>
+          </TVFocusGuide>
         </Pressable>
       </Modal>
 
@@ -552,61 +626,75 @@ const SubtitlePreference = () => {
         animationType="fade"
         onRequestClose={() => setColorModalVisible(false)}>
         <Pressable
+          focusable={false}
+          accessible={false}
           className="flex-1 justify-center items-center bg-black/60 px-5"
           onPress={() => setColorModalVisible(false)}>
-          <Pressable
-            className="w-full max-w-sm rounded-3xl p-5"
-            style={{ backgroundColor: colors.surfaceContainerHigh }}
-            onPress={e => e.stopPropagation()}>
-            <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
-              Select Text Color
-            </AppText>
-            {COLOR_OPTIONS.map(opt => {
-              const selected =
-                opt.color.toLowerCase() === textColor.toLowerCase();
-              return (
-                <TouchableOpacity
-                  key={opt.color}
-                  activeOpacity={0.7}
-                  className="flex-row items-center justify-between py-3 px-3 rounded-2xl mb-1"
-                  style={{
-                    backgroundColor: selected
-                      ? colors.secondaryContainer
-                      : 'transparent',
-                  }}
-                  onPress={() => handleSelectColor(opt.color)}>
-                  <View className="flex-row items-center gap-3">
-                    <View
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 11,
-                        backgroundColor: opt.color,
-                        borderWidth: 1.5,
-                        borderColor: 'rgba(255,255,255,0.4)',
-                      }}
-                    />
-                    <AppText
-                      style={{
-                        fontSize: 16,
-                        color: selected
-                          ? colors.onSecondaryContainer
-                          : colors.onSurface,
-                      }}>
-                      {opt.name}
-                    </AppText>
-                  </View>
-                  {selected && (
-                    <MaterialIcons
-                      name="check"
-                      size={20}
-                      color={colors.onSecondaryContainer}
-                    />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
+          <TVFocusGuide autoFocus={true} trapFocusRight={true}>
+            <Pressable
+              focusable={false}
+              className="w-full max-w-sm rounded-3xl p-5"
+              style={{ backgroundColor: colors.surfaceContainerHigh }}
+              onPress={e => e.stopPropagation()}>
+              <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
+                Select Text Color
+              </AppText>
+              {COLOR_OPTIONS.map(opt => {
+                const selected =
+                  opt.color.toLowerCase() === textColor.toLowerCase();
+                return (
+                  <TVFocusable
+                    key={opt.color}
+                    hasTVPreferredFocus={isTV && selected}
+                    borderRadius={16}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt.name}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 16,
+                      marginBottom: 4,
+                      backgroundColor: selected
+                        ? colors.secondaryContainer
+                        : 'transparent',
+                    }}
+                    onPress={() => handleSelectColor(opt.color)}>
+                    <View className="flex-row items-center gap-3">
+                      <View
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 11,
+                          backgroundColor: opt.color,
+                          borderWidth: 1.5,
+                          borderColor: 'rgba(255,255,255,0.4)',
+                        }}
+                      />
+                      <AppText
+                        style={{
+                          fontSize: 16,
+                          color: selected
+                            ? colors.onSecondaryContainer
+                            : colors.onSurface,
+                        }}>
+                        {opt.name}
+                      </AppText>
+                    </View>
+                    {selected && (
+                      <MaterialIcons
+                        name="check"
+                        size={20}
+                        color={colors.onSecondaryContainer}
+                      />
+                    )}
+                  </TVFocusable>
+                );
+              })}
+            </Pressable>
+          </TVFocusGuide>
         </Pressable>
       </Modal>
 
@@ -617,60 +705,74 @@ const SubtitlePreference = () => {
         animationType="fade"
         onRequestClose={() => setEdgeModalVisible(false)}>
         <Pressable
+          focusable={false}
+          accessible={false}
           className="flex-1 justify-center items-center bg-black/60 px-5"
           onPress={() => setEdgeModalVisible(false)}>
-          <Pressable
-            className="w-full max-w-sm rounded-3xl p-5"
-            style={{ backgroundColor: colors.surfaceContainerHigh }}
-            onPress={e => e.stopPropagation()}>
-            <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
-              Select Edge Effect
-            </AppText>
-            {EDGE_OPTIONS.map(opt => {
-              const selected = opt.id === edgeType;
-              return (
-                <TouchableOpacity
-                  key={opt.id}
-                  activeOpacity={0.7}
-                  className="flex-row items-center justify-between py-3 px-3 rounded-2xl mb-1"
-                  style={{
-                    backgroundColor: selected
-                      ? colors.secondaryContainer
-                      : 'transparent',
-                  }}
-                  onPress={() => handleSelectEdge(opt.id)}>
-                  <View className="flex-1 mr-2">
-                    <AppText
-                      style={{
-                        fontSize: 16,
-                        fontWeight: '600',
-                        color: selected
-                          ? colors.onSecondaryContainer
-                          : colors.onSurface,
-                      }}>
-                      {opt.name}
-                    </AppText>
-                    <AppText
-                      className="mt-0.5 text-xs text-white/50"
-                      style={{
-                        color: selected
-                          ? colors.onSecondaryContainer
-                          : colors.onSurfaceVariant,
-                      }}>
-                      {opt.description}
-                    </AppText>
-                  </View>
-                  {selected && (
-                    <MaterialIcons
-                      name="check"
-                      size={20}
-                      color={colors.onSecondaryContainer}
-                    />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
+          <TVFocusGuide autoFocus={true} trapFocusRight={true}>
+            <Pressable
+              focusable={false}
+              className="w-full max-w-sm rounded-3xl p-5"
+              style={{ backgroundColor: colors.surfaceContainerHigh }}
+              onPress={e => e.stopPropagation()}>
+              <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
+                Select Edge Effect
+              </AppText>
+              {EDGE_OPTIONS.map(opt => {
+                const selected = opt.id === edgeType;
+                return (
+                  <TVFocusable
+                    key={opt.id}
+                    hasTVPreferredFocus={isTV && selected}
+                    borderRadius={16}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt.name}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 16,
+                      marginBottom: 4,
+                      backgroundColor: selected
+                        ? colors.secondaryContainer
+                        : 'transparent',
+                    }}
+                    onPress={() => handleSelectEdge(opt.id)}>
+                    <View className="flex-1 mr-2">
+                      <AppText
+                        style={{
+                          fontSize: 16,
+                          fontWeight: '600',
+                          color: selected
+                            ? colors.onSecondaryContainer
+                            : colors.onSurface,
+                        }}>
+                        {opt.name}
+                      </AppText>
+                      <AppText
+                        className="mt-0.5 text-xs text-white/50"
+                        style={{
+                          color: selected
+                            ? colors.onSecondaryContainer
+                            : colors.onSurfaceVariant,
+                        }}>
+                        {opt.description}
+                      </AppText>
+                    </View>
+                    {selected && (
+                      <MaterialIcons
+                        name="check"
+                        size={20}
+                        color={colors.onSecondaryContainer}
+                      />
+                    )}
+                  </TVFocusable>
+                );
+              })}
+            </Pressable>
+          </TVFocusGuide>
         </Pressable>
       </Modal>
 
@@ -681,64 +783,79 @@ const SubtitlePreference = () => {
         animationType="fade"
         onRequestClose={() => setEdgeColorModalVisible(false)}>
         <Pressable
+          focusable={false}
+          accessible={false}
           className="flex-1 justify-center items-center bg-black/60 px-5"
           onPress={() => setEdgeColorModalVisible(false)}>
-          <Pressable
-            className="w-full max-w-sm rounded-3xl p-5"
-            style={{ backgroundColor: colors.surfaceContainerHigh }}
-            onPress={e => e.stopPropagation()}>
-            <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
-              Select Outline & Shadow Color
-            </AppText>
-            {EDGE_COLOR_OPTIONS.map(opt => {
-              const selected =
-                opt.color.toLowerCase() === edgeColor.toLowerCase();
-              return (
-                <TouchableOpacity
-                  key={opt.color}
-                  activeOpacity={0.7}
-                  className="flex-row items-center justify-between py-3 px-3 rounded-2xl mb-1"
-                  style={{
-                    backgroundColor: selected
-                      ? colors.secondaryContainer
-                      : 'transparent',
-                  }}
-                  onPress={() => handleSelectEdgeColor(opt.color)}>
-                  <View className="flex-row items-center gap-3">
-                    <View
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 11,
-                        backgroundColor: opt.color,
-                        borderWidth: 1.5,
-                        borderColor: 'rgba(255,255,255,0.4)',
-                      }}
-                    />
-                    <AppText
-                      style={{
-                        fontSize: 16,
-                        color: selected
-                          ? colors.onSecondaryContainer
-                          : colors.onSurface,
-                      }}>
-                      {opt.name}
-                    </AppText>
-                  </View>
-                  {selected && (
-                    <MaterialIcons
-                      name="check"
-                      size={20}
-                      color={colors.onSecondaryContainer}
-                    />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </Pressable>
+          <TVFocusGuide autoFocus={true} trapFocusRight={true}>
+            <Pressable
+              focusable={false}
+              className="w-full max-w-sm rounded-3xl p-5"
+              style={{ backgroundColor: colors.surfaceContainerHigh }}
+              onPress={e => e.stopPropagation()}>
+              <AppText role="titleLarge" className="mb-4 text-m3-on-surface">
+                Select Outline & Shadow Color
+              </AppText>
+              {EDGE_COLOR_OPTIONS.map(opt => {
+                const selected =
+                  opt.color.toLowerCase() === edgeColor.toLowerCase();
+                return (
+                  <TVFocusable
+                    key={opt.color}
+                    hasTVPreferredFocus={isTV && selected}
+                    borderRadius={16}
+                    accessibilityRole="button"
+                    accessibilityLabel={opt.name}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 16,
+                      marginBottom: 4,
+                      backgroundColor: selected
+                        ? colors.secondaryContainer
+                        : 'transparent',
+                    }}
+                    onPress={() => handleSelectEdgeColor(opt.color)}>
+                    <View className="flex-row items-center gap-3">
+                      <View
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 11,
+                          backgroundColor: opt.color,
+                          borderWidth: 1.5,
+                          borderColor: 'rgba(255,255,255,0.4)',
+                        }}
+                      />
+                      <AppText
+                        style={{
+                          fontSize: 16,
+                          color: selected
+                            ? colors.onSecondaryContainer
+                            : colors.onSurface,
+                        }}>
+                        {opt.name}
+                      </AppText>
+                    </View>
+                    {selected && (
+                      <MaterialIcons
+                        name="check"
+                        size={20}
+                        color={colors.onSecondaryContainer}
+                      />
+                    )}
+                  </TVFocusable>
+                );
+              })}
+            </Pressable>
+          </TVFocusGuide>
         </Pressable>
       </Modal>
     </ScrollView>
+  </TVFocusGuide>
   );
 };
 

@@ -5,7 +5,12 @@ import {
   ToastAndroid,
   View,
   Modal,
+  ScrollView,
   StyleSheet,
+  UIManager,
+  findNodeHandle,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import React, { useEffect, useRef } from 'react';
 import { Stream } from '../lib/providers/types';
@@ -20,6 +25,94 @@ import { Clipboard } from 'react-native';
 import { TextTrackType } from 'react-native-video';
 import { settingsStorage } from '../lib/storage';
 import { useM3Colors } from '../theme/M3PaletteContext';
+import { isTV } from '../lib/tv';
+import { TVFocusable, TVFocusGuide } from './tv';
+
+const NativeTouchableOpacity = TouchableOpacity;
+
+type SheetButtonProps = React.ComponentProps<typeof TouchableOpacity> & {
+  hasTVPreferredFocus?: boolean;
+  focusBorderRadius?: number;
+};
+
+const SheetButton = ({
+  activeOpacity,
+  hitSlop,
+  style,
+  hasTVPreferredFocus,
+  focusBorderRadius = 12,
+  onPress,
+  onLongPress,
+  accessibilityLabel,
+  disabled,
+  testID,
+  children,
+  ...props
+}: SheetButtonProps) => {
+  if (isTV) {
+    return (
+      <TVFocusable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        disabled={disabled}
+        testID={testID}
+        style={style as StyleProp<ViewStyle>}
+        borderRadius={focusBorderRadius}
+        focusScale={1}
+        hasTVPreferredFocus={hasTVPreferredFocus}
+        onPress={() => onPress?.(undefined as any)}
+        onLongPress={() => onLongPress?.(undefined as any)}>
+        {children}
+      </TVFocusable>
+    );
+  }
+
+  return (
+    <NativeTouchableOpacity
+      {...props}
+      activeOpacity={activeOpacity}
+      hitSlop={hitSlop}
+      style={style}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      accessibilityLabel={accessibilityLabel}
+      disabled={disabled}
+      testID={testID}>
+      {children}
+    </NativeTouchableOpacity>
+  );
+};
+
+const SheetRow = ({children, style, onPress}: {
+  children: React.ReactNode;
+  style: StyleProp<ViewStyle>;
+  onPress: () => void;
+}) => isTV ? (
+  <View style={style}>{children}</View>
+) : (
+  <NativeTouchableOpacity activeOpacity={0.7} style={style} onPress={onPress}>
+    {children}
+  </NativeTouchableOpacity>
+);
+
+const SheetRowMain = ({children, style, onPress, label, preferred}: {
+  children: React.ReactNode;
+  style: StyleProp<ViewStyle>;
+  onPress: () => void;
+  label: string;
+  preferred: boolean;
+}) => isTV ? (
+  <TVFocusable
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    hasTVPreferredFocus={preferred}
+    borderRadius={12}
+    focusScale={1}
+    style={style}
+    onPress={onPress}>
+    {children}
+  </TVFocusable>
+) : <View style={style}>{children}</View>;
 
 export interface DownloadedSubtitleItem {
   id: string;
@@ -81,6 +174,11 @@ const DownloadBottomSheet = ({
   onDeleteSub,
 }: Props) => {
   const bottomSheetRef = useRef<BottomSheet>(null);
+  const tvCloseRef = useRef<View>(null);
+  const closeSheet = () => {
+    if (isTV) setModal(false);
+    else bottomSheetRef.current?.close?.();
+  };
   const colors = useM3Colors();
   const [activeTab, setActiveTab] = React.useState<1 | 2>(1);
   const isAlwaysExternal =
@@ -177,11 +275,12 @@ const DownloadBottomSheet = ({
               )}
             </View>
           </View>
-          <TouchableOpacity
+          <SheetButton
+            accessibilityLabel="Delete downloaded video"
             activeOpacity={0.7}
             onPress={() => {
               onDeleteVideo?.();
-              bottomSheetRef.current?.close?.();
+              closeSheet();
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{
@@ -197,7 +296,7 @@ const DownloadBottomSheet = ({
               size={20}
               color={colors.onErrorContainer}
             />
-          </TouchableOpacity>
+          </SheetButton>
         </View>
       );
     }
@@ -254,9 +353,8 @@ const DownloadBottomSheet = ({
     }
 
     return streams.map((item, index) => (
-      <TouchableOpacity
+      <SheetRow
         key={index}
-        activeOpacity={0.7}
         style={{
           alignItems: 'center',
           backgroundColor: colors.surfaceContainerHighest,
@@ -276,13 +374,24 @@ const DownloadBottomSheet = ({
           } else {
             onPressVideo(item);
           }
-          bottomSheetRef.current?.close?.();
+          closeSheet();
         }}>
-        <View
+        <SheetRowMain
+          label={`Download ${item.server || 'Unknown Server'}${item.quality ? `, ${formatQualityLabel(item.quality)}` : ''}`}
+          preferred={!hasSubtitles && index === 0}
+          onPress={() => {
+            if (isAlwaysExternal) {
+              onPressExternalVideo?.(item);
+            } else {
+              onPressVideo(item);
+            }
+            closeSheet();
+          }}
           style={{
             flex: 1,
             justifyContent: 'center',
             marginRight: 10,
+            minHeight: isTV ? 52 : undefined,
           }}>
           <Text
             numberOfLines={1}
@@ -363,7 +472,7 @@ const DownloadBottomSheet = ({
               </View>
             );
           })()}
-        </View>
+        </SheetRowMain>
 
         {/* Action buttons */}
         <View
@@ -374,7 +483,8 @@ const DownloadBottomSheet = ({
             flexShrink: 0,
           }}>
           {/* Copy Button */}
-          <TouchableOpacity
+          <SheetButton
+            accessibilityLabel={`Copy link for ${item.server || 'Unknown Server'}`}
             activeOpacity={0.7}
             onPress={() => handleCopy(item.link)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -390,10 +500,11 @@ const DownloadBottomSheet = ({
               size={18}
               color={colors.onSurfaceVariant}
             />
-          </TouchableOpacity>
+          </SheetButton>
 
           {/* External / Internal Button */}
-          <TouchableOpacity
+          <SheetButton
+            accessibilityLabel={`${isAlwaysExternal ? 'Download in Vega' : 'Open externally'}: ${item.server || 'Unknown Server'}`}
             activeOpacity={0.7}
             onPress={() => {
               if (isAlwaysExternal) {
@@ -401,7 +512,7 @@ const DownloadBottomSheet = ({
               } else {
                 onPressExternalVideo?.(item);
               }
-              bottomSheetRef.current?.close?.();
+              closeSheet();
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{
@@ -416,9 +527,9 @@ const DownloadBottomSheet = ({
               size={18}
               color={colors.onPrimaryContainer}
             />
-          </TouchableOpacity>
+          </SheetButton>
         </View>
-      </TouchableOpacity>
+      </SheetRow>
     ));
   };
 
@@ -514,7 +625,8 @@ const DownloadBottomSheet = ({
                     {sub.title}
                   </Text>
                 </View>
-                <TouchableOpacity
+                <SheetButton
+                  accessibilityLabel={`Delete downloaded subtitle ${sub.title}`}
                   activeOpacity={0.7}
                   onPress={() => {
                     onDeleteSub?.(sub.title);
@@ -533,7 +645,7 @@ const DownloadBottomSheet = ({
                     size={18}
                     color={colors.onErrorContainer}
                   />
-                </TouchableOpacity>
+                </SheetButton>
               </View>
             ))}
           </View>
@@ -620,7 +732,8 @@ const DownloadBottomSheet = ({
                       flexShrink: 0,
                     }}>
                     {/* Copy Subtitle Link Button */}
-                    <TouchableOpacity
+                    <SheetButton
+                      accessibilityLabel={`Copy subtitle link for ${sub.title}`}
                       activeOpacity={0.7}
                       onPress={() => handleCopy(sub.uri)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -636,10 +749,11 @@ const DownloadBottomSheet = ({
                         size={18}
                         color={colors.onSurfaceVariant}
                       />
-                    </TouchableOpacity>
+                    </SheetButton>
 
                     {/* External Subtitle Button */}
-                    <TouchableOpacity
+                    <SheetButton
+                      accessibilityLabel={`Open subtitle externally: ${sub.title}`}
                       activeOpacity={0.7}
                       onPress={() => {
                         onPressExternalSubs?.({
@@ -647,7 +761,7 @@ const DownloadBottomSheet = ({
                           type: TextTrackType.VTT,
                           title: sub.title,
                         });
-                        bottomSheetRef.current?.close?.();
+                        closeSheet();
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       style={{
@@ -662,11 +776,12 @@ const DownloadBottomSheet = ({
                         size={18}
                         color={colors.onSurfaceVariant}
                       />
-                    </TouchableOpacity>
+                    </SheetButton>
 
                     {/* Download / Delete Subtitle Button */}
                     {subDownloaded ? (
-                      <TouchableOpacity
+                      <SheetButton
+                        accessibilityLabel={`Delete downloaded subtitle ${sub.title}`}
                         activeOpacity={0.7}
                         onPress={() => {
                           onDeleteSub?.(sub.title);
@@ -685,9 +800,10 @@ const DownloadBottomSheet = ({
                           size={18}
                           color={colors.onErrorContainer}
                         />
-                      </TouchableOpacity>
+                      </SheetButton>
                     ) : (
-                      <TouchableOpacity
+                      <SheetButton
+                        accessibilityLabel={`Download subtitle ${sub.title}`}
                         activeOpacity={0.7}
                         onPress={() => {
                           onPressSubs({
@@ -695,7 +811,7 @@ const DownloadBottomSheet = ({
                             type: TextTrackType.VTT,
                             title: sub.title,
                           });
-                          bottomSheetRef.current?.close?.();
+                          closeSheet();
                         }}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         style={{
@@ -711,7 +827,7 @@ const DownloadBottomSheet = ({
                           size={18}
                           color={colors.onPrimaryContainer}
                         />
-                      </TouchableOpacity>
+                      </SheetButton>
                     )}
                   </View>
                 </View>
@@ -735,6 +851,71 @@ const DownloadBottomSheet = ({
 
   if (!showModal) {
     return null;
+  }
+
+  if (isTV) {
+    return (
+      <Modal
+        visible
+        transparent
+        animationType="none"
+        onRequestClose={() => setModal(false)}
+        onShow={() => {
+          setTimeout(() => {
+            const handle = findNodeHandle(tvCloseRef.current);
+            if (handle) UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+          }, 250);
+        }}>
+        <View style={{flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0, 0, 0, 0.78)'}}>
+          <TVFocusGuide
+            autoFocus
+            trapFocusLeft
+            trapFocusRight
+            trapFocusUp
+            trapFocusDown
+            style={{
+              backgroundColor: colors.surfaceContainerLow,
+              borderColor: colors.outlineVariant,
+              borderRadius: 24,
+              borderWidth: 1,
+              maxHeight: '85%',
+              minHeight: 240,
+              padding: 24,
+              width: '80%',
+            }}>
+            <TVFocusable
+              ref={tvCloseRef}
+              accessibilityRole="button"
+              accessibilityLabel="Close downloads"
+              hasTVPreferredFocus
+              focusScale={1}
+              onPress={() => setModal(false)}
+              style={{alignSelf: 'flex-end', alignItems: 'center', justifyContent: 'center', minHeight: 48, minWidth: 100, marginBottom: 12}}>
+              <Text style={{color: colors.onSurface, fontSize: 18}}>Close</Text>
+            </TVFocusable>
+            {hasSubtitles && (
+              <View style={{flexDirection: 'row', justifyContent: 'center', gap: 12, marginBottom: 12}}>
+                {([{label: 'Video', value: 1 as const}, {label: 'Subtitle', value: 2 as const}] as const).map(tab => (
+                  <SheetButton
+                    key={tab.value}
+                    accessibilityLabel={`${tab.label} download sources`}
+                    onPress={() => setActiveTab(tab.value)}
+                    style={{backgroundColor: activeTab === tab.value ? colors.secondaryContainer : colors.surfaceContainerHighest, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12}}>
+                    <Text style={{color: activeTab === tab.value ? colors.onSecondaryContainer : colors.onSurface, fontSize: 16}}>{tab.label}</Text>
+                  </SheetButton>
+                ))}
+              </View>
+            )}
+            <ScrollView
+              focusable={false}
+              accessible={false}
+              contentContainerStyle={{paddingBottom: 24}}>
+              {activeTab === 1 ? renderVideoTab() : renderSubtitleTab()}
+            </ScrollView>
+          </TVFocusGuide>
+        </View>
+      </Modal>
+    );
   }
 
   return (
@@ -767,13 +948,34 @@ const DownloadBottomSheet = ({
             }
           }}
           onClose={() => setModal(false)}>
-          <View
+          <TVFocusGuide
+            autoFocus={isTV}
+            trapFocusLeft={isTV}
+            trapFocusRight={isTV}
+            trapFocusUp={isTV}
+            trapFocusDown={isTV}
             style={{
               backgroundColor: colors.surfaceContainerLow,
               flex: 1,
               paddingHorizontal: 16,
               paddingTop: 8,
             }}>
+            {isTV && (
+              <SheetButton
+                accessibilityLabel="Close downloads"
+                hasTVPreferredFocus={loading || streams.length === 0}
+                onPress={() => setModal(false)}
+                style={{
+                  alignSelf: 'flex-end',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 44,
+                  minWidth: 80,
+                  marginBottom: 8,
+                }}>
+                <Text style={{color: colors.onSurface, fontSize: 16}}>Close</Text>
+              </SheetButton>
+            )}
             {title && (
               <Text
                 style={{
@@ -801,8 +1003,10 @@ const DownloadBottomSheet = ({
                 ] as const).map(tab => {
                   const selected = activeTab === tab.value;
                   return (
-                    <TouchableOpacity
+                    <SheetButton
                       key={tab.value}
+                      accessibilityLabel={`${tab.label} download sources`}
+                      hasTVPreferredFocus={tab.value === 1}
                       onPress={() => setActiveTab(tab.value)}
                       style={{
                         borderBottomColor: selected
@@ -823,7 +1027,7 @@ const DownloadBottomSheet = ({
                         }}>
                         {tab.label}
                       </Text>
-                    </TouchableOpacity>
+                    </SheetButton>
                   );
                 })}
               </View>
@@ -836,7 +1040,7 @@ const DownloadBottomSheet = ({
               showsVerticalScrollIndicator={false}>
               {activeTab === 1 ? renderVideoTab() : renderSubtitleTab()}
             </BottomSheetScrollView>
-          </View>
+          </TVFocusGuide>
         </BottomSheet>
       </GestureHandlerRootView>
     </Modal>

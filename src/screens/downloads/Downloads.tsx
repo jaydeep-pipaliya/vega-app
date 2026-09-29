@@ -1,15 +1,13 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import {useFocusEffect, useNavigation} from '@react-navigation/native';
+import {useFocusEffect, useIsFocused, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {StatusBar} from 'expo-status-bar';
-import React, {useCallback, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
-  ActivityIndicator,
+  BackHandler,
   Dimensions,
   FlatList,
-  Platform,
-  TouchableOpacity,
+  findNodeHandle,
   View,
 } from 'react-native';
 import ReactNativeHapticFeedback, {
@@ -18,13 +16,10 @@ import ReactNativeHapticFeedback, {
 import type {DownloadsStackParamList} from '../../App';
 import MediaPosterCard from '../../components/MediaPosterCard';
 import AppText from '../../components/ui/Text';
-import {
-  deleteDownloadOutput,
-} from '../../lib/downloadDestination';
-import {
-  createDownloadDirectoryName,
-  createDownloadSeasonDirectoryName,
-} from '../../lib/downloadId';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
+import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
 import {
   DownloadedMediaGroup,
   groupCompletedDownloads,
@@ -35,33 +30,115 @@ import {syncFromSharedFolder} from '../../lib/sync/syncService';
 import {showAppDialog} from '../../lib/zustand/appDialogStore';
 import useDownloadsStore, {
   selectCompletedDownloads,
+  selectCurrentDownloads,
 } from '../../lib/zustand/downloadsStore';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import CurrentDownloadsSection from '../settings/components/CurrentDownloadsSection';
 import MissingDownloadsSection from '../settings/components/MissingDownloadsSection';
-
-const GRID_PADDING = 12;
-const GRID_GAP = 10;
-const MIN_CARD_WIDTH = 100;
+import DownloadsEmptyState from './components/DownloadsEmptyState';
+import DownloadsSelectionBottomBar from './components/DownloadsSelectionBottomBar';
+import DownloadsSelectionHeader from './components/DownloadsSelectionHeader';
+import {deleteDownloadedMediaGroups} from './utils/deleteDownloadGroups';
 
 const Downloads = () => {
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
   const navigation =
     useNavigation<NativeStackNavigationProp<DownloadsStackParamList>>();
+  const screenFocused = useIsFocused();
   const completed = useDownloadsStore(selectCompletedDownloads);
+  const currentDownloads = useDownloadsStore(selectCurrentDownloads);
   const groups = useMemo(() => groupCompletedDownloads(completed), [completed]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(
     new Set(),
   );
+  const [isSelectionModeActive, setIsSelectionModeActive] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const isSelectionMode = selectedGroupIds.size > 0;
-  const availableWidth = Dimensions.get('window').width - GRID_PADDING * 2;
+  const selectButtonRef = useRef<View>(null);
+  const firstCardRef = useRef<View>(null);
+  const currentDownloadActionRef = useRef<View>(null);
+  const exploreButtonRef = useRef<View>(null);
+  const returningFromDetailsRef = useRef(false);
+  const [selectButtonNode, setSelectButtonNode] = useState<number | null>(null);
+  const [firstCardNode, setFirstCardNode] = useState<number | null>(null);
+  const [currentDownloadActionNode, setCurrentDownloadActionNode] = useState<number | null>(null);
+  const [exploreButtonNode, setExploreButtonNode] = useState<number | null>(null);
+
+  const isSelectionMode = isSelectionModeActive || selectedGroupIds.size > 0;
+
+  const screenWidth = Dimensions.get('window').width;
+  const containerPadding = 12;
+  const itemSpacing = 10;
+  const railWidth = isTV ? 96 : 0;
+  const availableWidth = screenWidth - railWidth - containerPadding * 2;
+  const targetItemWidth = isTV ? 160 : 100;
   const columns = Math.max(
     2,
-    Math.floor((availableWidth + GRID_GAP) / (MIN_CARD_WIDTH + GRID_GAP)),
+    Math.floor((availableWidth + itemSpacing) / (targetItemWidth + itemSpacing)),
   );
-  const cardWidth = (availableWidth - GRID_GAP * (columns - 1)) / columns;
+  const cardWidth = (availableWidth - itemSpacing * (columns - 1)) / columns;
+
+  const updateSelectButtonNode = useCallback(() => {
+    if (selectButtonRef.current) {
+      const handle = findNodeHandle(selectButtonRef.current);
+      if (handle) setSelectButtonNode(handle);
+    }
+  }, []);
+
+  const updateFirstCardNode = useCallback(() => {
+    if (firstCardRef.current) {
+      const handle = findNodeHandle(firstCardRef.current);
+      if (handle) {
+        setFirstCardNode(handle);
+        if (isTV && screenFocused && currentDownloads.length === 0) {
+          useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+        }
+      }
+    }
+  }, [screenFocused, currentDownloads.length]);
+
+  const updateCurrentDownloadActionNode = useCallback(() => {
+    const handle = findNodeHandle(currentDownloadActionRef.current);
+    setCurrentDownloadActionNode(handle);
+    if (isTV && screenFocused && handle) {
+      useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+    }
+  }, [screenFocused]);
+
+  useEffect(() => {
+    if (!isTV || !screenFocused || currentDownloads.length === 0) return;
+    const timer = setTimeout(updateCurrentDownloadActionNode, 250);
+    return () => clearTimeout(timer);
+  }, [currentDownloads.length, screenFocused, updateCurrentDownloadActionNode]);
+
+  const updateExploreButtonNode = useCallback(() => {
+    if (exploreButtonRef.current) {
+      const handle = findNodeHandle(exploreButtonRef.current);
+      if (handle) {
+        setExploreButtonNode(handle);
+        if (isTV && screenFocused && currentDownloads.length === 0 && groups.length === 0) {
+          useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+        }
+      }
+    }
+  }, [screenFocused, currentDownloads.length, groups.length]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      updateSelectButtonNode();
+      updateFirstCardNode();
+      updateExploreButtonNode();
+    }, 150);
+    return () => clearTimeout(t);
+  }, [
+    groups.length,
+    isSelectionModeActive,
+    selectedGroupIds.size,
+    updateSelectButtonNode,
+    updateFirstCardNode,
+    updateExploreButtonNode,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
@@ -71,8 +148,39 @@ const Downloads = () => {
       reconcileCompletedDownloadOutputs().catch(error =>
         console.warn('Download library reconciliation failed:', error),
       );
-    }, []),
+      if (currentDownloads.length > 0 && currentDownloadActionNode) {
+        useTVNavigationStore.getState().setActiveScreenFocusHandle(currentDownloadActionNode);
+      } else if (groups.length > 0 && firstCardNode) {
+        useTVNavigationStore.getState().setActiveScreenFocusHandle(firstCardNode);
+      } else if (exploreButtonNode) {
+        useTVNavigationStore.getState().setActiveScreenFocusHandle(exploreButtonNode);
+      }
+      const restoreFocus = isTV && returningFromDetailsRef.current
+        ? setTimeout(() => {
+            returningFromDetailsRef.current = false;
+            const target = currentDownloads.length > 0
+              ? currentDownloadActionRef.current
+              : groups.length > 0 ? firstCardRef.current : exploreButtonRef.current;
+            (target as any)?.setNativeProps?.({hasTVPreferredFocus: false});
+            requestAnimationFrame(() => {
+              (target as any)?.setNativeProps?.({hasTVPreferredFocus: true});
+            });
+          }, 400)
+        : null;
+      return () => {
+        if (restoreFocus) clearTimeout(restoreFocus);
+      };
+    }, [groups.length, firstCardNode, exploreButtonNode, currentDownloads.length, currentDownloadActionNode]),
   );
+
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleExitSelection();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [isSelectionMode]);
 
   const triggerHaptic = (
     type: HapticFeedbackTypes = HapticFeedbackTypes.effectTick,
@@ -98,12 +206,14 @@ const Downloads = () => {
         return next;
       });
     } else {
+      returningFromDetailsRef.current = true;
       navigation.navigate('DownloadedDetails', {groupId});
     }
   };
 
   const handleCardLongPress = (groupId: string) => {
     triggerHaptic(HapticFeedbackTypes.impactMedium);
+    setIsSelectionModeActive(true);
     setSelectedGroupIds(prev => {
       const next = new Set(prev);
       if (next.has(groupId)) {
@@ -118,6 +228,7 @@ const Downloads = () => {
   const handleExitSelection = () => {
     triggerHaptic(HapticFeedbackTypes.effectClick);
     setSelectedGroupIds(new Set());
+    setIsSelectionModeActive(false);
   };
 
   const handleToggleSelectAll = () => {
@@ -145,49 +256,9 @@ const Downloads = () => {
   const deleteSelectedGroups = async (targetGroups: DownloadedMediaGroup[]) => {
     setIsDeleting(true);
     try {
-      const allDownloads = Object.values(useDownloadsStore.getState().downloads);
-      const removeDownload = useDownloadsStore.getState().removeDownload;
-
-      for (const group of targetGroups) {
-        for (const item of group.items) {
-          const subItems = allDownloads.filter(
-            d =>
-              d.id.startsWith(`${item.id}_subtitle_`) ||
-              (d.infoUrl === item.infoUrl &&
-                d.sourceLink === item.sourceLink &&
-                (d.isSubtitle || d.id.includes('_subtitle_'))),
-          );
-
-          for (const subItem of subItems) {
-            if (subItem.filePath) {
-              await deleteDownloadOutput(subItem.filePath, {
-                downloadLocation: subItem.downloadLocation,
-                outputDirectoryNames: [
-                  createDownloadDirectoryName(subItem.showName || subItem.title),
-                  ...[createDownloadSeasonDirectoryName(subItem.seasonTitle)].filter(
-                    (name): name is string => Boolean(name),
-                  ),
-                ],
-              }).catch(() => undefined);
-            }
-            removeDownload(subItem.id);
-          }
-
-          if (item.filePath) {
-            await deleteDownloadOutput(item.filePath, {
-              downloadLocation: item.downloadLocation,
-              outputDirectoryNames: [
-                createDownloadDirectoryName(item.showName || item.title),
-                ...[createDownloadSeasonDirectoryName(item.seasonTitle)].filter(
-                  (name): name is string => Boolean(name),
-                ),
-              ],
-            }).catch(() => undefined);
-          }
-          removeDownload(item.id);
-        }
-      }
+      await deleteDownloadedMediaGroups(targetGroups);
       setSelectedGroupIds(new Set());
+      setIsSelectionModeActive(false);
     } catch (err) {
       console.error('Error deleting selected download groups:', err);
     } finally {
@@ -227,225 +298,172 @@ const Downloads = () => {
     groups.length > 0 && selectedGroupIds.size === groups.length;
 
   return (
-    <View className="flex-1 bg-m3-background">
+    <TVFocusGuide
+      key={isTV ? (screenFocused ? 'downloads-active' : 'downloads-inactive') : undefined}
+      autoFocus={true}
+      trapFocusRight={true}
+      destinations={currentDownloads.length > 0
+        ? [currentDownloadActionRef]
+        : groups.length > 0 ? [firstCardRef] : [exploreButtonRef]}
+      style={{flex: 1, backgroundColor: colors.background}}>
       <StatusBar />
 
-      {/* Top Selection Header Toolbar */}
       {isSelectionMode ? (
-        <View
-          style={{
-            alignItems: 'center',
-            backgroundColor: colors.surfaceContainerHigh,
-            borderBottomColor: colors.outlineVariant,
-            borderBottomWidth: 1,
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            paddingBottom: 12,
-            paddingHorizontal: 16,
-            paddingTop: Platform.OS === 'android' ? 36 : 14,
-            zIndex: 10,
-          }}>
-          <View style={{alignItems: 'center', flexDirection: 'row', gap: 16}}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleExitSelection}
-              hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-              <MaterialCommunityIcons
-                name="close"
-                size={26}
-                color={colors.onSurface}
-              />
-            </TouchableOpacity>
-            <AppText
-              role="titleLargeEmphasized"
-              style={{color: colors.onSurface}}>
-              {selectedGroupIds.size}
-            </AppText>
-          </View>
-
-          <View style={{alignItems: 'center', flexDirection: 'row', gap: 12}}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleInvertSelection}
-              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-              <MaterialCommunityIcons
-                name="select-inverse"
-                size={24}
-                color={colors.onSurfaceVariant}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={handleToggleSelectAll}
-              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-              <MaterialIcons
-                name="select-all"
-                size={24}
-                color={isAllSelected ? colors.primary : colors.onSurface}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
+        <DownloadsSelectionHeader
+          selectedCount={selectedGroupIds.size}
+          isAllSelected={isAllSelected}
+          onExitSelection={handleExitSelection}
+          onInvertSelection={handleInvertSelection}
+          onToggleSelectAll={handleToggleSelectAll}
+        />
       ) : null}
 
       <FlatList
         data={groups}
-        key={columns}
+        key={`downloads-cols-${columns}`}
         numColumns={columns}
         keyExtractor={item => item.id}
-        columnWrapperStyle={{gap: GRID_GAP}}
+        columnWrapperStyle={{gap: itemSpacing, justifyContent: 'flex-start'}}
         contentContainerStyle={{
-          paddingHorizontal: GRID_PADDING,
-          paddingTop: isSelectionMode
-            ? 14
-            : Platform.OS === 'android'
-            ? 28
-            : 12,
+          paddingHorizontal: containerPadding,
+          paddingTop: isSelectionMode ? 14 : 0,
           paddingBottom: isSelectionMode ? 120 : 80,
         }}
         ListHeaderComponent={
           !isSelectionMode ? (
             <View>
-              <AppText
-                role="headlineLargeEmphasized"
-                className="mb-6 mt-2 text-center text-m3-on-background">
-                Downloads
-              </AppText>
-              <CurrentDownloadsSection primary={colors.primary} />
+              <View
+                style={{
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginBottom: 16,
+                  marginTop: isTV ? 16 : 8,
+                  paddingLeft: isTV ? 12 : 6,
+                  paddingRight: isTV ? 48 : 6,
+                }}>
+                <AppText
+                  role="headlineLargeEmphasized"
+                  className="text-m3-on-background">
+                  Downloads
+                </AppText>
+                {groups.length > 0 ? (
+                  <TVFocusable
+                    ref={selectButtonRef}
+                    onLayout={updateSelectButtonNode}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select items"
+                    nextFocusRight={selectButtonNode ?? undefined}
+                    nextFocusUp={selectButtonNode ?? undefined}
+                    nextFocusDown={firstCardNode ?? undefined}
+                    nextFocusLeft={firstCardNode ?? undefined}
+                    onPress={() => {
+                      triggerHaptic(HapticFeedbackTypes.effectClick);
+                      setIsSelectionModeActive(true);
+                    }}
+                    borderRadius={18}
+                    focusScale={1.08}
+                    focusBorderColor={focusBorderColor}
+                    style={{
+                      alignItems: 'center',
+                      backgroundColor: colors.surfaceContainerHigh,
+                      borderRadius: 18,
+                      flexDirection: 'row',
+                      gap: 6,
+                      justifyContent: 'center',
+                      minHeight: 36,
+                      paddingHorizontal: 14,
+                    }}>
+                    <MaterialCommunityIcons
+                      name="checkbox-multiple-marked-outline"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <AppText
+                      role="labelLargeEmphasized"
+                      style={{color: colors.primary}}>
+                      Select
+                    </AppText>
+                  </TVFocusable>
+                ) : null}
+              </View>
+              <CurrentDownloadsSection
+                primary={colors.primary}
+                firstActionRef={currentDownloadActionRef}
+                onFirstActionLayout={updateCurrentDownloadActionNode}
+              />
               <MissingDownloadsSection primary={colors.primary} />
               {groups.length > 0 ? (
                 <AppText
                   role="titleLargeEmphasized"
-                  className="mb-4 text-m3-on-background">
+                  className="mb-4 text-m3-on-background"
+                  style={{paddingLeft: isTV ? 12 : 6}}>
                   Downloaded
                 </AppText>
               ) : null}
             </View>
           ) : null
         }
-        renderItem={({item}) => (
-          <MediaPosterCard
-            title={item.title}
-            poster={item.poster}
-            width={cardWidth}
-            selected={selectedGroupIds.has(item.id)}
-            selectionMode={isSelectionMode}
-            subtitle={`${item.items.length} ${
-              item.items.length === 1 ? 'Download' : 'Downloads'
-            }`}
-            onPress={() => handleCardPress(item.id)}
-            onLongPress={() => handleCardLongPress(item.id)}
-          />
-        )}
-        ListEmptyComponent={
-          <View className="items-center justify-center py-20">
-            <MaterialCommunityIcons
-              name="download-off-outline"
-              size={72}
-              color={colors.onSurfaceVariant}
+        renderItem={({item, index}) => {
+          const isTopRow = index < columns;
+          const isLastItem = index === groups.length - 1;
+          const isRightmostInRow = (index + 1) % columns === 0;
+
+          return (
+            <MediaPosterCard
+              ref={index === 0 ? firstCardRef : undefined}
+              onLayout={index === 0 ? updateFirstCardNode : undefined}
+              title={item.title}
+              poster={item.poster}
+              width={cardWidth}
+              selected={selectedGroupIds.has(item.id)}
+              selectionMode={isSelectionMode}
+              subtitle={`${item.items.length} ${
+                item.items.length === 1 ? 'Download' : 'Downloads'
+              }`}
+              hasTVPreferredFocus={isTV && screenFocused && !isSelectionMode && index === 0}
+              nextFocusUp={
+                isTopRow ? (selectButtonNode ?? undefined) : undefined
+              }
+              nextFocusRight={
+                isLastItem || (isTopRow && isRightmostInRow)
+                  ? (selectButtonNode ?? undefined)
+                  : undefined
+              }
+              onFocus={() => {
+                if (index === 0 && firstCardNode) {
+                  useTVNavigationStore.getState().setActiveScreenFocusHandle(firstCardNode);
+                }
+              }}
+              onPress={() => handleCardPress(item.id)}
+              onLongPress={() => handleCardLongPress(item.id)}
             />
-            <AppText
-              role="bodyLarge"
-              className="mt-4 text-center text-m3-on-surface-variant">
-              Your downloaded library is empty
-            </AppText>
-          </View>
+          );
+        }}
+        ListEmptyComponent={
+          <DownloadsEmptyState
+            exploreButtonRef={exploreButtonRef}
+            onExploreLayout={updateExploreButtonNode}
+            preferredFocus={currentDownloads.length === 0}
+            onExplore={() => {
+              navigation.getParent<any>()?.navigate('HomeStack');
+            }}
+          />
         }
         showsVerticalScrollIndicator={false}
       />
 
-      {/* Bottom Action Bar in Selection Mode */}
       {isSelectionMode ? (
-        <View
-          style={{
-            bottom: 24,
-            left: 16,
-            position: 'absolute',
-            right: 16,
-            zIndex: 20,
-          }}>
-          <View
-            style={{
-              alignItems: 'center',
-              backgroundColor: colors.surfaceContainerHighest,
-              borderColor: colors.outlineVariant,
-              borderRadius: 24,
-              borderWidth: 1,
-              elevation: 8,
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              shadowColor: '#000',
-              shadowOffset: {width: 0, height: 4},
-              shadowOpacity: 0.35,
-              shadowRadius: 10,
-            }}>
-            <View style={{alignItems: 'center', flexDirection: 'row', gap: 16}}>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={handleToggleSelectAll}
-                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-                <MaterialIcons
-                  name="select-all"
-                  size={24}
-                  color={isAllSelected ? colors.primary : colors.onSurfaceVariant}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={handleInvertSelection}
-                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-                <MaterialCommunityIcons
-                  name="select-inverse"
-                  size={24}
-                  color={colors.onSurfaceVariant}
-                />
-              </TouchableOpacity>
-              <AppText
-                role="labelMediumEmphasized"
-                style={{color: colors.onSurfaceVariant}}>
-                {selectedGroupIds.size} selected
-              </AppText>
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.75}
-              disabled={isDeleting || selectedGroupIds.size === 0}
-              onPress={handleDeletePress}
-              style={{
-                alignItems: 'center',
-                backgroundColor: colors.errorContainer,
-                borderRadius: 16,
-                flexDirection: 'row',
-                gap: 6,
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-              }}>
-              {isDeleting ? (
-                <ActivityIndicator size="small" color={colors.onErrorContainer} />
-              ) : (
-                <>
-                  <MaterialCommunityIcons
-                    name="trash-can-outline"
-                    size={20}
-                    color={colors.onErrorContainer}
-                  />
-                  <AppText
-                    role="labelLargeEmphasized"
-                    style={{
-                      color: colors.onErrorContainer,
-                      fontWeight: '700',
-                    }}>
-                    Delete
-                  </AppText>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
+        <DownloadsSelectionBottomBar
+          selectedCount={selectedGroupIds.size}
+          isAllSelected={isAllSelected}
+          isDeleting={isDeleting}
+          onToggleSelectAll={handleToggleSelectAll}
+          onInvertSelection={handleInvertSelection}
+          onDeletePress={handleDeletePress}
+        />
       ) : null}
-    </View>
+    </TVFocusGuide>
   );
 };
 

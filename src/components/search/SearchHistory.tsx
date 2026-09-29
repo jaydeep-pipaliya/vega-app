@@ -1,0 +1,264 @@
+import React, {memo, useCallback, useState, useRef, useEffect} from 'react';
+import {View, ScrollView, Pressable, findNodeHandle} from 'react-native';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import {useM3Colors} from '../../theme/M3PaletteContext';
+import AppText from '../ui/Text';
+import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
+import {isTV} from '../../lib/tv/constants';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
+
+interface SearchHistoryProps {
+  history: string[];
+  onSelectSearch: (text: string) => void;
+  onEditSearch?: (text: string) => void;
+  onRemoveSearch: (text: string) => void;
+  onClearHistory: () => void;
+  searchFieldNodeHandle?: number | null;
+  onFirstItemNodeHandle?: (node: number | null) => void;
+}
+
+interface HistoryRowProps {
+  search: string;
+  index: number;
+  onPress: (search: string) => void;
+  onEdit?: (search: string) => void;
+  onRemove: (search: string) => void;
+  onItemFocus: (index: number) => void;
+  focusBorderColor: string;
+  nextFocusUp?: number | null;
+  nextFocusDown?: number | null;
+  itemRef?: (el: View | null) => void;
+}
+
+const HistoryRow = memo(
+  ({
+    search,
+    index,
+    onPress,
+    onEdit,
+    onRemove,
+    onItemFocus,
+    focusBorderColor,
+    nextFocusUp,
+    nextFocusDown,
+    itemRef,
+  }: HistoryRowProps) => {
+    const colors = useM3Colors();
+    const [isFocused, setIsFocused] = useState(false);
+
+    const handlePress = useCallback(() => {
+      onPress(search);
+    }, [search, onPress]);
+
+    const handleEdit = useCallback(() => {
+      onEdit?.(search);
+    }, [search, onEdit]);
+
+    const handleRemove = useCallback(() => {
+      onRemove(search);
+    }, [search, onRemove]);
+
+    const handleFocus = useCallback(() => {
+      setIsFocused(true);
+      onItemFocus(index);
+    }, [onItemFocus, index]);
+
+    const handleBlur = useCallback(() => {
+      setIsFocused(false);
+    }, []);
+
+    return (
+      <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+        <Pressable
+          ref={itemRef as any}
+          focusable={true}
+          isTVSelectable={true}
+          nextFocusUp={nextFocusUp ?? undefined}
+          nextFocusDown={nextFocusDown ?? undefined}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          onPress={handlePress}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel={`Search ${search} from history`}
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            borderRadius: 20,
+            paddingHorizontal: 16,
+            paddingVertical: 14,
+            backgroundColor: isFocused
+              ? colors.surfaceContainerHigh
+              : colors.surfaceContainerLow,
+            borderWidth: 2.5,
+            borderColor: isFocused ? focusBorderColor : 'transparent',
+          }}>
+          <MaterialCommunityIcons
+            name="history"
+            size={22}
+            color={isFocused ? colors.primary : colors.onSurfaceVariant}
+          />
+          <AppText
+            role="bodyLarge"
+            numberOfLines={1}
+            style={{
+              flex: 1,
+              marginLeft: 12,
+              color: colors.onSurface,
+              fontWeight: isFocused ? '700' : '500',
+            }}>
+            {search}
+          </AppText>
+          <MaterialCommunityIcons
+            name="arrow-top-right"
+            size={18}
+            color={isFocused ? colors.primary : colors.onSurfaceVariant}
+          />
+        </Pressable>
+        {!isTV && (
+          <View style={{flexDirection: 'row', alignItems: 'center', marginLeft: 4}}>
+            {onEdit && (
+              <IconButton
+                icon="pencil-outline"
+                size={18}
+                label={`Edit ${search}`}
+                onPress={handleEdit}
+              />
+            )}
+            <IconButton
+              icon="close"
+              size={18}
+              label={`Remove ${search} from recent searches`}
+              onPress={handleRemove}
+            />
+          </View>
+        )}
+      </View>
+    );
+  },
+);
+
+const SearchHistory: React.FC<SearchHistoryProps> = ({
+  history,
+  onSelectSearch,
+  onEditSearch,
+  onRemoveSearch,
+  onClearHistory,
+  searchFieldNodeHandle,
+  onFirstItemNodeHandle,
+}) => {
+  const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const itemRefs = useRef<(View | null)[]>([]);
+  const [nodeHandles, setNodeHandles] = useState<(number | null)[]>([]);
+
+  const visibleHistory = isTV ? history.slice(0, 10) : history;
+
+  useEffect(() => {
+    if (!isTV) return;
+    const handles = visibleHistory.map((_, i) =>
+      itemRefs.current[i] ? findNodeHandle(itemRefs.current[i]) : null,
+    );
+    setNodeHandles(handles);
+    if (handles[0] && onFirstItemNodeHandle) {
+      onFirstItemNodeHandle(handles[0]);
+    }
+  }, [visibleHistory, onFirstItemNodeHandle]);
+
+  const handleSelect = useCallback(
+    (text: string) => {
+      onSelectSearch(text);
+    },
+    [onSelectSearch],
+  );
+
+  const handleItemFocus = useCallback((index: number) => {
+    scrollViewRef.current?.scrollTo({
+      y: index * 60,
+      animated: true,
+    });
+  }, []);
+
+  if (history.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={{flex: 1, paddingHorizontal: 16, paddingTop: 16}}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 12,
+        }}>
+        <AppText role="titleMediumEmphasized" style={{color: colors.onSurface}}>
+          Recent Searches
+        </AppText>
+        {!isTV && (
+          <Button compact variant="text" onPress={onClearHistory}>
+            Clear all
+          </Button>
+        )}
+      </View>
+
+      {isTV ? (
+        <View style={{paddingBottom: 20}}>
+          {visibleHistory.map((item, index) => {
+            const isFirst = index === 0;
+            const isLast = index === visibleHistory.length - 1;
+            const nextUp = isFirst
+              ? searchFieldNodeHandle
+              : nodeHandles[index - 1];
+            const nextDown = isLast
+              ? nodeHandles[index]
+              : nodeHandles[index + 1];
+
+            return (
+              <HistoryRow
+                key={`history-${item}-${index}`}
+                search={item}
+                index={index}
+                itemRef={el => {
+                  itemRefs.current[index] = el;
+                }}
+                nextFocusUp={nextUp}
+                nextFocusDown={nextDown}
+                onPress={handleSelect}
+                onEdit={onEditSearch}
+                onRemove={onRemoveSearch}
+                onItemFocus={handleItemFocus}
+                focusBorderColor={focusBorderColor}
+              />
+            );
+          })}
+        </View>
+      ) : (
+        <ScrollView
+          ref={scrollViewRef}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{paddingBottom: 20}}>
+          {visibleHistory.map((item, index) => (
+            <HistoryRow
+              key={`history-${item}-${index}`}
+              search={item}
+              index={index}
+              onPress={handleSelect}
+              onEdit={onEditSearch}
+              onRemove={onRemoveSearch}
+              onItemFocus={handleItemFocus}
+              focusBorderColor={focusBorderColor}
+            />
+          ))}
+        </ScrollView>
+      )}
+    </View>
+  );
+};
+
+export default memo(SearchHistory);
+

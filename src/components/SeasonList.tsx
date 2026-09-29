@@ -8,15 +8,19 @@ import React, {
 import {
   View,
   TouchableOpacity,
+  Pressable,
   ToastAndroid,
   FlatList,
   ActivityIndicator,
   Image,
   ScrollView,
   TextInput,
+  BackHandler,
+  findNodeHandle,
+  UIManager,
 } from 'react-native';
 import {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {useNavigation} from '@react-navigation/native';
+import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Feather from '@expo/vector-icons/Feather';
@@ -34,6 +38,7 @@ import {RootStackParamList} from '../App';
 import Downloader from './Downloader';
 import {cacheStorage, mainStorage, settingsStorage} from '../lib/storage';
 import {ifExists} from '../lib/file/ifExists';
+import {isTV} from '../lib/tv';
 import {useEpisodes, useStreamData} from '../lib/hooks/useEpisodes';
 import SkeletonLoader from './Skeleton';
 import DropdownField from './ui/DropdownField';
@@ -50,6 +55,9 @@ import {LEGACY_TERTIARY_BACKGROUND} from '../theme/seeds';
 import Text from './ui/Text';
 import EpisodeRowContent, {getValidImageUri} from './EpisodeRowContent';
 import {setSyncedEpisodeProgress} from '../lib/sync/syncService';
+import {TVFocusable, TVFocusGuide} from './tv';
+import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
+import SeasonSearchSortBar from './season/SeasonSearchSortBar';
 
 const CONTROL_TEXT = '#F5F0EF';
 const CONTROL_TEXT_MUTED = '#D4CBC9';
@@ -92,6 +100,7 @@ interface StickyMenuState {
 }
 
 interface EpisodeDetailsState {
+  link: string;
   title: string;
   description: string;
   image?: string;
@@ -104,6 +113,225 @@ const getOriginalLinkIndex = <T extends {link: string}>(
 ): number => {
   const originalIndex = links?.findIndex(item => item.link === link) ?? -1;
   return originalIndex >= 0 ? originalIndex : fallbackIndex;
+};
+
+interface EpisodeCardRowProps {
+  item: any;
+  index: number;
+  isFirst: boolean;
+  isCompleted: boolean;
+  isSticky: boolean;
+  onPress: () => void;
+  onBeforePlay?: (control: View | null) => void;
+  onLongPress: () => void;
+  displayTitle: string;
+  primary: string;
+  onShowDetailsPressIn?: () => void;
+  onShowDetails?: () => void;
+  detailsPreferred?: boolean;
+  downloadComponent?: React.ReactNode;
+}
+
+const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
+  item,
+  index,
+  isFirst,
+  isCompleted,
+  isSticky,
+  onPress,
+  onBeforePlay,
+  onLongPress,
+  displayTitle,
+  primary,
+  onShowDetailsPressIn,
+  onShowDetails,
+  detailsPreferred,
+  downloadComponent,
+}) => {
+  const focusBorderColor = useTVFocusBorderColor();
+  const playControlRef = useRef<View>(null);
+
+  if (!isTV) {
+    return (
+      <View
+        key={item.link + index}
+        className={`w-full my-1.5 ${
+          isCompleted || isSticky ? 'opacity-60' : ''
+        }`}>
+        <View
+          className="min-h-[76px] flex-row w-full items-center px-3 py-2"
+          style={{
+            backgroundColor: LEGACY_TERTIARY_BACKGROUND,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.08)',
+          }}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={{
+              minWidth: 0,
+              flex: 1,
+              alignItems: 'center',
+              flexDirection: 'row',
+              gap: 12,
+            }}
+            onPress={onPress}
+            onLongPress={onLongPress}>
+            <EpisodeRowContent
+              title={displayTitle}
+              description={item.description}
+              image={item.image}
+              accentColor={primary}
+              textColor={CONTROL_TEXT}
+              mutedTextColor={CONTROL_TEXT_MUTED}
+              onShowDetailsPressIn={onShowDetailsPressIn}
+              onShowDetails={onShowDetails}
+            />
+          </TouchableOpacity>
+          {downloadComponent}
+        </View>
+      </View>
+    );
+  }
+
+  // TV Layout: Separate focus targets for episode play card, details button, and download button
+  return (
+    <TVFocusGuide
+      autoFocus={Boolean(detailsPreferred)}
+      style={{
+        width: '100%',
+        marginVertical: 4,
+        opacity: isCompleted || isSticky ? 0.6 : 1,
+      }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          width: '100%',
+        }}>
+        <TVFocusable
+          ref={playControlRef}
+          accessibilityRole="button"
+          accessibilityLabel={`Play ${displayTitle}`}
+          focusBorderColor={focusBorderColor}
+          focusScale={1}
+          borderRadius={14}
+          onPress={() => {
+            onBeforePlay?.(playControlRef.current);
+            onPress();
+          }}
+          onLongPress={onLongPress}
+          style={{
+            flex: 1,
+            minHeight: 76,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            backgroundColor: LEGACY_TERTIARY_BACKGROUND,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.08)',
+            gap: 12,
+          }}
+          focusedStyle={{
+            backgroundColor: '#262626',
+          }}>
+          <EpisodeRowContent
+            title={displayTitle}
+            description={item.description}
+            image={item.image}
+            accentColor={primary}
+            textColor={CONTROL_TEXT}
+            mutedTextColor={CONTROL_TEXT_MUTED}
+            onShowDetailsPressIn={onShowDetailsPressIn}
+            onShowDetails={onShowDetails}
+          />
+        </TVFocusable>
+
+        {Boolean(onShowDetails) && (
+          <TVFocusable
+            key={detailsPreferred ? 'restore-details-focus' : 'episode-details'}
+            hasTVPreferredFocus={detailsPreferred}
+            accessibilityRole="button"
+            accessibilityLabel={`Episode details for ${displayTitle}`}
+            focusBorderColor={focusBorderColor}
+            focusScale={1.05}
+            borderRadius={24}
+            onPress={onShowDetails}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              backgroundColor: LEGACY_TERTIARY_BACKGROUND,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginLeft: 8,
+              borderWidth: 1,
+              borderColor: 'rgba(255, 255, 255, 0.08)',
+            }}>
+            <MaterialCommunityIcons
+              name="information-outline"
+              size={22}
+              color={primary}
+            />
+          </TVFocusable>
+        )}
+
+        <View style={{marginLeft: 8}}>
+          {downloadComponent}
+        </View>
+      </View>
+    </TVFocusGuide>
+  );
+};
+
+const ServerRowItem = ({
+  item,
+  index,
+  primary,
+  onPress,
+}: {
+  item: any;
+  index: number;
+  primary: string;
+  onPress: () => void;
+}) => {
+  const [tvFocused, setTvFocused] = useState(false);
+  const focusBorderColor = useTVFocusBorderColor();
+  return (
+    <TVFocusable
+      key={`server-${index}-${item.server}`}
+      onFocus={() => setTvFocused(true)}
+      onBlur={() => setTvFocused(false)}
+      focusBorderColor={focusBorderColor}
+      focusScale={1.02}
+      borderRadius={14}
+      style={{
+        marginBottom: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 12,
+        backgroundColor: tvFocused ? '#262626' : LEGACY_TERTIARY_BACKGROUND,
+        borderRadius: 14,
+        borderWidth: tvFocused ? 2.5 : 1,
+        borderColor: tvFocused ? focusBorderColor : 'rgba(255,255,255,0.08)',
+      }}
+      onPress={onPress}>
+      <View>
+        <Text
+          className="text-lg capitalize font-bold"
+          style={{color: CONTROL_TEXT}}>
+          {item.server || `Server ${index + 1}`}
+        </Text>
+        <Text className="text-xs" style={{color: CONTROL_TEXT_MUTED}}>
+          {item.type ? `Format: ${item.type.toUpperCase()}` : ''}
+        </Text>
+      </View>
+      <MaterialCommunityIcons name="vlc" size={24} color={primary} />
+    </TVFocusable>
+  );
 };
 
 const SeasonList: React.FC<SeasonListProps> = ({
@@ -121,10 +349,33 @@ const SeasonList: React.FC<SeasonListProps> = ({
 }) => {
   const colors = useM3Colors();
   const primary = colors.primary;
+  const focusBorderColor = useTVFocusBorderColor();
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {fetchStreams} = useStreamData();
   const detailsPressRef = useRef<string | null>(null);
+  const playerReturnFocusRef = useRef<View | null>(null);
+  const restorePlayerFocusRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV || !restorePlayerFocusRef.current) return;
+      const timer = setTimeout(() => {
+        const handle = findNodeHandle(playerReturnFocusRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+        restorePlayerFocusRef.current = false;
+      }, 350);
+      return () => clearTimeout(timer);
+    }, []),
+  );
+
+  const rememberPlayerFocus = useCallback((control: View | null) => {
+    if (!isTV) return;
+    playerReturnFocusRef.current = control;
+    restorePlayerFocusRef.current = true;
+  }, []);
   const episodeSortOrderKey = `episodeSortOrder:${providerValue}:${routeParams.link}`;
 
   // Early return if no LinkList provided
@@ -190,6 +441,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
 
   // Search and sorting state - memoized initial values
   const [searchText, setSearchText] = useState<string>('');
+  const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() =>
     mainStorage.getString(episodeSortOrderKey) === 'desc' ? 'desc' : 'asc',
   );
@@ -206,12 +458,26 @@ const SeasonList: React.FC<SeasonListProps> = ({
   const [isLoadingStreams, setIsLoadingStreams] = useState<boolean>(false);
   const [episodeDetails, setEpisodeDetails] =
     useState<EpisodeDetailsState | null>(null);
+  const [restoreDetailsLink, setRestoreDetailsLink] = useState<string | null>(null);
+  const closeEpisodeDetails = useCallback(() => {
+    setRestoreDetailsLink(episodeDetails?.link ?? null);
+    setEpisodeDetails(null);
+  }, [episodeDetails?.link]);
   const [episodeDetailsImageFailed, setEpisodeDetailsImageFailed] =
     useState(false);
 
   useEffect(() => {
     setEpisodeDetailsImageFailed(false);
   }, [episodeDetails?.image]);
+
+  useEffect(() => {
+    if (!isTV || !episodeDetails) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeEpisodeDetails();
+      return true;
+    });
+    return () => sub.remove();
+  }, [episodeDetails, closeEpisodeDetails]);
 
   // VLC loading animation - using shared value so it reacts to vlcLoading state
   const vlcRotation = useSharedValue(0);
@@ -610,65 +876,51 @@ const SeasonList: React.FC<SeasonListProps> = ({
           episodeData: filteredAndSortedEpisodes,
         });
       };
+
       return (
-        <View
+        <EpisodeCardRow
           key={item.link + index}
-          className={`w-full my-1.5
-          ${
-            isCompleted(item.link) || stickyMenu.link === item.link
-              ? 'opacity-60'
-              : ''
+          item={item}
+          index={index}
+          isFirst={index === 0}
+          isCompleted={isCompleted(item.link)}
+          isSticky={stickyMenu.link === item.link}
+          detailsPreferred={isTV && restoreDetailsLink === item.link}
+          displayTitle={item.title}
+          primary={primary}
+          onPress={() => {
+            if (detailsPressRef.current === item.link) {
+              detailsPressRef.current = null;
+              return;
+            }
+            handleEpisodePress();
+          }}
+          onBeforePlay={rememberPlayerFocus}
+          onLongPress={() =>
+            onLongPressHandler(true, item.link, 'series')
           }
-        `}>
-          <View
-            className="min-h-[76px] flex-row w-full items-center px-3 py-2"
-            style={{
-              backgroundColor: LEGACY_TERTIARY_BACKGROUND,
-              // borderColor: CONTROL_OUTLINE,
-              borderRadius: 14,
-              borderWidth: 1,
-            }}>
-            <TouchableOpacity
-              activeOpacity={0.65}
-              className="min-w-0 flex-1 items-center flex-row gap-x-3"
-              onPress={() => {
-                if (detailsPressRef.current === item.link) {
-                  detailsPressRef.current = null;
-                  return;
+          onShowDetailsPressIn={() => {
+            detailsPressRef.current = item.link;
+          }}
+          onShowDetails={
+            item.description?.trim()
+              ? () => {
+                  setRestoreDetailsLink(null);
+                  setEpisodeDetails({
+                    link: item.link,
+                    title: item.title,
+                    description: item.description!.trim(),
+                    image: item.image,
+                  });
+                  setTimeout(() => {
+                    if (detailsPressRef.current === item.link) {
+                      detailsPressRef.current = null;
+                    }
+                  }, 0);
                 }
-                handleEpisodePress();
-              }}
-              onLongPress={() =>
-                onLongPressHandler(true, item.link, 'series')
-              }>
-              <EpisodeRowContent
-                title={item.title}
-                description={item.description}
-                image={item.image}
-                accentColor={primary}
-                textColor={CONTROL_TEXT}
-                mutedTextColor={CONTROL_TEXT_MUTED}
-                onShowDetailsPressIn={() => {
-                  detailsPressRef.current = item.link;
-                }}
-                onShowDetails={
-                  item.description?.trim()
-                    ? () => {
-                        setEpisodeDetails({
-                          title: item.title,
-                          description: item.description!.trim(),
-                          image: item.image,
-                        });
-                        setTimeout(() => {
-                          if (detailsPressRef.current === item.link) {
-                            detailsPressRef.current = null;
-                          }
-                        }, 0);
-                      }
-                    : undefined
-                }
-              />
-            </TouchableOpacity>
+              : undefined
+          }
+          downloadComponent={
             <Downloader
               downloadId={downloadId}
               episodeIndex={downloadIndex}
@@ -700,14 +952,15 @@ const SeasonList: React.FC<SeasonListProps> = ({
                 'series',
               )}
             />
-          </View>
-        </View>
+          }
+        />
       );
     },
     [
       isCompleted,
       stickyMenu.link,
       playHandler,
+      rememberPlayerFocus,
       metaTitle,
       activeSeason?.title,
       episodeList,
@@ -757,71 +1010,56 @@ const SeasonList: React.FC<SeasonListProps> = ({
       };
 
       return (
-        <View
+        <EpisodeCardRow
           key={item.link + index}
-          className={`w-full my-1.5
-          ${
-            isCompleted(item.link) || stickyMenu.link === item.link
-              ? 'opacity-60'
-              : ''
+          item={item}
+          index={index}
+          isFirst={index === 0}
+          isCompleted={isCompleted(item.link)}
+          isSticky={stickyMenu.link === item.link}
+          detailsPreferred={isTV && restoreDetailsLink === item.link}
+          displayTitle={displayTitle}
+          primary={primary}
+          onPress={() => {
+            if (detailsPressRef.current === item.link) {
+              detailsPressRef.current = null;
+              return;
+            }
+            handleEpisodePress();
+          }}
+          onBeforePlay={rememberPlayerFocus}
+          onLongPress={() =>
+            onLongPressHandler(true, item.link, item?.type || 'series')
           }
-        `}>
-          <View
-            className="min-h-[76px] flex-row w-full items-center px-3 py-2"
-            style={{
-              backgroundColor: LEGACY_TERTIARY_BACKGROUND,
-              // borderColor: CONTROL_OUTLINE,
-              borderRadius: 14,
-              borderWidth: 1,
-            }}>
-            <TouchableOpacity
-              activeOpacity={0.65}
-              className="min-w-0 flex-1 items-center flex-row gap-x-3"
-              onPress={() => {
-                if (detailsPressRef.current === item.link) {
-                  detailsPressRef.current = null;
-                  return;
+          onShowDetailsPressIn={() => {
+            detailsPressRef.current = item.link;
+          }}
+          onShowDetails={
+            item.description?.trim()
+              ? () => {
+                  setRestoreDetailsLink(null);
+                  setEpisodeDetails({
+                    link: item.link,
+                    title: item.title,
+                    description: item.description.trim(),
+                    image: item.image,
+                  });
+                  setTimeout(() => {
+                    if (detailsPressRef.current === item.link) {
+                      detailsPressRef.current = null;
+                    }
+                  }, 0);
                 }
-                handleEpisodePress();
-              }}
-              onLongPress={() =>
-                onLongPressHandler(true, item.link, item?.type || 'series')
-              }>
-              <EpisodeRowContent
-                title={displayTitle}
-                description={item.description}
-                image={item.image}
-                accentColor={primary}
-                textColor={CONTROL_TEXT}
-                mutedTextColor={CONTROL_TEXT_MUTED}
-                onShowDetailsPressIn={() => {
-                  detailsPressRef.current = item.link;
-                }}
-                onShowDetails={
-                  item.description?.trim()
-                    ? () => {
-                        setEpisodeDetails({
-                          title: item.title,
-                          description: item.description.trim(),
-                          image: item.image,
-                        });
-                        setTimeout(() => {
-                          if (detailsPressRef.current === item.link) {
-                            detailsPressRef.current = null;
-                          }
-                        }, 0);
-                      }
-                    : undefined
-                }
-              />
-            </TouchableOpacity>
+              : undefined
+          }
+          downloadComponent={
             <Downloader
               downloadId={downloadId}
               episodeIndex={downloadIndex}
               providerValue={providerValue}
               link={item.link}
               type={type}
-              mediaType={item?.type === 'series' ? 'series' : 'movie'}
+              mediaType={isTV ? 'series' : item?.type === 'series' ? 'series' : 'movie'}
               showName={metaTitle}
               seasonTitle={activeSeason.title}
               episodeName={item.title}
@@ -852,14 +1090,15 @@ const SeasonList: React.FC<SeasonListProps> = ({
                   : createDesktopCompatibleFileName(metaTitle, 'movie')
               }
             />
-          </View>
-        </View>
+          }
+        />
       );
     },
     [
       isCompleted,
       stickyMenu.link,
       playHandler,
+      rememberPlayerFocus,
       metaTitle,
       activeSeason?.title,
       activeSeason?.directLinks,
@@ -876,34 +1115,19 @@ const SeasonList: React.FC<SeasonListProps> = ({
   // Memoized server render item
   const renderServerItem = useCallback(
     (item: any, index: number) => (
-      <TouchableOpacity
+      <ServerRowItem
         key={`server-${index}-${item.server}`}
-        className="mb-2 flex-row items-center justify-between p-3"
-        style={{
-          backgroundColor: LEGACY_TERTIARY_BACKGROUND,
-          // borderColor: CONTROL_OUTLINE,
-          borderRadius: 14,
-          borderWidth: 1,
-        }}
+        item={item}
+        index={index}
+        primary={primary}
         onPress={() =>
           openExternalPlayer(
             item.link,
             item.headers,
             `${metaTitle || ''} ${item.server || ''}`.trim(),
           )
-        }>
-        <View>
-          <Text
-            className="text-lg capitalize font-bold"
-            style={{color: CONTROL_TEXT}}>
-            {item.server || `Server ${index + 1}`}
-          </Text>
-          <Text className="text-xs" style={{color: CONTROL_TEXT_MUTED}}>
-            {item.type ? `Format: ${item.type.toUpperCase()}` : ''}
-          </Text>
-        </View>
-        <MaterialCommunityIcons name="vlc" size={24} color={primary} />
-      </TouchableOpacity>
+        }
+      />
     ),
     [primary, openExternalPlayer, metaTitle],
   );
@@ -916,6 +1140,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
           <DropdownField
             options={LinkList}
             value={activeSeason}
+            placeholder="Select Season"
             getKey={item =>
               item.episodesLink || item.directLinks?.[0]?.link || item.title
             }
@@ -958,85 +1183,34 @@ const SeasonList: React.FC<SeasonListProps> = ({
 
   return (
     <View>
-      {/* Season Selector */}
-      <DropdownField
-        options={LinkList}
-        value={activeSeason}
-        getKey={item =>
-          item.episodesLink || item.directLinks?.[0]?.link || item.title
-        }
-        getLabel={item => item.title || 'Unknown'}
-        onChange={handleSeasonChange}
-        showFullOptionLabels
-        style={{marginBottom: 8}}
-      />
+      <TVFocusGuide autoFocus={false}>
+        {/* Season Selector */}
+        <DropdownField
+          options={LinkList}
+          value={activeSeason}
+          placeholder="Select Season"
+          getKey={item =>
+            item.episodesLink || item.directLinks?.[0]?.link || item.title
+          }
+          getLabel={item => item.title || 'Unknown'}
+          onChange={handleSeasonChange}
+          showFullOptionLabels
+          style={{marginBottom: 8}}
+        />
 
-      {/* Search and Sort Controls */}
-      {(episodeList.length > 2 ||
-        (activeSeason?.directLinks && activeSeason.directLinks?.length > 2) ||
-        searchText) && (
-        <View className="flex-row items-center mt-2">
-          <View
-            style={{
-              backgroundColor: colors.surfaceContainerHigh,
-              borderColor: colors.outlineVariant,
-              borderRadius: 18,
-              borderWidth: 1,
-              flex: 1,
-              flexDirection: 'row',
-              height: 48,
-              marginRight: 10,
-              overflow: 'hidden',
-            }}>
-            <View
-              style={{
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingLeft: 14,
-              }}>
-              <MaterialCommunityIcons
-                name="magnify"
-                size={22}
-                color={colors.primary}
-              />
-            </View>
-            <TextInput
-              accessibilityLabel="Find episode"
-              placeholder="Find episode"
-              placeholderTextColor={colors.onSurfaceVariant}
-              selectionColor={colors.primary}
-              returnKeyType="search"
-              style={{
-                color: colors.onSurface,
-                flex: 1,
-                fontSize: 16,
-                paddingHorizontal: 10,
-                paddingVertical: 0,
-              }}
-              value={searchText}
-              onChangeText={setSearchText}
-            />
-          </View>
-          <TouchableOpacity
-            accessibilityLabel={
-              sortOrder === 'asc'
-                ? 'Sort episodes descending'
-                : 'Sort episodes ascending'
-            }
-            className="h-12 w-12 flex-row items-center justify-center"
-            style={{
-              backgroundColor: colors.secondaryContainer,
-              borderRadius: 18,
-            }}
-            onPress={toggleSortOrder}>
-            <MaterialCommunityIcons
-              name={sortOrder === 'asc' ? 'sort-ascending' : 'sort-descending'}
-              size={24}
-              color={colors.onSecondaryContainer}
-            />
-          </TouchableOpacity>
-        </View>
-      )}
+        {/* Search and Sort Controls */}
+        {(episodeList.length > 2 ||
+          (activeSeason?.directLinks && activeSeason.directLinks?.length > 2) ||
+          searchText) && (
+          <SeasonSearchSortBar
+            searchText={searchText}
+            setSearchText={setSearchText}
+            sortOrder={sortOrder}
+            toggleSortOrder={toggleSortOrder}
+            focusBorderColor={focusBorderColor}
+          />
+        )}
+      </TVFocusGuide>
 
       {/* Episode/Direct Links List */}
       <View className="w-full mt-3">
@@ -1048,7 +1222,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
             renderItem={renderEpisodeItem}
             maxToRenderPerBatch={10}
             windowSize={10}
-            removeClippedSubviews={true}
+            removeClippedSubviews={!isTV}
           />
         )}
 
@@ -1061,7 +1235,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
               renderItem={renderDirectLinkItem}
               maxToRenderPerBatch={10}
               windowSize={10}
-              removeClippedSubviews={true}
+              removeClippedSubviews={!isTV}
             />
           </View>
         )}
@@ -1094,7 +1268,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
 
       <MaterialDialogSurface
         visible={episodeDetails !== null}
-        onDismiss={() => setEpisodeDetails(null)}
+        onDismiss={closeEpisodeDetails}
         style={{padding: 0}}>
         {episodeDetails ? (
           <>
@@ -1123,22 +1297,72 @@ const SeasonList: React.FC<SeasonListProps> = ({
               </View>
             )}
             <View style={{padding: 20}}>
-              <Text
-                role="titleLarge"
-                style={{color: colors.onSurface, fontWeight: '700'}}>
-                {episodeDetails.title}
-              </Text>
-              <ScrollView style={{maxHeight: 230}}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 8,
+                }}>
+                <Text
+                  role="titleLarge"
+                  style={{
+                    color: colors.onSurface,
+                    fontWeight: '700',
+                    flex: 1,
+                    marginRight: 8,
+                  }}>
+                  {episodeDetails.title}
+                </Text>
+                {isTV && (
+                  <TVFocusable
+                    hasTVPreferredFocus={true}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
+                    borderRadius={18}
+                    focusScale={1}
+                    focusBorderColor={focusBorderColor}
+                    onPress={closeEpisodeDetails}
+                    style={{padding: 4}}>
+                    <MaterialCommunityIcons
+                      name="close"
+                      size={24}
+                      color="#CCCCCC"
+                    />
+                  </TVFocusable>
+                )}
+              </View>
+              <ScrollView style={{maxHeight: 230}} showsVerticalScrollIndicator={false}>
                 <Text
                   role="bodyMedium"
                   style={{
                     color: colors.onSurfaceVariant,
                     lineHeight: 22,
-                    marginTop: 10,
+                    marginTop: 4,
                   }}>
                   {episodeDetails.description}
                 </Text>
               </ScrollView>
+              {isTV && (
+                <TVFocusable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close episode details"
+                  borderRadius={14}
+                  focusScale={1}
+                  focusBorderColor={focusBorderColor}
+                  onPress={closeEpisodeDetails}
+                  style={{
+                    marginTop: 16,
+                    paddingVertical: 12,
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: 14,
+                    alignItems: 'center',
+                  }}>
+                  <Text style={{color: '#FFFFFF', fontWeight: '600', fontSize: 15}}>
+                    Close
+                  </Text>
+                </TVFocusable>
+              )}
             </View>
           </>
         ) : null}
@@ -1175,11 +1399,19 @@ const SeasonList: React.FC<SeasonListProps> = ({
               )}
             </ScrollView>
 
-            <TouchableOpacity
-              className="mt-4 py-3"
+            <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
               style={{
+                marginTop: 16,
+                paddingVertical: 12,
                 backgroundColor: colors.secondaryContainer,
                 borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
               onPress={() => setShowServerModal(false)}>
               <Text
@@ -1187,7 +1419,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
                 style={{color: colors.onSecondaryContainer}}>
                 Cancel
               </Text>
-            </TouchableOpacity>
+            </TVFocusable>
           </>
         )}
       </MaterialDialogSurface>
@@ -1202,38 +1434,62 @@ const SeasonList: React.FC<SeasonListProps> = ({
         </Text>
         <View style={{gap: 10}}>
           {isCompleted(stickyMenu.link || '') ? (
-            <TouchableOpacity
-              className="h-12 flex-row items-center gap-3 px-4"
+            <TVFocusable
+              accessibilityRole="button"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
               style={{
+                height: 48,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
                 backgroundColor: colors.surfaceContainerHighest,
                 borderRadius: 18,
               }}
               onPress={markAsUnwatched}>
-              <Ionicons name="checkmark-done" size={30} color={primary} />
+              <Ionicons name="checkmark-done" size={28} color={primary} />
               <Text style={{color: colors.onSurface}}>Mark as unwatched</Text>
-            </TouchableOpacity>
+            </TVFocusable>
           ) : (
-            <TouchableOpacity
-              className="h-12 flex-row items-center gap-3 px-4"
+            <TVFocusable
+              accessibilityRole="button"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
               style={{
+                height: 48,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
                 backgroundColor: colors.surfaceContainerHighest,
                 borderRadius: 18,
               }}
               onPress={markAsWatched}>
               <Ionicons name="checkmark" size={25} color={primary} />
               <Text style={{color: colors.onSurface}}>Mark as watched</Text>
-            </TouchableOpacity>
+            </TVFocusable>
           )}
-          <TouchableOpacity
-            className="h-12 flex-row items-center gap-3 px-4"
+          <TVFocusable
+            accessibilityRole="button"
+            borderRadius={18}
+            focusScale={1}
+            focusBorderColor={focusBorderColor}
             style={{
+              height: 48,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingHorizontal: 16,
               backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 18,
             }}
             onPress={handleStickyMenuExternalPlayer}>
             <Feather name="external-link" size={20} color={primary} />
             <Text style={{color: colors.onSurface}}>External player</Text>
-          </TouchableOpacity>
+          </TVFocusable>
         </View>
       </MaterialDialogSurface>
     </View>

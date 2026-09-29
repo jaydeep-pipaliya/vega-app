@@ -314,7 +314,7 @@ export const startDownload = async (
       location,
       fileName: getOutputName(record),
       fileType: record.videoType || 'mp4',
-      directToSaf: backend.directToSaf,
+      directToSaf: backend.directToSaf && isSafDownloadLocation(location),
       existingFinalDocumentUri: record.finalDocumentUri,
       outputDirectoryNames: getOutputDirectoryNames(record),
     });
@@ -353,7 +353,7 @@ export const startDownload = async (
   } catch (error) {
     const cancelled = cancelledDownloads.has(downloadId);
     const pauseFailed = pauseFailedDownloads.has(downloadId);
-    if (!backend.preservePartialOnFailure) {
+    if (!backend.preservePartialOnFailure || !isSafDownloadLocation(location)) {
       await backend.cleanup(downloadId, record).catch(() => undefined);
     }
     if (cancelled) {
@@ -527,7 +527,7 @@ export const retryDownload = async (downloadId: string): Promise<void> => {
   const location = await ensureDownloadLocationAccess(
     record.downloadLocation || settingsStorage.getDownloadLocationConfig(),
   );
-  if (!location || !isSafDownloadLocation(location)) {
+  if (!location) {
     return;
   }
   settingsStorage.setDownloadLocation(location);

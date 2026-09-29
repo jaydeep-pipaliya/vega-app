@@ -1,6 +1,6 @@
-import {View, ToastAndroid, Linking} from 'react-native';
+import {View, ScrollView, ToastAndroid, Linking, BackHandler, findNodeHandle} from 'react-native';
 // import pkg from '../../../package.json';
-import React, {useState} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {settingsStorage} from '../../lib/storage';
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import * as Application from 'expo-application';
@@ -12,6 +12,10 @@ import SettingsSwitchRow from '../../components/ui/SettingsSwitchRow';
 import AppText from '../../components/ui/Text';
 import LoadingIndicator from '../../components/ui/LoadingIndicator';
 import {showAppDialog} from '../../lib/zustand/appDialogStore';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import {useM3Colors} from '../../theme/M3PaletteContext';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
 
 const deletePartialFile = async (filePath: string) => {
   try {
@@ -168,7 +172,12 @@ export const checkForUpdate = async (
   setUpdateLoading(false);
 };
 
-const About = () => {
+const About = ({navigation}: any) => {
+  const colors = useM3Colors();
+  const backRef = useRef<View>(null);
+  const autoDownloadRef = useRef<View>(null);
+  const [backHandle, setBackHandle] = useState<number | null>(null);
+  const [autoDownloadHandle, setAutoDownloadHandle] = useState<number | null>(null);
   const [updateLoading, setUpdateLoading] = useState(false);
   const [autoDownload, setAutoDownload] = useState(
     settingsStorage.isAutoDownloadEnabled(),
@@ -177,65 +186,112 @@ const About = () => {
     settingsStorage.isAutoCheckUpdateEnabled(),
   );
 
+  useEffect(() => {
+    if (!isTV) {
+      return;
+    }
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (navigation?.canGoBack?.()) {
+        navigation.goBack();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [navigation]);
+
   return (
-    <View className="flex-1 bg-m3-background px-5 pt-5">
-      <View className="mb-7">
-        <AppText
-          role="headlineLargeEmphasized"
-          className="text-m3-on-background">
-          About Vega
-        </AppText>
-        <AppText role="bodyLarge" className="mt-1 text-m3-on-surface-variant">
-          App information and updates
-        </AppText>
-      </View>
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusDown={true} style={{flex: 1}}>
+      <ScrollView
+        focusable={false}
+        accessible={false}
+        style={{flex: 1, backgroundColor: colors.background}}
+        contentContainerStyle={{padding: 20, paddingBottom: 40}}
+        showsVerticalScrollIndicator={false}>
+        <View className="mb-7">
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12}}>
+            <TVFocusable
+              ref={backRef}
+              onLayout={() => setBackHandle(findNodeHandle(backRef.current))}
+              nextFocusDown={autoDownloadHandle}
+              hasTVPreferredFocus={isTV}
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              onPress={() => navigation.goBack()}
+              borderRadius={22}
+              style={{
+                alignItems: 'center',
+                height: 44,
+                justifyContent: 'center',
+                marginRight: 10,
+                width: 44,
+              }}>
+              <MaterialCommunityIcons
+                name="arrow-left"
+                size={28}
+                color={colors.onBackground}
+              />
+            </TVFocusable>
+            <AppText
+              role="headlineLargeEmphasized"
+              className="text-m3-on-background">
+              About Vega
+            </AppText>
+          </View>
+          <AppText role="bodyLarge" className="mt-1 text-m3-on-surface-variant">
+            App information and updates
+          </AppText>
+        </View>
 
-      <SettingsSection title="App">
-        <SettingsRow
-          title="Version"
-          description={`Vega ${Application.nativeApplicationVersion || ''}`}
-          icon="information-outline"
-          divider={Constants.expoConfig?.extra?.isPlayStore}
-        />
+        <SettingsSection title="App">
+          <SettingsRow
+            title="Version"
+            description={`Vega ${Application.nativeApplicationVersion || ''}`}
+            icon="information-outline"
+            divider={Constants.expoConfig?.extra?.isPlayStore}
+          />
 
-        {!Constants.expoConfig?.extra?.isPlayStore && (
-          <>
-            <SettingsSwitchRow
-              title="Auto install updates"
-              description="Download and install new releases automatically"
-              value={autoDownload}
-              onValueChange={next => {
-                setAutoDownload(next);
-                settingsStorage.setAutoDownloadEnabled(next);
-              }}
-            />
-            <SettingsSwitchRow
-              title="Check on startup"
-              description="Look for a new release when Vega opens"
-              value={autoCheckUpdate}
-              onValueChange={next => {
-                setAutoCheckUpdate(next);
-                settingsStorage.setAutoCheckUpdateEnabled(next);
-              }}
-            />
-            <SettingsRow
-              title="Check for updates"
-              description="Compare this build with the latest release"
-              icon="update"
-              divider={false}
-              trailing={
-                updateLoading ? <LoadingIndicator size={14} /> : undefined
-              }
-              onPress={
-                updateLoading
-                  ? undefined
-                  : () => checkForUpdate(setUpdateLoading, autoDownload, true)
-              }
-            />
-          </>
-        )}
-      </SettingsSection>
-    </View>
+          {!Constants.expoConfig?.extra?.isPlayStore && (
+            <>
+              <SettingsSwitchRow
+                ref={autoDownloadRef}
+                nextFocusUp={backHandle}
+                title="Auto install updates"
+                description="Download and install new releases automatically"
+                value={autoDownload}
+                onValueChange={next => {
+                  setAutoDownload(next);
+                  settingsStorage.setAutoDownloadEnabled(next);
+                }}
+              />
+              <SettingsSwitchRow
+                title="Check on startup"
+                description="Look for a new release when Vega opens"
+                value={autoCheckUpdate}
+                onValueChange={next => {
+                  setAutoCheckUpdate(next);
+                  settingsStorage.setAutoCheckUpdateEnabled(next);
+                }}
+              />
+              <SettingsRow
+                title="Check for updates"
+                description="Compare this build with the latest release"
+                icon="update"
+                divider={false}
+                trailing={
+                  updateLoading ? <LoadingIndicator size={14} /> : undefined
+                }
+                onPress={
+                  updateLoading
+                    ? undefined
+                    : () => checkForUpdate(setUpdateLoading, autoDownload, true)
+                }
+              />
+            </>
+          )}
+        </SettingsSection>
+      </ScrollView>
+    </TVFocusGuide>
   );
 };
 

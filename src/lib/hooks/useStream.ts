@@ -455,7 +455,7 @@ export const useStream = ({
       let remoteStreams: Stream[] = [];
       try {
         const controller = new AbortController();
-        const timeoutMs = 25000;
+        const timeoutMs = 45000;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         try {
           const data = await providerManager.getStream({

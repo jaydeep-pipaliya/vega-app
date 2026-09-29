@@ -10,6 +10,8 @@ import Surface from '../../../components/ui/Surface';
 import SettingsSwitchRow from '../../../components/ui/SettingsSwitchRow';
 import {setLauncherIcon, type LauncherIcon} from '../../../lib/launcherIcon';
 import {settingsStorage} from '../../../lib/storage';
+import {TVFocusable} from '../../../components/tv/TVFocusable';
+import {isTV} from '../../../lib/tv';
 
 const LAUNCHER_ICONS: Array<{id: LauncherIcon; label: string; color: string}> =
   [
@@ -41,16 +43,16 @@ const AppearancePreference = () => {
         Appearance
       </AppText>
       <Surface level="low" className="overflow-hidden">
-        <Pressable
+        <TVFocusable
           testID="accent-source-wallpaper"
           disabled={!isDynamicColorAvailable}
           onPress={() => setSource('wallpaper')}
-          className="flex-row items-center p-4"
-          style={({pressed}) => ({
-            backgroundColor: pressed
-              ? colors.surfaceContainerHighest
-              : 'transparent',
-          })}>
+          borderRadius={12}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 16,
+          }}>
           <View
             className="mr-4 h-11 w-11 items-center justify-center rounded-2xl"
             style={{backgroundColor: colors.tertiaryContainer}}>
@@ -83,7 +85,7 @@ const AppearancePreference = () => {
               color={colors.primary}
             />
           ) : null}
-        </Pressable>
+        </TVFocusable>
 
         <View className="h-px bg-m3-outline-variant" />
 
@@ -100,12 +102,13 @@ const AppearancePreference = () => {
                 source === 'custom' &&
                 primary.toLowerCase() === seed.color.toLowerCase();
               return (
-                <Pressable
+                <TVFocusable
                   key={seed.color}
                   testID={`accent-seed-${seed.name}`}
                   accessibilityRole="button"
                   accessibilityLabel={`${seed.name} accent color`}
                   accessibilityState={{selected: isSelected}}
+                  borderRadius={18}
                   onPress={() => {
                     setSource('custom');
                     setPrimary(seed.color);
@@ -127,13 +130,11 @@ const AppearancePreference = () => {
                     size={22}
                     color={isSelected ? colors.scrim : '#17100F'}
                   />
-                </Pressable>
+                </TVFocusable>
               );
             })}
           </View>
         </View>
-
-        <View className="h-px bg-m3-outline-variant" />
 
         <View className="h-px bg-m3-outline-variant" />
 
@@ -145,17 +146,20 @@ const AppearancePreference = () => {
             <AppText
               role="bodySmall"
               className="mt-1 text-m3-on-surface-variant">
-              Choose the icon color shown on your home screen
+              {isTV
+                ? 'Choose the icon color shown on your home screen. It applies after you leave Vega.'
+                : 'Choose the icon color shown on your home screen'}
             </AppText>
             <View className="mt-4 flex-row gap-3">
               {LAUNCHER_ICONS.map(icon => {
                 const isSelected = launcherIcon === icon.id;
                 return (
-                  <Pressable
+                  <TVFocusable
                     key={icon.id}
                     accessibilityRole="button"
                     accessibilityLabel={`${icon.label} launcher icon`}
                     accessibilityState={{selected: isSelected}}
+                    borderRadius={18}
                     onPress={async () => {
                       try {
                         await setLauncherIcon(icon.id);
@@ -190,7 +194,7 @@ const AppearancePreference = () => {
                             : '#17100F'
                       }
                     />
-                  </Pressable>
+                  </TVFocusable>
                 );
               })}
             </View>

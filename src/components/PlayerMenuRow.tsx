@@ -1,6 +1,8 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import React from 'react';
-import {Text, TouchableOpacity, View} from 'react-native';
+import React, {useState} from 'react';
+import {Pressable, Text, TouchableOpacity, View} from 'react-native';
+import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
+import {isTV} from '../lib/tv/constants';
 
 type PlayerMenuRowProps = {
   title: string;
@@ -10,10 +12,12 @@ type PlayerMenuRowProps = {
   selected?: boolean;
   accentColor: string;
   icon?: keyof typeof MaterialIcons.glyphMap;
+  hasTVPreferredFocus?: boolean;
+  onTVFocus?: () => void;
   onPress: () => void;
 };
 
-const PlayerMenuRow = ({
+const PlayerMenuRow = React.forwardRef<View, PlayerMenuRowProps>(({
   title,
   detail,
   quality,
@@ -21,27 +25,19 @@ const PlayerMenuRow = ({
   selected = false,
   accentColor,
   icon,
+  hasTVPreferredFocus = false,
+  onTVFocus,
   onPress,
-}: PlayerMenuRowProps) => {
+}, ref) => {
+  const focusBorderColor = useTVFocusBorderColor(accentColor);
+  const [tvFocused, setTvFocused] = useState(false);
   const allTags = [
     ...(quality && quality.trim() ? [quality.trim()] : []),
     ...(tags || []),
   ];
 
-  return (
-    <TouchableOpacity
-      activeOpacity={0.72}
-      accessibilityRole="button"
-      accessibilityState={{selected}}
-      className="mx-1 my-1 min-h-12 flex-row items-center rounded-xl px-3 py-2.5"
-      style={{
-        backgroundColor: selected
-          ? 'rgba(255,255,255,0.11)'
-          : 'rgba(255,255,255,0.045)',
-        borderWidth: 1,
-        borderColor: selected ? accentColor : 'rgba(255,255,255,0.07)',
-      }}
-      onPress={onPress}>
+  const content = (
+    <>
       {icon && (
         <MaterialIcons
           name={icon}
@@ -86,9 +82,53 @@ const PlayerMenuRow = ({
           style={{marginLeft: 12}}
         />
       )}
-    </TouchableOpacity>
+    </>
   );
-};
+
+  if (!isTV) {
+    return (
+      <TouchableOpacity
+        activeOpacity={0.72}
+        accessibilityRole="button"
+        accessibilityState={{selected}}
+        className="mx-1 my-1 min-h-12 flex-row items-center rounded-xl px-3 py-2.5"
+        style={{
+          backgroundColor: selected
+            ? 'rgba(255,255,255,0.11)'
+            : 'rgba(255,255,255,0.045)',
+          borderWidth: 1,
+          borderColor: selected ? accentColor : 'rgba(255,255,255,0.07)',
+        }}
+        onPress={onPress}>
+        {content}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <Pressable
+      ref={ref as any}
+      accessibilityRole="button"
+      accessibilityState={{selected}}
+      focusable
+      isTVSelectable
+      hasTVPreferredFocus={hasTVPreferredFocus}
+      onFocus={() => {
+        setTvFocused(true);
+        onTVFocus?.();
+      }}
+      onBlur={() => setTvFocused(false)}
+      className="mx-1 my-1 min-h-12 flex-row items-center rounded-xl px-3 py-2.5"
+      style={{
+        backgroundColor: 'rgba(255,255,255,0.045)',
+        borderWidth: tvFocused ? 2.5 : 1,
+        borderColor: tvFocused ? focusBorderColor : 'rgba(255,255,255,0.07)',
+      }}
+      onPress={onPress}>
+      {content}
+    </Pressable>
+  );
+});
 
 export default PlayerMenuRow;
 

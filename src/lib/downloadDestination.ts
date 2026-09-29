@@ -1,6 +1,6 @@
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import * as FileSystem from 'expo-file-system/legacy';
-import {NativeModules} from 'react-native';
+import {NativeModules, Platform} from 'react-native';
 import {
   copyFileToSaf,
   DownloadLocationConfig,
@@ -8,6 +8,7 @@ import {
   getDownloadFileName,
   getDownloadMimeType,
   getOrCreateSafDirectory,
+  getTVDefaultDownloadLocation,
   isSafDownloadLocation,
   validateDownloadLocationAccess,
 } from './downloadLocation';
@@ -188,7 +189,18 @@ export const finalizeDownloadOutput = async ({
   }
 
   if (!isSafDownloadLocation(location)) {
-    throw new Error('SAF download location is required');
+    if (!Platform?.isTV || location.path !== getTVDefaultDownloadLocation().path) {
+      throw new Error('SAF download location is required');
+    }
+    let directoryPath = location.path;
+    for (const directoryName of outputDirectoryNames || []) {
+      directoryPath = `${directoryPath}/${sanitizeDownloadFileName(directoryName)}`;
+    }
+    await RNFS.mkdir(directoryPath);
+    const targetPath = `${directoryPath}/${getDownloadFileName(fileName, fileType)}`;
+    await RNFS.moveFile(stagingPath, targetPath);
+    await cleanupDownloadStaging(downloadId);
+    return {filePath: targetPath, size: await getLocalFileSize(targetPath)};
   }
 
   let directoryUri = location.uri;

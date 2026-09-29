@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, TouchableOpacity, ToastAndroid } from 'react-native';
+import { View, TouchableOpacity, ToastAndroid, Pressable, UIManager, findNodeHandle } from 'react-native';
 import { ifExists } from '../lib/file/ifExists';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import Octicons from '@expo/vector-icons/Octicons';
@@ -13,6 +13,9 @@ import { downloadManager } from '../lib/downloader';
 import DownloadBottomSheet from './DownloadBottomSheet';
 import LoadingIndicator from './ui/LoadingIndicator';
 import { settingsStorage } from '../lib/storage';
+import { useTVFocusBorderColor } from '../lib/tv/useTVFocusBorderColor';
+import { isTV } from '../lib/tv';
+import { TVFocusable } from './tv';
 import { providerManager } from '../lib/services/ProviderManager';
 import { deleteDownloadedFileByBaseName } from '../lib/downloadLocation';
 import { deleteDownloadOutput } from '../lib/downloadDestination';
@@ -176,6 +179,7 @@ const DownloadComponent = ({
 }) => {
   const colors = useM3Colors();
   const primary = colors.primary;
+  const focusBorderColor = useTVFocusBorderColor(primary);
   const provider = useContentStore(state => state.provider);
 
   const videoDownload = useDownloadsStore(
@@ -206,6 +210,18 @@ const DownloadComponent = ({
     string | boolean
   >(false);
   const [downloadModal, setDownloadModal] = useState(false);
+  const downloadButtonRef = React.useRef<View>(null);
+  const setDownloadModalWithFocus = (visible: boolean) => {
+    setDownloadModal(visible);
+    if (!visible && isTV) {
+      setTimeout(() => {
+        const handle = findNodeHandle(downloadButtonRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+      }, 150);
+    }
+  };
   const [servers, setServers] = useState<Stream[]>([]);
   const [serverLoading, setServerLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -566,7 +582,54 @@ const DownloadComponent = ({
         collapsable={false}
         className="h-12 w-12 flex-row items-center justify-center rounded-full"
         style={{ backgroundColor: LEGACY_TERTIARY_BACKGROUND }}>
-        {downloadActive ? (
+        {isTV ? (
+          <TVFocusable
+            ref={downloadButtonRef}
+            accessibilityRole="button"
+            accessibilityLabel={
+              downloadActive
+                ? 'Cancel download'
+                : isVideoDownloaded || hasDownloadedSubs
+                ? 'Downloaded episode. Tap to manage.'
+                : 'Download episode'
+            }
+            borderRadius={24}
+            focusScale={1.15}
+            focusBorderColor={focusBorderColor}
+            onPress={() => {
+              if (serverLoading) return;
+              if (downloadActive) {
+                showCancelConfirmation();
+                return;
+              }
+              fetchAndOpenSheet(false);
+            }}
+            onLongPress={() => {
+              if (serverLoading || downloadActive) return;
+              fetchAndOpenSheet(true);
+            }}
+            style={{
+              height: 48,
+              width: 48,
+              borderRadius: 24,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+            {downloadActive ? (
+              <DownloadProgress
+                downloadedBytes={currentActiveDownload?.downloadedBytes ?? 0}
+                totalBytes={currentActiveDownload?.totalBytes ?? 0}
+                color={primary}
+              />
+            ) : serverLoading ? (
+              <LoadingIndicator size={28} color={primary} />
+            ) : isVideoDownloaded || hasDownloadedSubs ? (
+              <MaterialIcons name="check-circle" size={24} color={primary} />
+            ) : (
+              <Octicons name="download" size={22} color={primary} />
+            )}
+          </TVFocusable>
+        ) : downloadActive ? (
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={
@@ -607,8 +670,11 @@ const DownloadComponent = ({
             )}
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
+          <Pressable
             disabled={serverLoading}
+            accessibilityRole="button"
+            focusable={!serverLoading}
+            isTVSelectable={!serverLoading}
             onPress={() => fetchAndOpenSheet(false)}
             onLongPress={() => {
               if (settingsStorage.getBool('hapticFeedback') !== false) {
@@ -619,7 +685,15 @@ const DownloadComponent = ({
               }
               fetchAndOpenSheet(true);
             }}
-            className="h-12 w-12 items-center justify-center">
+            className="h-12 w-12 items-center justify-center rounded-xl"
+            style={({ pressed, focused }) => ({
+              borderWidth: focused ? 2 : 0,
+              borderColor: focused ? focusBorderColor : 'transparent',
+              backgroundColor: focused
+                ? 'rgba(255, 255, 255, 0.12)'
+                : 'transparent',
+              transform: [{ scale: focused ? 1.15 : pressed ? 0.92 : 1 }],
+            })}>
             {serverLoading ? (
               <LoadingIndicator size={35} color={primary} />
             ) : (
@@ -629,12 +703,12 @@ const DownloadComponent = ({
                 color={primary}
               />
             )}
-          </TouchableOpacity>
+          </Pressable>
         )}
       </View>
       {/* download modal */}
       <DownloadBottomSheet
-        setModal={setDownloadModal}
+        setModal={setDownloadModalWithFocus}
         showModal={downloadModal}
         data={servers}
         loading={serverLoading}

@@ -1,11 +1,21 @@
-import {useNavigation} from '@react-navigation/native';
+import {useFocusEffect, useIsFocused, useNavigation} from '@react-navigation/native';
 import {
   NativeStackNavigationProp,
   NativeStackScreenProps,
 } from '@react-navigation/native-stack';
 import {StatusBar} from 'expo-status-bar';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {FlatList, Image, Linking, RefreshControl, ToastAndroid, View} from 'react-native';
+import {
+  BackHandler,
+  FlatList,
+  Image,
+  Linking,
+  RefreshControl,
+  ToastAndroid,
+  UIManager,
+  View,
+  findNodeHandle,
+} from 'react-native';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import {HomeStackParamList, TabStackParamList} from '../../App';
 import {isSafeExternalUrl} from '../../lib/sandbox/urlGuard';
@@ -27,6 +37,9 @@ import ContentOverview from './components/ContentOverview';
 import InfoStoryModal from './components/InfoStoryModal';
 import InfoSkeleton from './components/InfoSkeleton';
 import StatusBarScrim from '../../components/ui/StatusBarScrim';
+import {TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Info'>;
 
@@ -53,6 +66,44 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
   );
   const [readMore, setReadMore] = useState(false);
   const [storyVisible, setStoryVisible] = useState(false);
+  const screenFocused = useIsFocused();
+  const backButtonRef = useRef<View>(null);
+  const registerBackFocus = useCallback(() => {
+    if (!isTV || !screenFocused) return;
+    const handle = findNodeHandle(backButtonRef.current);
+    if (handle) useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+  }, [screenFocused]);
+
+  useFocusEffect(useCallback(() => {
+    if (!isTV) return;
+    const timer = setTimeout(() => {
+      registerBackFocus();
+      const handle = findNodeHandle(backButtonRef.current);
+      if (handle) {
+        UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+      }
+    }, 200);
+    return () => {
+      clearTimeout(timer);
+      const handle = findNodeHandle(backButtonRef.current);
+      const store = useTVNavigationStore.getState();
+      if (handle && store.activeScreenFocusHandle === handle) {
+        store.setActiveScreenFocusHandle(null);
+      }
+    };
+  }, [registerBackFocus]));
+  const exploreRef = useRef<View>(null);
+  const closeStory = useCallback(() => {
+    setStoryVisible(false);
+    if (isTV) {
+      setTimeout(() => {
+        const handle = findNodeHandle(exploreRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+      }, 100);
+    }
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [isAtTop, setIsAtTop] = useState(true);
@@ -99,6 +150,15 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
     meta?.background ||
     info?.image ||
     'https://placehold.jp/24/363636/ffffff/900x1200.png?text=Vega';
+
+  useEffect(() => {
+    const onBack = () => {
+      navigation.goBack();
+      return true;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [navigation]);
 
   useEffect(() => {
     if (!dynamicInfoAccentEnabled) {
@@ -323,6 +383,7 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
           </View>
           <StatusBarScrim visible={statusBarScrimVisible} />
           <StatusBar style="light" />
+          <TVFocusGuide autoFocus={true} trapFocusDown={true} trapFocusRight={true} style={{flex: 1}}>
           <FlatList
             style={{backgroundColor: 'transparent'}}
             data={[]}
@@ -337,11 +398,14 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
                   isLoading={isLoading && !info}
                   logo={displayLogo}
                   onBack={navigation.goBack}
+                  backButtonRef={backButtonRef}
+                  onBackButtonLayout={registerBackFocus}
                   onOpenStory={
                     info?.tmdbId || info?.imdbId
                       ? () => setStoryVisible(true)
                       : undefined
                   }
+                  exploreRef={exploreRef}
                   onOpenWeb={webUrl ? handleOpenWeb : undefined}
                   onSearchTitle={searchTitle}
                   onToggleLibrary={toggleLibrary}
@@ -411,12 +475,13 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
               />
             }
           />
+          </TVFocusGuide>
           <InfoStoryModal
             fallbackBackdrop={backgroundImage}
             fallbackOverview={synopsis}
             fallbackTitle={displayTitle}
             imdbId={info?.imdbId}
-            onClose={() => setStoryVisible(false)}
+            onClose={closeStory}
             tmdbId={info?.tmdbId}
             type={info?.type}
             visible={storyVisible}

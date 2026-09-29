@@ -371,6 +371,10 @@ const AnimatedVideoPlayer = (
 
   const _onPlaybackRateChange = useCallback(
     (playBack: {playbackRate: number}) => {
+      // Android briefly reports rate 0 while a TV seek buffers. The TV player
+      // is controlled by its explicit paused prop; treating that transition
+      // as a user pause leaves playback stopped after confirming a seek.
+      if (Platform.isTV) return;
       if (playBack.playbackRate === 0 && !buffering) {
         setPaused(prev => (prev ? prev : true));
       } else if (playBack.playbackRate > 0) {
@@ -742,10 +746,10 @@ const AnimatedVideoPlayer = (
   // Memoize onBuffer callback
   const onBuffer = useCallback((e: {isBuffering: boolean}) => {
     setBuffering(e.isBuffering);
-    if (!e.isBuffering && !seekingRef.current) {
+    if (!e.isBuffering && !seekingRef.current && (!Platform.isTV || !paused)) {
       setPaused(false);
     }
-  }, []);
+  }, [paused]);
 
   // Memoize source URI for dependency comparison - use deep comparison for stability
   const sourceUri = useMemo(() => {

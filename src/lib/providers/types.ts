@@ -188,6 +188,10 @@ export interface OpenWebViewOptions {
   force?: boolean;
   // If set, the dialog auto-cancels (rejects) after this many milliseconds.
   timeoutMs?: number;
+
+  // Custom JavaScript injected into the WebView. Can communicate back via:
+  // window.ReactNativeWebView.postMessage(JSON.stringify({ __waf: true, data: ... }))
+  injectedJavaScript?: string;
 }
 
 // Result returned to the provider after the user solves the challenge.
@@ -205,6 +209,8 @@ export interface OpenWebViewResult {
   userAgent: string;
   // The URL that was opened.
   url: string;
+  // Session expiry timestamp if known
+  expires?: number;
 }
 
 export type SettingsFieldType =

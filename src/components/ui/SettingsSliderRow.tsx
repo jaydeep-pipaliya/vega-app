@@ -2,10 +2,12 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Host, Slider } from '@expo/ui/jetpack-compose';
 import { fillMaxWidth } from '@expo/ui/jetpack-compose/modifiers';
 import React, { useCallback, useRef } from 'react';
-import { View } from 'react-native';
+import { View, findNodeHandle } from 'react-native';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import { settingsStorage } from '../../lib/storage';
 import { useM3Colors, useM3HostTheme } from '../../theme/M3PaletteContext';
+import { isTV } from '../../lib/tv';
+import { TVFocusable } from '../tv/TVFocusable';
 import AppText from './Text';
 
 interface SettingsSliderRowProps {
@@ -38,6 +40,10 @@ const SettingsSliderRow = ({
   const colors = useM3Colors();
   const hostTheme = useM3HostTheme();
   const prevValueRef = useRef(value);
+  const decreaseRef = useRef<View>(null);
+  const increaseRef = useRef<View>(null);
+  const [decreaseHandle, setDecreaseHandle] = React.useState<number | null>(null);
+  const [increaseHandle, setIncreaseHandle] = React.useState<number | null>(null);
 
   // In Android Jetpack Compose Slider:
   // steps = number of discrete intervals between min and max.
@@ -123,27 +129,92 @@ const SettingsSliderRow = ({
         </View>
       </View>
       <View className="mt-2 w-full">
-        <Host
-          matchContents={{ vertical: true }}
-          style={{ width: '100%' }}
-          {...hostTheme}>
-          <Slider
-            value={value}
-            min={min}
-            max={max}
-            steps={steps}
-            colors={{
-              thumbColor: colors.primary,
-              activeTrackColor: colors.primary,
-              inactiveTrackColor: colors.surfaceContainerHighest,
-              activeTickColor: colors.onPrimary,
-              inactiveTickColor: colors.outlineVariant,
-            }}
-            onValueChange={handleValueChange}
-            onValueChangeFinished={handleValueChangeFinished}
-            modifiers={[fillMaxWidth()]}
-          />
-        </Host>
+        {isTV ? (
+          <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6}}>
+            <TVFocusable
+              ref={decreaseRef}
+              onLayout={() => setDecreaseHandle(findNodeHandle(decreaseRef.current))}
+              nextFocusRight={increaseHandle}
+              onPress={() => {
+                const s = step && step > 0 ? step : 1;
+                const next = Math.max(min, Math.round((value - s) * 100) / 100);
+                handleValueChange(next);
+                handleValueChangeFinished();
+              }}
+              borderRadius={20}
+              focusScale={1.1}
+              accessibilityRole="button"
+              accessibilityLabel={`Decrease ${title}`}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: colors.surfaceContainerHigh,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <MaterialCommunityIcons name="minus" size={24} color={colors.onSurface} />
+            </TVFocusable>
+
+            <View style={{flex: 1, marginHorizontal: 16, height: 8, backgroundColor: colors.surfaceContainerHighest, borderRadius: 4, overflow: 'hidden'}}>
+              <View
+                style={{
+                  height: '100%',
+                  width: `${Math.min(100, Math.max(0, ((value - min) / Math.max(max - min, 1)) * 100))}%`,
+                  backgroundColor: colors.primary,
+                  borderRadius: 4,
+                }}
+              />
+            </View>
+
+            <TVFocusable
+              ref={increaseRef}
+              onLayout={() => setIncreaseHandle(findNodeHandle(increaseRef.current))}
+              nextFocusLeft={decreaseHandle}
+              onPress={() => {
+                const s = step && step > 0 ? step : 1;
+                const next = Math.min(max, Math.round((value + s) * 100) / 100);
+                handleValueChange(next);
+                handleValueChangeFinished();
+              }}
+              borderRadius={20}
+              focusScale={1.1}
+              accessibilityRole="button"
+              accessibilityLabel={`Increase ${title}`}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: colors.surfaceContainerHigh,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+              <MaterialCommunityIcons name="plus" size={24} color={colors.onSurface} />
+            </TVFocusable>
+          </View>
+        ) : (
+          <Host
+            matchContents={{ vertical: true }}
+            style={{ width: '100%' }}
+            {...hostTheme}>
+            <Slider
+              value={value}
+              min={min}
+              max={max}
+              steps={steps}
+              colors={{
+                thumbColor: colors.primary,
+                activeTrackColor: colors.primary,
+                inactiveTrackColor: colors.surfaceContainerHighest,
+                activeTickColor: colors.onPrimary,
+                inactiveTickColor: colors.outlineVariant,
+              }}
+              onValueChange={handleValueChange}
+              onValueChangeFinished={handleValueChangeFinished}
+              modifiers={[fillMaxWidth()]}
+            />
+          </Host>
+        )}
       </View>
     </View>
   );

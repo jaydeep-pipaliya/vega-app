@@ -1,6 +1,7 @@
 import {
   View,
   TouchableOpacity,
+  Pressable,
   Modal,
   TextInput,
   ActivityIndicator,
@@ -15,6 +16,7 @@ import {TextTracks, TextTrackType} from 'react-native-video';
 import DropdownField from './ui/DropdownField';
 import AppText from './ui/Text';
 import {useM3Colors} from '../theme/M3PaletteContext';
+import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 import PlayerMenuRow from './PlayerMenuRow';
 
 const SearchSubtitles = ({
@@ -28,6 +30,7 @@ const SearchSubtitles = ({
 }) => {
   const colors = useM3Colors();
   const primary = colors.primary;
+  const focusBorderColor = useTVFocusBorderColor(primary);
   const {width} = useWindowDimensions();
   const compact = width < 760;
   const contentWidth = Math.min(width - 32, 1120);
@@ -133,15 +136,28 @@ const SearchSubtitles = ({
           style={{backgroundColor: 'rgba(0,0,0,0.96)'}}>
           <View className="flex-1 self-center" style={{width: contentWidth}}>
             <View className="flex-row items-center py-3">
-              <TouchableOpacity
+              <Pressable
                 accessibilityLabel="Close subtitle search"
                 accessibilityRole="button"
-                activeOpacity={0.72}
-                className="h-11 w-11 items-center justify-center rounded-full"
-                style={{backgroundColor: 'rgba(255,255,255,0.08)'}}
+                focusable={true}
+                isTVSelectable={true}
+                hasTVPreferredFocus={true}
+                style={({focused}) => ({
+                  height: 44,
+                  width: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 22,
+                  backgroundColor: focused
+                    ? 'rgba(255,255,255,0.22)'
+                    : 'rgba(255,255,255,0.08)',
+                  borderWidth: focused ? 2 : 0,
+                  borderColor: focusBorderColor,
+                  transform: [{scale: focused ? 1.1 : 1}],
+                })}
                 onPress={() => setSearchModalVisible(false)}>
                 <MaterialIcons name="arrow-back" size={25} color="white" />
-              </TouchableOpacity>
+              </Pressable>
               <View className="ml-3">
                 <AppText className="text-white text-xl font-bold">
                   Search subtitles
@@ -214,16 +230,20 @@ const SearchSubtitles = ({
                   onChangeText={text => setEpisode(text)}
                   value={episode}
                 />
-                <TouchableOpacity
+                <Pressable
                   accessibilityLabel="Search subtitles"
                   accessibilityRole="button"
-                  activeOpacity={0.76}
+                  focusable={true}
+                  isTVSelectable={true}
                   disabled={loading || !searchQuery.trim()}
                   className="h-14 flex-row items-center justify-center rounded-2xl px-5"
-                  style={{
+                  style={({focused}) => ({
                     backgroundColor: primary,
                     opacity: loading || !searchQuery.trim() ? 0.45 : 1,
-                  }}
+                    borderWidth: focused ? 2.5 : 0,
+                    borderColor: focusBorderColor,
+                    transform: [{scale: focused ? 1.05 : 1}],
+                  })}
                   onPress={searchSubtitles}>
                   <MaterialIcons
                     name="search"
@@ -235,7 +255,7 @@ const SearchSubtitles = ({
                     style={{color: colors.onPrimary}}>
                     Search
                   </AppText>
-                </TouchableOpacity>
+                </Pressable>
               </View>
             </View>
 
@@ -250,15 +270,21 @@ const SearchSubtitles = ({
                 </View>
               ) : (
                 searchResults.map((result: any) => (
-                  <TouchableOpacity
+                  <Pressable
                     key={result?.IDSubtitleFile}
-                    activeOpacity={0.74}
+                    focusable={true}
+                    isTVSelectable={true}
                     className="my-1.5 flex-row items-center rounded-2xl p-3"
-                    style={{
-                      backgroundColor: 'rgba(255,255,255,0.055)',
-                      borderColor: 'rgba(255,255,255,0.09)',
-                      borderWidth: 1,
-                    }}
+                    style={({focused}) => ({
+                      backgroundColor: focused
+                        ? 'rgba(255, 255, 255, 0.16)'
+                        : 'rgba(255,255,255,0.055)',
+                      borderColor: focused
+                        ? focusBorderColor
+                        : 'rgba(255,255,255,0.09)',
+                      borderWidth: focused ? 2.5 : 1,
+                      transform: [{scale: focused ? 1.03 : 1}],
+                    })}
                     onPress={() => {
                       setSearchModalVisible(false);
                       setExternalSubs(prev => [
@@ -313,7 +339,7 @@ const SearchSubtitles = ({
                       </View>
                     )}
                     <MaterialIcons name="add" size={22} color={primary} />
-                  </TouchableOpacity>
+                  </Pressable>
                 ))
               )}
               {searchResults.length === 0 && !loading && (

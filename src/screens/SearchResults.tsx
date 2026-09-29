@@ -1,4 +1,5 @@
-import {SafeAreaView, ScrollView, View} from 'react-native';
+import {SafeAreaView, ScrollView, View, TextInput, StyleSheet} from 'react-native';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Slider from '../components/Slider';
 import React, {useEffect, useState, useRef, useCallback, useMemo} from 'react';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
@@ -7,6 +8,9 @@ import {providerManager} from '../lib/services/ProviderManager';
 import useContentStore from '../lib/zustand/contentStore';
 import AppText from '../components/ui/Text';
 import LoadingIndicator from '../components/ui/LoadingIndicator';
+import IconButton from '../components/ui/IconButton';
+import {TVFocusGuide, TVFocusable} from '../components/tv';
+import {isTV} from '../lib/tv';
 import {useM3Colors} from '../theme/M3PaletteContext';
 
 type Props = NativeStackScreenProps<SearchStackParamList, 'SearchResults'>;
@@ -20,11 +24,22 @@ interface SearchPageData {
   name: string;
 }
 
-const SearchResults = ({route}: Props): React.ReactElement => {
+const SearchResults = ({route, navigation}: Props): React.ReactElement => {
   const colors = useM3Colors();
   const installedProviders = useContentStore(state => state.installedProviders);
   const [searchData, setSearchData] = useState<SearchPageData[]>([]);
   const [emptyResults, setEmptyResults] = useState<SearchPageData[]>([]);
+  const [editQuery, setEditQuery] = useState(route.params.filter);
+  const [isEditFocused, setIsEditFocused] = useState(false);
+
+  useEffect(() => setEditQuery(route.params.filter), [route.params.filter]);
+
+  const submitEditedSearch = useCallback(() => {
+    const query = editQuery.trim();
+    if (query && query !== route.params.filter) {
+      navigation.setParams({filter: query});
+    }
+  }, [editQuery, navigation, route.params.filter]);
 
   const trueLoading = useMemo(
     () =>
@@ -190,10 +205,29 @@ const SearchResults = ({route}: Props): React.ReactElement => {
   return (
     <SafeAreaView className="h-full w-full bg-m3-background">
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View className="mt-14 px-4 flex flex-row justify-between items-center gap-x-3">
+        <View className="mt-6 px-4 flex flex-row items-center gap-x-3">
+          {isTV ? (
+            <TVFocusable
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              hasTVPreferredFocus
+              focusScale={1}
+              borderRadius={12}
+              style={styles.tvBackButton}
+              onPress={() => navigation.goBack()}>
+              <MaterialCommunityIcons name="arrow-left" size={30} color={colors.primary} />
+            </TVFocusable>
+          ) : (
+            <IconButton
+              icon="arrow-left"
+              label="Back"
+              onPress={() => navigation.goBack()}
+            />
+          )}
           <AppText
             role="headlineMediumEmphasized"
-            className="flex-1 text-m3-on-background">
+            className="flex-1 text-m3-on-background"
+            numberOfLines={1}>
             {isAllLoaded ? 'Searched for' : 'Searching for'}{' '}
             <AppText
               role="headlineMediumEmphasized"
@@ -202,16 +236,59 @@ const SearchResults = ({route}: Props): React.ReactElement => {
             </AppText>
           </AppText>
           {!isAllLoaded && (
-            <View className="flex justify-center items-center h-20">
-              <LoadingIndicator size={32} />
+            <View className="flex justify-center items-center h-12">
+              <LoadingIndicator size={28} />
             </View>
           )}
         </View>
 
-        <View className="px-4">
+        {isTV && (
+          <View style={styles.tvEditRow}>
+            <View style={[styles.tvEditInputContainer, {
+              borderColor: isEditFocused ? colors.primary : colors.outline,
+              borderWidth: isEditFocused ? 3 : 1,
+            }]}>
+              <MaterialCommunityIcons name="magnify" size={26} color={colors.primary} />
+              <TextInput
+                accessibilityLabel="Edit search query"
+                style={[styles.tvEditInput, {color: colors.onSurface}]}
+                value={editQuery}
+                onChangeText={setEditQuery}
+                onFocus={() => setIsEditFocused(true)}
+                onBlur={() => setIsEditFocused(false)}
+                onSubmitEditing={submitEditedSearch}
+                returnKeyType="search"
+                placeholder="Edit search"
+                placeholderTextColor={colors.onSurfaceVariant}
+              />
+            </View>
+            <TVFocusable
+              accessibilityLabel="Search again"
+              accessibilityRole="button"
+              focusScale={1}
+              borderRadius={12}
+              style={[styles.tvSearchButton, {backgroundColor: colors.primaryContainer}]}
+              onPress={submitEditedSearch}>
+              <MaterialCommunityIcons name="magnify" size={26} color={colors.onPrimaryContainer} />
+              <AppText role="titleMedium" style={{color: colors.onPrimaryContainer}}>Search</AppText>
+            </TVFocusable>
+          </View>
+        )}
+
+        <TVFocusGuide autoFocus={false} style={{paddingHorizontal: 16}}>
           {searchSliders}
           {emptySliders}
-        </View>
+        </TVFocusGuide>
+
+        {isAllLoaded && searchData.every(d => !d.Posts || d.Posts.length === 0) && (
+          <View className="items-center justify-center py-20 px-8">
+            <AppText
+              role="titleLargeEmphasized"
+              className="text-center text-m3-on-surface-variant">
+              No results found for "{route?.params?.filter}"
+            </AppText>
+          </View>
+        )}
         <View className="h-16" />
       </ScrollView>
     </SafeAreaView>
@@ -219,3 +296,43 @@ const SearchResults = ({route}: Props): React.ReactElement => {
 };
 
 export default SearchResults;
+
+const styles = StyleSheet.create({
+  tvBackButton: {
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+  },
+  tvEditRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  tvEditInputContainer: {
+    flex: 1,
+    height: 64,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  tvEditInput: {
+    flex: 1,
+    fontSize: 22,
+  },
+  tvSearchButton: {
+    minWidth: 160,
+    height: 64,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+});

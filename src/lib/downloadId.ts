@@ -30,7 +30,7 @@ export const sanitizeDownloadFileName = (value: string): string => {
   const sanitized = value
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\\/:*?"<>|\x00-\x1f\x7f-\x9f]/g, ' ')
+    .replace(/[\\/:*?"<>|\[\]#%\x00-\x1f\x7f-\x9f]/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\.+$/g, '')
     .trim()

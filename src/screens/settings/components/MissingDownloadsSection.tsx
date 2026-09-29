@@ -1,6 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React from 'react';
-import {Text, TouchableOpacity, View} from 'react-native';
+import {Text, View} from 'react-native';
+import {TVFocusable} from '../../../components/tv';
+import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
 import useDownloadsStore, {
   selectMissingDownloads,
 } from '../../../lib/zustand/downloadsStore';
@@ -8,6 +10,7 @@ import {useM3Colors} from '../../../theme/M3PaletteContext';
 
 const MissingDownloadsSection = ({primary}: {primary: string}) => {
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
   const missing = useDownloadsStore(selectMissingDownloads);
   const removeDownload = useDownloadsStore(state => state.removeDownload);
 
@@ -56,19 +59,26 @@ const MissingDownloadsSection = ({primary}: {primary: string}) => {
               {item.errorMessage}
             </Text>
           </View>
-          <TouchableOpacity
+          <TVFocusable
+            accessibilityRole="button"
+            accessibilityLabel={`Remove missing download ${item.title}`}
             onPress={() => removeDownload(item.id)}
-            className="ml-2 px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor={focusBorderColor}
             style={{
               backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 14,
+              marginLeft: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <Text
               className="text-sm font-bold"
               style={{color: colors.onSurface}}>
               Remove
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         </View>
       ))}
     </View>

@@ -42,7 +42,9 @@ export const getHomePageDataOptimized = async (
         filter: item.filter,
       };
     } catch (error) {
-      console.error(`❌ Failed to fetch ${item.title}:`, error);
+      if (!signal.aborted) {
+        console.error(`❌ Failed to fetch ${item.title}:`, error);
+      }
 
       // Return partial data with error info instead of failing completely
       return {

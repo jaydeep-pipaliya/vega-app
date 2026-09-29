@@ -14,9 +14,11 @@ import {headers as commonHeaders} from '../lib/providers/headers';
 import type {OpenWebViewResult} from '../lib/providers/types';
 import {
   buildCookieString,
+  getCookieObjects,
   getCookies,
   pickUserAgent,
 } from '../lib/services/cookieManager';
+import {updateGlobalCookies} from '../lib/services/cookieStore';
 import {useM3Colors} from '../theme/M3PaletteContext';
 import AppText from './ui/Text';
 
@@ -73,14 +75,31 @@ const WafWebViewDialog = () => {
         fallbackTimerRef.current = null;
       }
       try {
-        const cookieMap = await getCookies(req.url);
+        const [cookieObjects, cookieMap] = await Promise.all([
+          getCookieObjects(req.url),
+          getCookies(req.url),
+        ]);
         const cookies = buildCookieString(cookieMap);
+        let expiresAt: number | null = null;
+        if (req.waitForCookie) {
+          const matched = cookieObjects.find(c => c.name === req.waitForCookie);
+          if (matched?.expires) {
+            const parsed = Date.parse(matched.expires);
+            if (!isNaN(parsed)) {
+              expiresAt = parsed;
+            }
+          }
+        }
+        if (cookies) {
+          updateGlobalCookies(req.url, cookies, expiresAt);
+        }
         const result: OpenWebViewResult = {
           data: htmlRef.current,
           cookies,
           cookieMap,
           url: req.url,
           userAgent,
+          expires: expiresAt || undefined,
         };
         req.resolve(result);
       } catch (e) {
@@ -127,11 +146,25 @@ const WafWebViewDialog = () => {
     (event: WebViewMessageEvent) => {
       try {
         const msg = JSON.parse(event.nativeEvent.data);
-        if (msg && msg.__waf && typeof msg.html === 'string') {
-          htmlRef.current = msg.html;
-          if (pendingResolveRef.current && request) {
-            pendingResolveRef.current = false;
-            finalizeResolve(request);
+        if (msg && msg.__waf) {
+          if (msg.data !== undefined || msg.token !== undefined) {
+            if (!settledRef.current && request) {
+              settledRef.current = true;
+              const payload = msg.data !== undefined ? msg.data : msg.token;
+              htmlRef.current =
+                typeof payload === 'string'
+                  ? payload
+                  : JSON.stringify(payload);
+              finalizeResolve(request);
+            }
+            return;
+          }
+          if (typeof msg.html === 'string') {
+            htmlRef.current = msg.html;
+            if (pendingResolveRef.current && request) {
+              pendingResolveRef.current = false;
+              finalizeResolve(request);
+            }
           }
         }
       } catch {}
@@ -232,12 +265,20 @@ const WafWebViewDialog = () => {
               domStorageEnabled={true}
               thirdPartyCookiesEnabled={true}
               sharedCookiesEnabled={true}
-              originWhitelist={['*']}
-              injectedJavaScript={GRAB_HTML_JS}
+              injectedJavaScript={
+                request.injectedJavaScript
+                  ? `${request.injectedJavaScript};\n${GRAB_HTML_JS}`
+                  : GRAB_HTML_JS
+              }
               onMessage={onMessage}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => {
                 setLoading(false);
+                if (request.injectedJavaScript) {
+                  webViewRef.current?.injectJavaScript(
+                    `${request.injectedJavaScript};\n true;`,
+                  );
+                }
                 webViewRef.current?.injectJavaScript(GRAB_HTML_JS);
               }}
             />

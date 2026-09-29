@@ -1,48 +1,104 @@
-import React, {memo, useCallback} from 'react';
-import {Pressable, FlatList} from 'react-native';
+import React, {memo, useCallback, useState, useRef, useEffect} from 'react';
+import {View, ScrollView, Pressable, findNodeHandle} from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import Animated, {FadeInDown, FadeOut} from 'react-native-reanimated';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import AppText from '../ui/Text';
 import type {IMDbSuggestion} from '../../lib/services/imdbSuggestions';
+import {isTV} from '../../lib/tv/constants';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 
 interface SearchSuggestionsProps {
   suggestions: IMDbSuggestion[];
   onSelectSuggestion: (title: string) => void;
+  searchFieldNodeHandle?: number | null;
+  onFirstItemNodeHandle?: (node: number | null) => void;
+}
+
+interface SuggestionItemProps {
+  item: IMDbSuggestion;
+  index: number;
+  onPress: (title: string) => void;
+  onItemFocus: (index: number) => void;
+  focusBorderColor: string;
+  nextFocusUp?: number | null;
+  nextFocusDown?: number | null;
+  itemRef?: (el: View | null) => void;
 }
 
 const SuggestionItem = memo(
   ({
     item,
+    index,
     onPress,
-  }: {
-    item: IMDbSuggestion;
-    onPress: (title: string) => void;
-  }) => {
+    onItemFocus,
+    focusBorderColor,
+    nextFocusUp,
+    nextFocusDown,
+    itemRef,
+  }: SuggestionItemProps) => {
     const colors = useM3Colors();
+    const [isFocused, setIsFocused] = useState(false);
+
     const handlePress = useCallback(() => {
       onPress(item.title);
     }, [item.title, onPress]);
 
+    const handleFocus = useCallback(() => {
+      setIsFocused(true);
+      onItemFocus(index);
+    }, [onItemFocus, index]);
+
+    const handleBlur = useCallback(() => {
+      setIsFocused(false);
+    }, []);
+
     return (
       <Pressable
+        ref={itemRef as any}
+        focusable={true}
+        isTVSelectable={true}
+        nextFocusUp={nextFocusUp ?? undefined}
+        nextFocusDown={nextFocusDown ?? undefined}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         onPress={handlePress}
-        className="flex-row items-center rounded-[20px] mb-2 px-4 py-3.5"
-        style={({pressed}) => ({
-          backgroundColor: colors.surfaceContainerLow,
-          opacity: pressed ? 0.72 : 1,
-        })}>
+        accessible={true}
+        accessibilityRole="button"
+        accessibilityLabel={`Search suggestion: ${item.title}`}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderRadius: 20,
+          marginBottom: 8,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          backgroundColor: isFocused
+            ? colors.surfaceContainerHigh
+            : colors.surfaceContainerLow,
+          borderWidth: 2.5,
+          borderColor: isFocused ? focusBorderColor : 'transparent',
+        }}>
         <MaterialCommunityIcons
           name={item.type === 'tv' ? 'television' : 'filmstrip'}
           size={22}
-          color={colors.onSurfaceVariant}
+          color={isFocused ? colors.primary : colors.onSurfaceVariant}
         />
         <AppText
           role="bodyLarge"
           numberOfLines={1}
-          className="flex-1 ml-3 text-m3-on-surface">
+          style={{
+            flex: 1,
+            marginLeft: 12,
+            color: colors.onSurface,
+            fontWeight: isFocused ? '700' : '400',
+          }}>
           {item.title}
         </AppText>
+        <MaterialCommunityIcons
+          name="arrow-top-right"
+          size={18}
+          color={isFocused ? colors.primary : colors.onSurfaceVariant}
+        />
       </Pressable>
     );
   },
@@ -51,38 +107,98 @@ const SuggestionItem = memo(
 const SearchSuggestions: React.FC<SearchSuggestionsProps> = ({
   suggestions,
   onSelectSuggestion,
+  searchFieldNodeHandle,
+  onFirstItemNodeHandle,
 }) => {
-  const keyExtractor = useCallback(
-    (item: IMDbSuggestion, index: number) => `${item.title}-${index}`,
-    [],
-  );
+  const focusBorderColor = useTVFocusBorderColor();
+  const scrollViewRef = useRef<ScrollView>(null);
+  const itemRefs = useRef<(View | null)[]>([]);
+  const [nodeHandles, setNodeHandles] = useState<(number | null)[]>([]);
 
-  const renderItem = useCallback(
-    ({item}: {item: IMDbSuggestion}) => (
-      <SuggestionItem item={item} onPress={onSelectSuggestion} />
-    ),
+  const visibleSuggestions = isTV ? suggestions.slice(0, 7) : suggestions;
+
+  useEffect(() => {
+    if (!isTV) return;
+    const handles = visibleSuggestions.map((_, i) =>
+      itemRefs.current[i] ? findNodeHandle(itemRefs.current[i]) : null,
+    );
+    setNodeHandles(handles);
+    if (handles[0] && onFirstItemNodeHandle) {
+      onFirstItemNodeHandle(handles[0]);
+    }
+  }, [visibleSuggestions, onFirstItemNodeHandle]);
+
+  const handleSelect = useCallback(
+    (title: string) => {
+      onSelectSuggestion(title);
+    },
     [onSelectSuggestion],
   );
+
+  const handleItemFocus = useCallback((index: number) => {
+    scrollViewRef.current?.scrollTo({
+      y: index * 60,
+      animated: true,
+    });
+  }, []);
 
   if (suggestions.length === 0) {
     return null;
   }
 
   return (
-    <Animated.View
-      entering={FadeInDown.duration(200)}
-      exiting={FadeOut.duration(150)}
-      className="px-4 flex-1 pt-2">
-      <FlatList
-        data={suggestions}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{paddingBottom: 20}}
-      />
-    </Animated.View>
+    <View style={{flex: 1, paddingHorizontal: 16, paddingTop: 8}}>
+      {isTV ? (
+        <View style={{paddingBottom: 20}}>
+          {visibleSuggestions.map((item, index) => {
+            const isFirst = index === 0;
+            const isLast = index === visibleSuggestions.length - 1;
+            const nextUp = isFirst
+              ? searchFieldNodeHandle
+              : nodeHandles[index - 1];
+            const nextDown = isLast
+              ? nodeHandles[index]
+              : nodeHandles[index + 1];
+
+            return (
+              <SuggestionItem
+                key={`${item.title}-${index}`}
+                item={item}
+                index={index}
+                itemRef={el => {
+                  itemRefs.current[index] = el;
+                }}
+                nextFocusUp={nextUp}
+                nextFocusDown={nextDown}
+                onPress={handleSelect}
+                onItemFocus={handleItemFocus}
+                focusBorderColor={focusBorderColor}
+              />
+            );
+          })}
+        </View>
+      ) : (
+        <ScrollView
+          ref={scrollViewRef}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{paddingBottom: 20}}>
+          {visibleSuggestions.map((item, index) => (
+            <SuggestionItem
+              key={`${item.title}-${index}`}
+              item={item}
+              index={index}
+              onPress={handleSelect}
+              onItemFocus={handleItemFocus}
+              focusBorderColor={focusBorderColor}
+            />
+          ))}
+        </ScrollView>
+      )}
+    </View>
   );
 };
 
 export default memo(SearchSuggestions);
+
+

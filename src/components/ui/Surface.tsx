@@ -7,6 +7,7 @@ import {
 import React from 'react';
 import {View, ViewProps} from 'react-native';
 import {useM3Colors, useM3HostTheme} from '../../theme/M3PaletteContext';
+import {isTV} from '../../lib/tv';
 
 type SurfaceLevel = 'lowest' | 'low' | 'default' | 'high' | 'highest';
 
@@ -30,6 +31,23 @@ const Surface = ({
     high: colors.surfaceContainerHigh,
     highest: colors.surfaceContainerHighest,
   };
+
+  if (isTV) {
+    return (
+      <View
+        {...props}
+        style={[
+          {
+            backgroundColor: backgrounds[level],
+            borderRadius: 24,
+            borderWidth: outlined ? 1 : 0,
+            borderColor: outlined ? colors.outline : undefined,
+          },
+          style,
+        ]}
+      />
+    );
+  }
 
   return (
     <Host matchContents {...hostTheme}>

@@ -1,10 +1,13 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React, {useEffect, useMemo, useState} from 'react';
-import {Image, Linking, Pressable, TouchableOpacity, View} from 'react-native';
+import {Image, Linking, Pressable, TouchableOpacity, View, findNodeHandle} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import SkeletonLoader from '../../../components/Skeleton';
 import AppText from '../../../components/ui/Text';
+import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
+import {isTV} from '../../../lib/tv';
+import useTVNavigationStore from '../../../lib/zustand/tvNavigationStore';
 
 interface ContentOverviewProps {
   backgroundImage?: string;
@@ -13,7 +16,10 @@ interface ContentOverviewProps {
   isLoading: boolean;
   logo?: string;
   onBack: () => void;
+  backButtonRef?: React.RefObject<View | null>;
+  onBackButtonLayout?: () => void;
   onOpenStory?: () => void;
+  exploreRef?: React.RefObject<View | null>;
   onOpenWeb?: () => void;
   onSearchTitle: () => void;
   onToggleLibrary: () => void;
@@ -30,20 +36,34 @@ interface ContentOverviewProps {
   year?: string;
 }
 
+import {TVFocusable} from '../../../components/tv';
+
 const HeaderIconButton = ({
   icon,
   label,
   onPress,
+  focusRef,
+  onLayout,
 }: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
   onPress: () => void;
+  focusRef?: React.RefObject<View | null>;
+  onLayout?: () => void;
 }) => {
   const colors = useM3Colors();
 
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
+    <TVFocusable
+      ref={focusRef}
+      onLayout={onLayout}
+      onFocus={() => {
+        if (isTV && focusRef?.current) {
+          const handle = findNodeHandle(focusRef.current);
+          if (handle) useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+        }
+      }}
+      hasTVPreferredFocus={isTV}
       accessibilityLabel={label}
       onPress={onPress}
       style={{
@@ -53,7 +73,7 @@ const HeaderIconButton = ({
         width: 44,
       }}>
       <MaterialCommunityIcons name={icon} size={28} color={colors.primary} />
-    </TouchableOpacity>
+    </TVFocusable>
   );
 };
 
@@ -61,18 +81,27 @@ const InfoAction = ({
   icon,
   label,
   onPress,
+  focusRef,
 }: {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   label: string;
   onPress: () => void;
+  focusRef?: React.RefObject<View | null>;
 }) => {
   const colors = useM3Colors();
 
   return (
-    <TouchableOpacity
-      accessibilityRole="button"
+    <TVFocusable
+      ref={focusRef}
+      onFocus={() => {
+        if (isTV && focusRef?.current) {
+          const handle = findNodeHandle(focusRef.current);
+          if (handle) {
+            useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+          }
+        }
+      }}
       accessibilityLabel={label}
-      activeOpacity={0.65}
       onPress={onPress}
       style={{
         alignItems: 'center',
@@ -93,7 +122,7 @@ const InfoAction = ({
         }}>
         {label}
       </AppText>
-    </TouchableOpacity>
+    </TVFocusable>
   );
 };
 
@@ -122,7 +151,10 @@ const ContentOverview = ({
   isLoading,
   logo,
   onBack,
+  backButtonRef,
+  onBackButtonLayout,
   onOpenStory,
+  exploreRef,
   onOpenWeb,
   onSearchTitle,
   onToggleLibrary,
@@ -139,6 +171,7 @@ const ContentOverview = ({
   year,
 }: ContentOverviewProps) => {
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
   const [logoFailed, setLogoFailed] = useState(false);
   const metadata = useMemo(
     () =>
@@ -187,6 +220,8 @@ const ContentOverview = ({
             top: 42,
           }}>
           <HeaderIconButton
+            focusRef={backButtonRef}
+            onLayout={onBackButtonLayout}
             icon="arrow-left"
             label="Go back"
             onPress={onBack}
@@ -296,7 +331,20 @@ const ContentOverview = ({
           </AppText>
         )}
         {!synopsisLoading && synopsis.length > 240 ? (
-          <Pressable onPress={onToggleSynopsis} style={{paddingVertical: 8}}>
+          <Pressable
+            accessibilityRole="button"
+            focusable={true}
+            isTVSelectable={true}
+            onPress={onToggleSynopsis}
+            style={({pressed, focused}) => ({
+              paddingVertical: 6,
+              paddingHorizontal: 8,
+              borderRadius: 8,
+              borderWidth: focused ? 2 : 0,
+              borderColor: focused ? focusBorderColor : 'transparent',
+              alignSelf: 'flex-start',
+              transform: [{scale: focused ? 1.05 : pressed ? 0.95 : 1}],
+            })}>
             <AppText
               role="labelLargeEmphasized"
               style={{color: colors.primary}}>
@@ -319,6 +367,7 @@ const ContentOverview = ({
             <InfoAction
               icon="book-open-page-variant-outline"
               label="Explore"
+              focusRef={exploreRef}
               onPress={onOpenStory}
             />
           ) : trailerUrl ? (

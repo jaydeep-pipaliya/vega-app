@@ -7,9 +7,11 @@ import {
   TextButton,
 } from '@expo/ui/jetpack-compose';
 import React from 'react';
-import {ScrollView, Text as ReactNativeText, View} from 'react-native';
+import {Modal, ScrollView, Text as ReactNativeText, View} from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import {useM3Colors, useM3HostTheme} from '../theme/M3PaletteContext';
+import {isTV} from '../lib/tv';
+import {TVFocusable} from './tv/TVFocusable';
 
 export type AppDialogVariant = 'info' | 'success' | 'warning' | 'error';
 
@@ -71,6 +73,143 @@ const AppDialog = ({
 
   if (!visible) {
     return null;
+  }
+
+  if (isTV) {
+    return (
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        onRequestClose={onDismiss}>
+        <View
+          style={{
+            alignItems: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            flex: 1,
+            justifyContent: 'center',
+            padding: 32,
+          }}>
+          <View
+            style={{
+              backgroundColor: colors.surfaceContainerHigh,
+              borderColor: colors.outlineVariant,
+              borderRadius: 24,
+              borderWidth: 1,
+              maxWidth: 540,
+              padding: 24,
+              width: '100%',
+            }}>
+            <View
+              style={{
+                alignItems: 'center',
+                flexDirection: 'row',
+                marginBottom: 16,
+              }}>
+              <MaterialCommunityIcons
+                name={appearance.icon}
+                size={32}
+                color={iconColor}
+              />
+              <ReactNativeText
+                style={{
+                  color: colors.onSurface,
+                  flex: 1,
+                  fontSize: 22,
+                  fontWeight: '700',
+                  marginLeft: 14,
+                }}>
+                {title}
+              </ReactNativeText>
+            </View>
+
+            <ScrollView style={{marginBottom: 20, maxHeight: 240}}>
+              {messageFormat === 'markdown' ? (
+                <Markdown
+                  style={{
+                    body: {color: colors.onSurfaceVariant, fontSize: 15},
+                    paragraph: {marginBottom: 8},
+                  }}>
+                  {message}
+                </Markdown>
+              ) : (
+                <ReactNativeText
+                  style={{
+                    color: colors.onSurfaceVariant,
+                    fontSize: 15,
+                    lineHeight: 22,
+                  }}>
+                  {message}
+                </ReactNativeText>
+              )}
+            </ScrollView>
+
+            <View
+              style={{
+                flexDirection: 'row',
+                gap: 12,
+                justifyContent: 'flex-end',
+              }}>
+              {dismissAction ? (
+                <TVFocusable
+                  hasTVPreferredFocus={confirmAction?.variant === 'destructive'}
+                  onPress={() => handleAction(dismissAction)}
+                  disabled={dismissAction.disabled}
+                  borderRadius={12}
+                  accessibilityRole="button"
+                  accessibilityLabel={dismissAction.label}
+                  style={{
+                    backgroundColor: colors.surfaceContainerHighest,
+                    borderRadius: 12,
+                    paddingHorizontal: 20,
+                    paddingVertical: 10,
+                  }}>
+                  <ReactNativeText
+                    style={{
+                      color: colors.onSurfaceVariant,
+                      fontSize: 15,
+                      fontWeight: '700',
+                    }}>
+                    {dismissAction.label}
+                  </ReactNativeText>
+                </TVFocusable>
+              ) : null}
+
+              {confirmAction ? (
+                <TVFocusable
+                  hasTVPreferredFocus={confirmAction.variant !== 'destructive'}
+                  onPress={() => handleAction(confirmAction)}
+                  disabled={confirmAction.disabled}
+                  borderRadius={12}
+                  accessibilityRole="button"
+                  accessibilityLabel={confirmAction.label}
+                  style={{
+                    backgroundColor:
+                      confirmAction.variant === 'destructive'
+                        ? colors.error
+                        : colors.primary,
+                    borderRadius: 12,
+                    paddingHorizontal: 24,
+                    paddingVertical: 10,
+                  }}>
+                  <ReactNativeText
+                    style={{
+                      color:
+                        confirmAction.variant === 'destructive'
+                          ? colors.onError
+                          : colors.onPrimary,
+                      fontSize: 15,
+                      fontWeight: '700',
+                    }}>
+                    {confirmAction.label}
+                  </ReactNativeText>
+                </TVFocusable>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
   }
 
   return (

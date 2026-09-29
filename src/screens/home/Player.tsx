@@ -4,7 +4,9 @@ import {
   AppStateStatus,
   BackHandler,
   FlatList,
+  findNodeHandle,
   Image,
+  Pressable,
   ScrollView,
   Text,
   ToastAndroid,
@@ -12,6 +14,8 @@ import {
   View,
   Platform,
   TouchableNativeFeedback,
+  Modal,
+  UIManager,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -29,6 +33,7 @@ import Orientation, {
 } from 'react-native-orientation-locker';
 import { SystemBars } from 'react-native-edge-to-edge';
 import VideoPlayer from '../../components/media-console';
+import { playPauseRef } from '../../components/media-console/components/PlayPause/PlayPause';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
@@ -57,6 +62,7 @@ import { StatusBar } from 'react-native';
 import { torrentManager } from '../../lib/torrentManager';
 import { syncFromSharedFolder } from '../../lib/sync/syncService';
 import { useM3Colors } from '../../theme/M3PaletteContext';
+import { useTVFocusBorderColor } from '../../lib/tv/useTVFocusBorderColor';
 import useContinueWatchingStore from '../../lib/zustand/continueWatchingStore';
 import useLocalVideoStore from '../../lib/zustand/localVideoStore';
 import useDownloadsStore from '../../lib/zustand/downloadsStore';
@@ -74,6 +80,8 @@ import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import { EpisodeLink, SkipInterval } from '../../lib/providers/types';
 import { getValidImageUri } from '../../components/EpisodeRowContent';
 import { Feather } from '@expo/vector-icons';
+import { isTV, usePlayerTVControls } from '../../lib/tv';
+import { TVFocusable, TVFocusGuide } from '../../components/tv';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Player'>;
 
@@ -140,12 +148,26 @@ const getResumePosition = (position: number, duration: number) => {
   return position;
 };
 
+const formatTVTimelineTime = (time: number): string => {
+  if (!Number.isFinite(time) || time < 0) return '00:00';
+  const seconds = Math.floor(time);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  const minuteText = minutes.toString().padStart(2, '0');
+  const secondText = remainder.toString().padStart(2, '0');
+  return hours > 0
+    ? `${hours}:${minuteText}:${secondText}`
+    : `${minuteText}:${secondText}`;
+};
+
 const SHOW_FULLSCREEN_BUTTON = false;
 const BOTTOM_CONTROL_ICON_COLOR = 'rgba(255,255,255,0.68)';
 const BOTTOM_CONTROL_LABEL_STYLE = {
   color: BOTTOM_CONTROL_ICON_COLOR,
   fontWeight: '300' as const,
 };
+const BottomControlButton = isTV ? Pressable : TouchableOpacity;
 
 type QualityIconName = '8k' | '4k' | '2k' | 'hd' | 'sd' | 'video-settings';
 
@@ -215,7 +237,9 @@ const goFullScreen = () => {
   SystemBars.setHidden(true);
   if (Platform.OS === 'android') {
     // Sticky-immersive behavior is handled by the system under edge-to-edge;
-    NavigationBar.setVisibilityAsync('hidden');
+    NavigationBar.setVisibilityAsync('hidden').catch(() => {
+      // Activity teardown can race this request during a dev reload or Back.
+    });
     StatusBar.setHidden(true, 'slide');
   }
 };
@@ -224,7 +248,9 @@ const exitFullScreen = () => {
   SystemBars.setHidden(false);
   if (Platform.OS === 'android') {
     // Show the navigation bar
-    NavigationBar.setVisibilityAsync('visible');
+    NavigationBar.setVisibilityAsync('visible').catch(() => {
+      // The activity may already be gone when exiting the player.
+    });
     StatusBar.setHidden(false, 'slide');
   }
 };
@@ -255,34 +281,23 @@ type SidebarEpisodeRowProps = {
   description?: string;
   imageUri?: string;
   isActive: boolean;
+  isFocusable: boolean;
   primaryColor: string;
   onSelect: () => void;
 };
 
 const SidebarEpisodeRow = React.memo<SidebarEpisodeRowProps>(
-  ({ index, title, description, imageUri, isActive, primaryColor, onSelect }) => {
+  ({ index, title, description, imageUri, isActive, isFocusable, primaryColor, onSelect }) => {
     const [imageFailed, setImageFailed] = useState(false);
+    const [tvFocused, setTvFocused] = useState(false);
+    const focusBorderColor = useTVFocusBorderColor(primaryColor);
 
     useEffect(() => {
       setImageFailed(false);
     }, [imageUri]);
 
-    return (
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={onSelect}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          padding: 8,
-          marginVertical: 4,
-          borderRadius: 8,
-          backgroundColor: isActive
-            ? 'rgba(255, 255, 255, 0.12)'
-            : 'rgba(255, 255, 255, 0.03)',
-          borderWidth: 1,
-          borderColor: isActive ? primaryColor : 'rgba(255, 255, 255, 0.08)',
-        }}>
+    const content = (
+      <>
         {/* Thumbnail */}
         <View
           style={{
@@ -310,63 +325,70 @@ const SidebarEpisodeRow = React.memo<SidebarEpisodeRowProps>(
                 size={20}
                 color="rgba(255,255,255,0.4)"
               />
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.5)',
-                  fontSize: 10,
-                  fontWeight: '600',
-                  marginTop: 2,
-                }}>
+              <Text style={{color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '600', marginTop: 2}}>
                 EP {index + 1}
               </Text>
             </View>
           )}
           {isActive && (
-            <View
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0,0,0,0.45)',
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}>
-              <MaterialCommunityIcons
-                name="play-circle"
-                size={24}
-                color={primaryColor}
-              />
+            <View style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center'}}>
+              <MaterialCommunityIcons name="play-circle" size={24} color={primaryColor} />
             </View>
           )}
         </View>
-
-        {/* Info */}
         <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Text
-            numberOfLines={1}
-            style={{
-              fontSize: 13,
-              fontWeight: isActive ? '700' : '600',
-              color: isActive ? primaryColor : '#FFFFFF',
-              marginBottom: description ? 3 : 0,
-            }}>
+          <Text numberOfLines={1} style={{fontSize: 13, fontWeight: isActive ? '700' : '600', color: isActive ? primaryColor : '#FFFFFF', marginBottom: description ? 3 : 0}}>
             {title}
           </Text>
           {Boolean(description) && (
-            <Text
-              numberOfLines={2}
-              style={{
-                fontSize: 11,
-                color: 'rgba(255, 255, 255, 0.55)',
-                lineHeight: 14,
-              }}>
+            <Text numberOfLines={2} style={{fontSize: 11, color: 'rgba(255, 255, 255, 0.55)', lineHeight: 14}}>
               {description}
             </Text>
           )}
         </View>
-      </TouchableOpacity>
+      </>
+    );
+
+    if (!isTV) {
+      return (
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={onSelect}
+          style={{flexDirection: 'row', alignItems: 'center', padding: 8, marginVertical: 4, borderRadius: 8, backgroundColor: isActive ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.03)', borderWidth: 1, borderColor: isActive ? primaryColor : 'rgba(255, 255, 255, 0.08)'}}>
+          {content}
+        </TouchableOpacity>
+      );
+    }
+
+    return (
+      <Pressable
+        accessibilityRole="button"
+        focusable={isFocusable}
+        isTVSelectable={isFocusable}
+        hasTVPreferredFocus={isFocusable && isActive}
+        onFocus={() => setTvFocused(true)}
+        onBlur={() => setTvFocused(false)}
+        onPress={onSelect}
+        style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            padding: 8,
+            marginVertical: 4,
+            borderRadius: 8,
+            backgroundColor: tvFocused
+              ? 'rgba(255, 255, 255, 0.16)'
+              : isActive
+                ? 'rgba(255, 255, 255, 0.12)'
+                : 'rgba(255, 255, 255, 0.03)',
+            borderWidth: tvFocused ? 2.5 : 1,
+            borderColor: tvFocused
+              ? focusBorderColor
+              : isActive
+                ? primaryColor
+                : 'rgba(255, 255, 255, 0.08)',
+          }}>
+        {content}
+      </Pressable>
     );
   },
 );
@@ -500,12 +522,6 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
   const toastStyle = useAnimatedStyle(() => ({
     opacity: toastOpacity.value,
-  }));
-
-  const settingsStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: settingsTranslateY.value }],
-
-    opacity: settingsOpacity.value,
   }));
 
   const sidebarDrawerStyle = useAnimatedStyle(() => ({
@@ -681,10 +697,75 @@ const Player = ({ route }: Props): React.JSX.Element => {
   );
 
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
+  const [settingsCloseFocused, setSettingsCloseFocused] = useState(false);
+  const timelineRef = useRef<View>(null);
+  const [timelineFocusHandle, setTimelineFocusHandle] = useState<number | null>(null);
+  const playPauseTVRef = useRef<View>(null);
+  const [playPauseTVHandle, setPlayPauseTVHandle] = useState<number | null>(null);
+  const videoSurfaceTVRef = useRef<View>(null);
+  const preferredMenuRowRef = useRef<View>(null);
+
+  useEffect(() => {
+    if (!isTV || !showSettings) return;
+    const timer = setTimeout(() => {
+      const handle = findNodeHandle(preferredMenuRowRef.current);
+      if (handle) UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [showSettings, activeTab, audioTracks.length, textTracks.length, videoTracks.length]);
+
+  useEffect(() => {
+    if (!isTV || showControls || showSettings || showEpisodeSidebar || streamLoading || isPlayerLocked) return;
+    const timer = setTimeout(() => {
+      const handle = findNodeHandle(videoSurfaceTVRef.current);
+      if (handle) UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [showControls, showSettings, showEpisodeSidebar, streamLoading, isPlayerLocked]);
 
   const { videoPositionRef, handleProgress } = usePlayerProgress({
     activeEpisode,
     onProgressSaved: saveContinueWatchingProgress,
+  });
+
+  const [isPaused, setIsPaused] = useState(false);
+  const handleTogglePlayPause = useCallback(() => {
+    if (isTV) {
+      setIsPaused(prev => !prev);
+      return;
+    }
+    if (playPauseRef.current?.props?.onPress) {
+      playPauseRef.current.props.onPress();
+    } else {
+      setIsPaused(prev => !prev);
+    }
+  }, []);
+
+  const handleSeekNotification = useCallback(
+    (text: string) => setToast(text, 1500),
+    [setToast],
+  );
+
+  const {
+    getTVFocusProps,
+    tvFocusedControl,
+    showTVControls,
+    scrubPosition,
+    confirmScrub,
+    cancelScrub,
+    hideTVControls,
+  } = usePlayerTVControls({
+    playerRef,
+    videoPositionRef,
+    showSettings,
+    setShowSettings,
+    showControls,
+    setShowControls,
+    showEpisodeSidebar,
+    setShowEpisodeSidebar,
+    primaryColor: primary,
+    onTogglePlayPause: handleTogglePlayPause,
+    onSeekNotification: handleSeekNotification,
   });
 
   const handleProgressWithTime = useCallback(
@@ -1478,12 +1559,20 @@ const Player = ({ route }: Props): React.JSX.Element => {
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
+        if (isTV && scrubPosition !== null) {
+          cancelScrub();
+          return true;
+        }
         if (showEpisodeSidebar) {
           setShowEpisodeSidebar(false);
           return true;
         }
         if (showSettings) {
           setShowSettings(false);
+          return true;
+        }
+        if (isTV && showControls) {
+          hideTVControls();
           return true;
         }
         exitFullScreen();
@@ -1495,7 +1584,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
     return () => {
       subscription.remove();
     };
-  }, [navigation, showEpisodeSidebar, showSettings]);
+  }, [cancelScrub, hideTVControls, navigation, scrubPosition, showControls, showEpisodeSidebar, showSettings]);
 
   // Reset track selections when stream changes
   useEffect(() => {
@@ -1783,6 +1872,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       doubleTapTime: 200,
       disableSeekButtons: isPlayerLocked || hideSeekButtons,
       showOnStart: !isPlayerLocked,
+      alwaysShowControls: false,
       source: {
         textTracks: externalSubs,
         uri:
@@ -1863,11 +1953,16 @@ const Player = ({ route }: Props): React.JSX.Element => {
       style: { flex: 1, zIndex: 100 },
       controlAnimationTiming: 357,
       controlTimeoutDelay: 10000,
-      hideAllControlls: isPlayerLocked,
+      hideAllControlls: isTV || isPlayerLocked || showSettings || showEpisodeSidebar,
       onSeekSnap: handleSeekSnap,
+      ...(isTV ? {
+        paused: isPaused,
+      } : {}),
     }),
     [
       isPlayerLocked,
+      showSettings,
+      showEpisodeSidebar,
       externalSubs,
       selectedStream.link,
       selectedStream.type,
@@ -1881,6 +1976,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       navigation,
       handleShowControls,
       handleHideControls,
+      isPaused,
       showMediaControls,
       handleVideoError,
       resizeMode,
@@ -1942,11 +2038,23 @@ const Player = ({ route }: Props): React.JSX.Element => {
         <Text className="text-red-500 text-lg text-center mb-4">
           Failed to load stream. Please try again.
         </Text>
-        <TouchableOpacity
-          className="bg-red-600 px-4 py-2 rounded-md"
-          onPress={() => navigation.goBack()}>
-          <Text className="text-white">Go Back</Text>
-        </TouchableOpacity>
+        <TVFocusable
+          hasTVPreferredFocus={true}
+          focusBorderColor="#ffffff"
+          focusScale={1.08}
+          borderRadius={12}
+          style={{
+            backgroundColor: '#DC2626',
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            borderRadius: 12,
+          }}
+          onPress={() => {
+            exitFullScreen();
+            navigation.goBack();
+          }}>
+          <Text style={{color: '#ffffff', fontWeight: 'bold', fontSize: 16}}>Go Back</Text>
+        </TVFocusable>
       </SafeAreaView>
     );
   }
@@ -2001,6 +2109,91 @@ const Player = ({ route }: Props): React.JSX.Element => {
           </TouchableOpacity>
         </View>
       )}
+
+      {isTV && !isCasting && !streamLoading && !isPlayerLocked &&
+        !showSettings && !showEpisodeSidebar && !showControls && (
+          <Pressable
+            ref={videoSurfaceTVRef}
+            accessibilityRole="button"
+            accessibilityLabel="Video. Select to show controls. Left and right skip ten seconds."
+            hasTVPreferredFocus
+            focusable
+            isTVSelectable
+            onPress={showTVControls}
+            style={{position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 40}}
+          />
+        )}
+
+      {isTV && !isCasting && !streamLoading && !isPlayerLocked &&
+        !showSettings && !showEpisodeSidebar && showControls && (
+          <>
+            <Pressable
+              ref={playPauseTVRef}
+              onLayout={() => setPlayPauseTVHandle(findNodeHandle(playPauseTVRef.current))}
+              nextFocusLeft={playPauseTVHandle ?? undefined}
+              nextFocusRight={playPauseTVHandle ?? undefined}
+              accessibilityRole="button"
+              accessibilityLabel={isPaused ? 'Play video' : 'Pause video'}
+              hasTVPreferredFocus
+              {...getTVFocusProps('play_pause')}
+              onPress={() => setIsPaused(previous => !previous)}
+              style={{
+                position: 'absolute',
+                alignSelf: 'center',
+                top: '40%',
+                width: 72,
+                height: 72,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 40,
+                borderWidth: tvFocusedControl === 'play_pause' ? 3 : 0,
+                borderColor: primary,
+                backgroundColor: 'rgba(0,0,0,0.45)',
+                zIndex: 65,
+              }}>
+              <MaterialIcons name={isPaused ? 'play-arrow' : 'pause'} size={44} color="white" />
+            </Pressable>
+            <Pressable
+              ref={timelineRef}
+              onLayout={() => setTimelineFocusHandle(findNodeHandle(timelineRef.current))}
+              nextFocusLeft={timelineFocusHandle ?? undefined}
+              nextFocusRight={timelineFocusHandle ?? undefined}
+              accessibilityRole="adjustable"
+              accessibilityLabel="Video timeline. Left and right preview, select seeks, back cancels."
+              accessibilityValue={{text: `${formatTVTimelineTime(scrubPosition ?? currentPlaybackTime)} of ${videoPositionRef.current.duration > 0 ? formatTVTimelineTime(videoPositionRef.current.duration) : 'unknown duration'}`}}
+              {...getTVFocusProps('timeline')}
+              onPress={confirmScrub}
+              style={{
+                position: 'absolute',
+                left: '10%',
+                right: '10%',
+                bottom: 62,
+                padding: 12,
+                borderRadius: 12,
+                borderWidth: tvFocusedControl === 'timeline' ? 2 : 0,
+                borderColor: primary,
+                backgroundColor: 'rgba(20,20,20,0.65)',
+                zIndex: 65,
+              }}>
+              <View style={{height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.35)'}}>
+                <View style={{
+                  width: `${videoPositionRef.current.duration > 0
+                    ? Math.min(100, Math.max(0, 100 * (scrubPosition ?? currentPlaybackTime) / videoPositionRef.current.duration))
+                    : 0}%`,
+                  height: 5,
+                  borderRadius: 3,
+                  backgroundColor: primary,
+                }} />
+              </View>
+              <Text style={{color: 'white', marginTop: 6, textAlign: 'center'}}>
+                {formatTVTimelineTime(scrubPosition ?? currentPlaybackTime)} / {videoPositionRef.current.duration > 0
+                  ? formatTVTimelineTime(videoPositionRef.current.duration)
+                  : '--:--'}
+                {scrubPosition !== null ? '  •  Select to seek · Back to cancel' : ''}
+              </Text>
+            </Pressable>
+          </>
+        )}
 
       {/* Non-intrusive Torrent Status Overlay */}
       {!isCasting &&
@@ -2104,6 +2297,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
               onPress={() => {
                 setShowEpisodeSidebar(true);
               }}
+              {...getTVFocusProps('sidebar_chevron')}
               hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               className="p-2 rounded-full justify-center items-center">
               <MaterialIcons
@@ -2117,16 +2311,17 @@ const Player = ({ route }: Props): React.JSX.Element => {
         )}
 
       {/* Bottom controls */}
-      {!isCasting && !isPlayerLocked && (
+      {!isCasting && !isPlayerLocked && !showSettings && !showEpisodeSidebar && (
         <Animated.View
           style={[controlsStyle, { left: '10%', right: '10%', bottom: 15 }]}
           className="absolute flex-row items-center">
           {/* Audio controls */}
-          <TouchableOpacity
+          <BottomControlButton
             onPress={() => {
               setActiveTab('audio');
               setShowSettings(!showSettings);
             }}
+            {...getTVFocusProps('audio')}
             className="min-w-0 flex-1 flex-row items-center justify-center gap-x-1">
             <MaterialCommunityIcons
               name="waveform"
@@ -2139,14 +2334,15 @@ const Player = ({ route }: Props): React.JSX.Element => {
               numberOfLines={1}>
               {audioTracks[selectedAudioTrackIndex]?.language || 'auto'}
             </Text>
-          </TouchableOpacity>
+          </BottomControlButton>
 
           {/* Subtitle controls */}
-          <TouchableOpacity
+          <BottomControlButton
             onPress={() => {
               setActiveTab('subtitle');
               setShowSettings(!showSettings);
             }}
+            {...getTVFocusProps('subtitle')}
             className="min-w-0 flex-1 flex-row items-center justify-center gap-x-1">
             <MaterialCommunityIcons
               name="subtitles-outline"
@@ -2161,11 +2357,12 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 ? 'none'
                 : textTracks[selectedTextTrackIndex]?.language}
             </Text>
-          </TouchableOpacity>
+          </BottomControlButton>
 
           {/* Speed controls */}
-          <TouchableOpacity
+          <BottomControlButton
             className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+            {...getTVFocusProps('speed')}
             onPress={() => {
               setActiveTab('speed');
               setShowSettings(!showSettings);
@@ -2180,7 +2377,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
               style={BOTTOM_CONTROL_LABEL_STYLE}>
               {playbackRate === 1 ? '1.0' : playbackRate}x
             </Text>
-          </TouchableOpacity>
+          </BottomControlButton>
 
           {/* PIP */}
           {!Platform.isTV && (
@@ -2203,8 +2400,9 @@ const Player = ({ route }: Props): React.JSX.Element => {
           )}
 
           {/* Server & Quality */}
-          <TouchableOpacity
+          <BottomControlButton
             className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+            {...getTVFocusProps('server')}
             onPress={() => {
               setActiveTab('server');
               setShowSettings(!showSettings);
@@ -2220,11 +2418,12 @@ const Player = ({ route }: Props): React.JSX.Element => {
               numberOfLines={1}>
               {selectedPlayerQuality.label}
             </Text>
-          </TouchableOpacity>
+          </BottomControlButton>
 
           {/* Resize button */}
-          <TouchableOpacity
+          <BottomControlButton
             className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+            {...getTVFocusProps('resize')}
             onPress={handleResizeMode}>
             <MaterialCommunityIcons
               name="fit-to-screen-outline"
@@ -2243,14 +2442,38 @@ const Player = ({ route }: Props): React.JSX.Element => {
                     ? 'Stretch'
                     : 'Contain'}
             </Text>
-          </TouchableOpacity>
+          </BottomControlButton>
+
+          {/* Episodes button */}
+          {hasMultipleEpisodes && (
+            <BottomControlButton
+              className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+              {...getTVFocusProps('episodes')}
+              onPress={() => {
+                setShowEpisodeSidebar(true);
+              }}>
+              <MaterialCommunityIcons
+                name="playlist-play"
+                size={25}
+                color={BOTTOM_CONTROL_ICON_COLOR}
+              />
+              <Text
+                className="text-white text-xs"
+                style={BOTTOM_CONTROL_LABEL_STYLE}
+                numberOfLines={1}>
+                Episodes
+              </Text>
+            </BottomControlButton>
+          )}
 
           {/* Next episode button */}
           {hasNextEpisode &&
-            videoPositionRef.current.duration > 0 &&
-            currentPlaybackTime / videoPositionRef.current.duration > 0.8 && (
-              <TouchableOpacity
+            (isTV ||
+              (videoPositionRef.current.duration > 0 &&
+                currentPlaybackTime / videoPositionRef.current.duration > 0.8)) && (
+              <BottomControlButton
                 className="min-w-0 flex-1 flex-row items-center justify-center"
+                {...getTVFocusProps('next')}
                 onPress={handleNextEpisode}>
                 <Text
                   className="text-white text-base"
@@ -2263,7 +2486,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   size={26}
                   color={BOTTOM_CONTROL_ICON_COLOR}
                 />
-              </TouchableOpacity>
+              </BottomControlButton>
             )}
         </Animated.View>
       )}
@@ -2281,24 +2504,31 @@ const Player = ({ route }: Props): React.JSX.Element => {
               right: 28,
               zIndex: 65,
             }}>
-            <TouchableOpacity
-              activeOpacity={0.7}
+            <Pressable
+              accessibilityRole="button"
+              focusable={true}
+              isTVSelectable={true}
               onPress={handleSkip}
-              style={{
+              style={({ pressed, focused }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
-                backgroundColor: 'rgba(255, 255, 255, 0.11)',
-                // borderColor: 'rgba(255, 255, 255, 0.18)',
-                // borderWidth: 1,
+                backgroundColor: !isTV && focused
+                  ? colors.primary
+                  : 'rgba(255, 255, 255, 0.11)',
+                borderColor: focused
+                  ? '#FFFFFF'
+                  : 'rgba(255, 255, 255, 0.18)',
+                borderWidth: focused ? 2 : 1,
                 borderRadius: 24,
                 paddingVertical: 7,
                 paddingHorizontal: 16,
                 gap: 6,
-              }}>
+                transform: [{ scale: isTV ? 1 : focused ? 1.08 : pressed ? 0.95 : 1 }],
+              })}>
               <Text
                 style={{
-                  color: 'rgba(255, 255, 255, 0.88)',
-                  fontWeight: '600',
+                  color: 'rgba(255, 255, 255, 0.95)',
+                  fontWeight: '700',
                   fontSize: 13,
                   letterSpacing: 0.2,
                 }}>
@@ -2311,9 +2541,9 @@ const Player = ({ route }: Props): React.JSX.Element => {
               <Feather
                 name="chevrons-right"
                 size={18}
-                color="rgba(255, 255, 255, 0.85)"
+                color="rgba(255, 255, 255, 0.95)"
               />
-            </TouchableOpacity>
+            </Pressable>
           </Animated.View>
         )}
 
@@ -2329,22 +2559,75 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
       {/* Settings Modal */}
       {!isCasting && !streamLoading && !isPlayerLocked && showSettings && (
-        <Animated.View
-          style={[settingsStyle, { backgroundColor: 'rgba(0,0,0,0.48)' }]}
-          className="absolute opacity-0 top-0 left-0 w-full h-full justify-end items-center"
-          onTouchEnd={() => setShowSettings(false)}>
-          <View
-            className="p-3 w-[620px] h-80 rounded-t-3xl flex-row justify-start items-center"
+        <Modal
+          transparent={true}
+          visible={showSettings}
+          animationType="fade"
+          statusBarTranslucent={true}
+          onRequestClose={() => setShowSettings(false)}>
+          <TVFocusGuide
+            trapFocusLeft
+            trapFocusRight
+            trapFocusUp
+            trapFocusDown
+            style={{flex: 1}}>
+          <Pressable
+            focusable={false}
+            isTVSelectable={false}
             style={{
-              backgroundColor: 'rgba(13,13,13,0.94)',
-              borderColor: 'rgba(255,255,255,0.12)',
-              borderWidth: 1,
-              shadowColor: '#000',
-              shadowOpacity: 0.45,
-              shadowRadius: 24,
-              elevation: 18,
+              flex: 1,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
             }}
-            onTouchEnd={e => e.stopPropagation()}>
+            onPress={() => setShowSettings(false)}>
+            <Pressable
+              focusable={false}
+              isTVSelectable={false}
+              style={{
+                padding: 12,
+                width: 640,
+                maxWidth: '92%',
+                height: 330,
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                flexDirection: 'row',
+                justifyContent: 'flex-start',
+                alignItems: 'center',
+                backgroundColor: 'rgba(13,13,13,0.96)',
+                borderColor: 'rgba(255,255,255,0.14)',
+                borderWidth: 1,
+                borderBottomWidth: 0,
+                shadowColor: '#000',
+                shadowOpacity: 0.5,
+                shadowRadius: 24,
+                elevation: 24,
+              }}
+              onPress={e => e.stopPropagation()}>
+            {isTV && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close player settings"
+                focusable
+                isTVSelectable
+                hasTVPreferredFocus={activeTab === 'audio' && audioTracks.length === 0}
+                onPress={() => setShowSettings(false)}
+                onFocus={() => setSettingsCloseFocused(true)}
+                onBlur={() => setSettingsCloseFocused(false)}
+                style={{
+                  position: 'absolute',
+                  top: 12,
+                  right: 12,
+                  zIndex: 2,
+                  padding: 5,
+                  borderWidth: settingsCloseFocused ? 2 : 0,
+                  borderColor: primary,
+                  borderRadius: 20,
+                  backgroundColor: 'transparent',
+                }}>
+                <MaterialIcons name="close" size={22} color="white" />
+              </Pressable>
+            )}
             {/* Audio Tab */}
             {activeTab === 'audio' && (
               <ScrollView className="w-full h-full p-1 px-4">
@@ -2359,13 +2642,18 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   </View>
                 )}
                 {audioTracks.map((track, i) => (
-                  <PlayerMenuRow
+                  <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                     key={i}
+                    ref={i === (selectedAudioTrackIndex >= 0 ? selectedAudioTrackIndex : 0) ? preferredMenuRowRef : undefined}
                     title={track.language || `Audio track ${i + 1}`}
                     detail={[track.type, track.title]
                       .filter(Boolean)
                       .join(' · ')}
                     selected={selectedAudioTrackIndex === i}
+                    hasTVPreferredFocus={
+                      selectedAudioTrackIndex === i ||
+                      (selectedAudioTrackIndex < 0 && i === 0)
+                    }
                     accentColor={primary}
                     icon="multitrack-audio"
                     onPress={() => {
@@ -2394,9 +2682,11 @@ const Player = ({ route }: Props): React.JSX.Element => {
                     <Text className="mb-2 text-lg font-bold text-center text-white">
                       Subtitle
                     </Text>
-                    <PlayerMenuRow
+                    <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
+                      ref={selectedTextTrackIndex === 1000 ? preferredMenuRowRef : undefined}
                       title="Disabled"
                       selected={selectedTextTrackIndex === 1000}
+                      hasTVPreferredFocus={selectedTextTrackIndex === 1000}
                       accentColor={primary}
                       icon="subtitles-off"
                       onPress={() => {
@@ -2412,7 +2702,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 }
                 ListFooterComponent={
                   <>
-                    <PlayerMenuRow
+                    <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                       title="Add external file"
                       accentColor={primary}
                       icon="add"
@@ -2474,12 +2764,14 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   </>
                 }
                 renderItem={({ item: track }) => (
-                  <PlayerMenuRow
+                  <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
+                    ref={selectedTextTrackIndex === track.index ? preferredMenuRowRef : undefined}
                     title={track.language || 'Unknown'}
                     detail={[track.type, track.title]
                       .filter(Boolean)
                       .join(' · ')}
                     selected={selectedTextTrackIndex === track.index}
+                    hasTVPreferredFocus={selectedTextTrackIndex === track.index}
                     accentColor={primary}
                     icon="subtitles"
                     onPress={() => {
@@ -2525,12 +2817,14 @@ const Player = ({ route }: Props): React.JSX.Element => {
                         );
 
                       return (
-                        <PlayerMenuRow
+                        <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                           key={i}
+                          ref={track.link === selectedStream.link ? preferredMenuRowRef : undefined}
                           title={track.server || `Server ${i + 1}`}
                           quality={track.quality}
                           tags={tags.length > 0 ? tags : undefined}
                           selected={track.link === selectedStream.link}
+                          hasTVPreferredFocus={track.link === selectedStream.link}
                           accentColor={primary}
                           icon="dns"
                           onPress={() => {
@@ -2549,7 +2843,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   {/* Local video option, mirrors the subtitle screen's
                       "Add external file" entry above */}
                   <View className="mt-1 border-t border-white/10 pt-1">
-                    <PlayerMenuRow
+                    <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                       title="Local video"
                       detail="Choose a file from this device"
                       selected={selectedStream?.type === 'local'}
@@ -2584,7 +2878,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   )}
 
                   {videoTracks && videoTracks.length > 1 && (
-                    <PlayerMenuRow
+                    <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                       title="Auto"
                       detail="Adaptive bitrate"
                       selected={selectedQualityIndex === 1000}
@@ -2623,7 +2917,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                         .join(' · ');
 
                       return (
-                        <PlayerMenuRow
+                        <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                           key={i}
                           title={resolutionTitle}
                           detail={detailText}
@@ -2661,10 +2955,12 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   Playback Speed
                 </Text>
                 {playbacks.map((rate, i) => (
-                  <PlayerMenuRow
+                  <PlayerMenuRow onTVFocus={() => setSettingsCloseFocused(false)}
                     key={i}
+                    ref={playbackRate === rate ? preferredMenuRowRef : undefined}
                     title={`${rate}x`}
                     selected={playbackRate === rate}
+                    hasTVPreferredFocus={playbackRate === rate}
                     accentColor={primary}
                     icon="speed"
                     onPress={() => {
@@ -2675,8 +2971,10 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 ))}
               </ScrollView>
             )}
-          </View>
-        </Animated.View>
+            </Pressable>
+          </Pressable>
+          </TVFocusGuide>
+        </Modal>
       )}
 
       {/* Episode Sidebar Drawer */}
@@ -2725,6 +3023,14 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 },
               ]}
               pointerEvents={showEpisodeSidebar ? 'auto' : 'none'}>
+              <TVFocusGuide
+                key={showEpisodeSidebar ? 'episode-open' : 'episode-closed'}
+                autoFocus={showEpisodeSidebar}
+                trapFocusLeft={showEpisodeSidebar}
+                trapFocusRight={showEpisodeSidebar}
+                trapFocusUp={showEpisodeSidebar}
+                trapFocusDown={showEpisodeSidebar}
+                style={{flex: 1}}>
               {/* Header */}
               <View
                 style={{
@@ -2772,16 +3078,29 @@ const Player = ({ route }: Props): React.JSX.Element => {
                     </Text>
                   </View>
                 </View>
-                <TouchableOpacity
-                  onPress={() => setShowEpisodeSidebar(false)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  style={{
-                    padding: 4,
-                    borderRadius: 20,
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                  }}>
-                  <MaterialIcons name="close" size={20} color="#FFFFFF" />
-                </TouchableOpacity>
+                {isTV ? (
+                  <TVFocusable
+                    accessibilityRole="button"
+                    accessibilityLabel="Close episodes"
+                    disabled={!showEpisodeSidebar}
+                    onPress={() => setShowEpisodeSidebar(false)}
+                    focusScale={1}
+                    borderRadius={20}
+                    style={{
+                      padding: 8,
+                      borderRadius: 20,
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                    }}>
+                    <MaterialIcons name="close" size={20} color="#FFFFFF" />
+                  </TVFocusable>
+                ) : (
+                  <Pressable
+                    onPress={() => setShowEpisodeSidebar(false)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    style={{padding: 4, borderRadius: 20, backgroundColor: 'rgba(255, 255, 255, 0.08)'}}>
+                    <MaterialIcons name="close" size={20} color="#FFFFFF" />
+                  </Pressable>
+                )}
               </View>
 
               {/* Episode List */}
@@ -2830,6 +3149,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                       description={epDesc}
                       imageUri={imageUri}
                       isActive={isActive}
+                      isFocusable={showEpisodeSidebar}
                       primaryColor={primary}
                       onSelect={() => {
                         if (!isActive) {
@@ -2843,6 +3163,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   );
                 }}
               />
+              </TVFocusGuide>
             </Animated.View>
           </>
         )}

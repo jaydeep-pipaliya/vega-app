@@ -1,4 +1,4 @@
-import {StyleSheet} from 'react-native';
+import {Platform, StyleSheet} from 'react-native';
 
 export const styles = StyleSheet.create({
   container: {
@@ -13,7 +13,9 @@ export const styles = StyleSheet.create({
     zIndex: 99999,
   },
   playContainer: {
-    width: '35%',
+    width: Platform.isTV ? 96 : '35%',
+    ...(Platform.isTV ? {height: 96, borderRadius: 48} : {}),
     alignItems: 'center',
+    ...(Platform.isTV ? {justifyContent: 'center', padding: 0} : {}),
   },
 });

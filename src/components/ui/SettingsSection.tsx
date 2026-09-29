@@ -2,6 +2,7 @@ import React, {ReactNode} from 'react';
 import {View} from 'react-native';
 import Surface from './Surface';
 import AppText from './Text';
+import {isTV} from '../../lib/tv';
 
 interface SettingsSectionProps {
   title: string;
@@ -13,7 +14,7 @@ const SettingsSection = ({title, children}: SettingsSectionProps) => (
     <AppText role="labelLarge" className="mb-3 text-m3-on-surface-variant">
       {title}
     </AppText>
-    <Surface level="low" className="overflow-hidden">
+    <Surface level="low" className={isTV ? undefined : 'overflow-hidden'}>
       {children}
     </Surface>
   </View>

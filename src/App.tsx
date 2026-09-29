@@ -6,6 +6,7 @@ import Player from './screens/home/Player';
 import Settings from './screens/settings/Settings';
 import WatchList from './screens/WatchList';
 import Search from './screens/Search';
+import {isTV, TVFocusProvider} from './lib/tv';
 import ScrollList from './screens/ScrollList';
 import {
   NavigationContainer,
@@ -15,7 +16,7 @@ import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import 'react-native-reanimated';
-import 'react-native-gesture-handler';
+import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import WebView from './screens/WebView';
 import SearchResults from './screens/SearchResults';
 import * as SystemUI from 'expo-system-ui';
@@ -177,10 +178,11 @@ export const openDownloadsScreen = (): void => {
 
 const App = () => {
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
-  const isLargeScreen = Math.min(windowWidth, windowHeight) >= 600;
+  const isLargeScreen = isTV || Math.min(windowWidth, windowHeight) >= 600;
   LogBox.ignoreLogs([
     'You have passed a style to FlashList',
     'new NativeEventEmitter()',
+    'Failed to fetch manifest',
   ]);
   const HomeStack = createNativeStackNavigator<HomeStackParamList>();
   const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -192,7 +194,13 @@ const App = () => {
     Boolean(Constants?.expoConfig?.extra?.hasFirebase) &&
     isFirebaseNativeReady();
 
-  // const showTabBarLables = settingsStorage.showTabBarLabels();
+  // Safety fallback to ensure splash is hidden
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      BootSplash.hide({fade: true}).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let reconciled = false;
@@ -418,7 +426,7 @@ const App = () => {
   function SettingsStackScreen() {
     const insets = useSafeAreaInsets();
     const subpageOptions = {
-      contentStyle: {paddingTop: insets.top},
+      contentStyle: {flex: 1, paddingTop: insets.top},
     };
 
     return (
@@ -591,8 +599,9 @@ const App = () => {
         <AppDialogHost />
         <GlobalErrorBoundary>
           <QueryClientProvider client={queryClient}>
-            <View className="flex-1 bg-black">
-              <NavigationContainer
+            <GestureHandlerRootView style={{flex: 1, backgroundColor: 'black'}}>
+              <TVFocusProvider>
+                <NavigationContainer
                 ref={navigationRef}
                 onReady={async () => {
                   if (pendingDownloadsNavigation) {
@@ -680,6 +689,7 @@ const App = () => {
                   />
                 </Stack.Navigator>
               </NavigationContainer>
+            </TVFocusProvider>
               {/* Global WAF / captcha solving dialog, triggered by providers via
                 providerContext.openWebView */}
               <WafWebViewDialog />
@@ -687,7 +697,7 @@ const App = () => {
                 mounted for the app lifetime: every provider call is dispatched
                 into it. */}
               <ProviderSandboxHost />
-            </View>
+            </GestureHandlerRootView>
           </QueryClientProvider>
         </GlobalErrorBoundary>
       </M3ThemeProvider>

@@ -6,6 +6,8 @@ import AppText from '../../../components/ui/Text';
 import SettingsSection from '../../../components/ui/SettingsSection';
 import {settingsStorage} from '../../../lib/storage';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
+import {TVFocusable} from '../../../components/tv';
+import {isTV} from '../../../lib/tv';
 
 const TmdbApiKeyPreference = () => {
   const colors = useM3Colors();
@@ -79,6 +81,7 @@ const TmdbApiKeyPreference = () => {
             marginTop: 16,
           }}>
           <TextInput
+            focusable={true}
             autoCapitalize="none"
             autoCorrect={false}
             importantForAutofill="no"
@@ -99,11 +102,12 @@ const TmdbApiKeyPreference = () => {
             }}
             value={inputKey}
           />
-          <Pressable
+          <TVFocusable
             accessibilityRole="button"
             accessibilityLabel={showKey ? 'Hide API key' : 'Show API key'}
-            hitSlop={6}
             onPress={() => setShowKey(value => !value)}
+            borderRadius={24}
+            focusScale={1.1}
             style={{
               alignItems: 'center',
               height: 48,
@@ -115,50 +119,100 @@ const TmdbApiKeyPreference = () => {
               size={23}
               color={colors.primary}
             />
-          </Pressable>
+          </TVFocusable>
         </View>
 
         <View style={{flexDirection: 'row', gap: 10, marginTop: 14}}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Clear custom TMDB API key"
-            disabled={!savedKey && !inputKey}
-            onPress={clearKey}
-            style={({pressed}) => ({
-              alignItems: 'center',
-              backgroundColor: colors.surfaceContainerHighest,
-              borderRadius: 16,
-              flex: 1,
-              height: 48,
-              justifyContent: 'center',
-              opacity: !savedKey && !inputKey ? 0.38 : pressed ? 0.72 : 1,
-            })}>
-            <AppText
-              role="labelLargeEmphasized"
-              style={{color: colors.onSurface}}>
-              Clear
-            </AppText>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Save custom TMDB API key"
-            disabled={!canSave}
-            onPress={() => saveKey()}
-            style={({pressed}) => ({
-              alignItems: 'center',
-              backgroundColor: colors.primary,
-              borderRadius: 16,
-              flex: 1,
-              height: 48,
-              justifyContent: 'center',
-              opacity: !canSave ? 0.38 : pressed ? 0.72 : 1,
-            })}>
-            <AppText
-              role="labelLargeEmphasized"
-              style={{color: colors.onPrimary}}>
-              Save
-            </AppText>
-          </Pressable>
+          {isTV ? (
+            <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Clear custom TMDB API key"
+              disabled={!savedKey && !inputKey}
+              onPress={clearKey}
+              focusScale={1.03}
+              borderRadius={16}
+              style={{
+                alignItems: 'center',
+                backgroundColor: colors.surfaceContainerHighest,
+                borderRadius: 16,
+                flex: 1,
+                height: 48,
+                justifyContent: 'center',
+                opacity: !savedKey && !inputKey ? 0.38 : 1,
+              }}>
+              <AppText
+                role="labelLargeEmphasized"
+                style={{color: colors.onSurface}}>
+                Clear
+              </AppText>
+            </TVFocusable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear custom TMDB API key"
+              disabled={!savedKey && !inputKey}
+              onPress={clearKey}
+              style={({pressed}) => ({
+                alignItems: 'center',
+                backgroundColor: colors.surfaceContainerHighest,
+                borderRadius: 16,
+                flex: 1,
+                height: 48,
+                justifyContent: 'center',
+                opacity: !savedKey && !inputKey ? 0.38 : pressed ? 0.72 : 1,
+              })}>
+              <AppText
+                role="labelLargeEmphasized"
+                style={{color: colors.onSurface}}>
+                Clear
+              </AppText>
+            </Pressable>
+          )}
+          {isTV ? (
+            <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Save custom TMDB API key"
+              disabled={!canSave}
+              onPress={() => saveKey()}
+              focusScale={1.03}
+              borderRadius={16}
+              style={{
+                alignItems: 'center',
+                backgroundColor: colors.primary,
+                borderRadius: 16,
+                flex: 1,
+                height: 48,
+                justifyContent: 'center',
+                opacity: !canSave ? 0.38 : 1,
+              }}>
+              <AppText
+                role="labelLargeEmphasized"
+                style={{color: colors.onPrimary}}>
+                Save
+              </AppText>
+            </TVFocusable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Save custom TMDB API key"
+              disabled={!canSave}
+              onPress={() => saveKey()}
+              style={({pressed}) => ({
+                alignItems: 'center',
+                backgroundColor: colors.primary,
+                borderRadius: 16,
+                flex: 1,
+                height: 48,
+                justifyContent: 'center',
+                opacity: !canSave ? 0.38 : pressed ? 0.72 : 1,
+              })}>
+              <AppText
+                role="labelLargeEmphasized"
+                style={{color: colors.onPrimary}}>
+                Save
+              </AppText>
+            </Pressable>
+          )}
         </View>
 
         <View

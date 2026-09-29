@@ -1,4 +1,4 @@
-import {View, FlatList, Pressable, Text} from 'react-native';
+import {View, FlatList, Text, Keyboard} from 'react-native';
 import React, {useState, useEffect, useCallback, memo, useRef} from 'react';
 import {useNavigation} from '@react-navigation/native';
 import type {BottomTabNavigationProp} from '@react-navigation/bottom-tabs';
@@ -12,12 +12,17 @@ import {searchOMDB} from '../lib/services/omdb';
 import debounce from 'lodash/debounce';
 import {OMDBResult} from '../types/omdb';
 import {fetchIMDbSuggestions, type IMDbSuggestion} from '../lib/services/imdbSuggestions';
+import {sanitizeSearchQuery} from '../lib/utils/helpers';
 import SearchSuggestions from '../components/search/SearchSuggestions';
+import SearchHistory from '../components/search/SearchHistory';
 import Button from '../components/ui/Button';
 import IconButton from '../components/ui/IconButton';
 import AppText from '../components/ui/Text';
 import SearchField, {type SearchFieldRef} from '../components/ui/SearchField';
 import {useM3Colors} from '../theme/M3PaletteContext';
+import {TVFocusable, TVFocusGuide} from '../components/tv';
+import {isTV} from '../lib/tv';
+
 
 const MAX_VISIBLE_RESULTS = 15; // Limit number of animated items to prevent excessive callbacks
 const MAX_HISTORY_ITEMS = 30; // Maximum number of history items to store
@@ -32,15 +37,21 @@ const SearchResultItem = memo(
 
     return (
       <View style={{paddingHorizontal: 16, paddingVertical: 5}}>
-        <Pressable
+        <TVFocusable
           onPress={handlePress}
-          style={({pressed}) => ({
-            backgroundColor: pressed
-              ? colors.surfaceContainerHighest
-              : colors.surfaceContainerLow,
+          borderRadius={20}
+          focusScale={1}
+          showFocusBorder={true}
+          focusedStyle={{
+            backgroundColor: colors.surfaceContainerHigh,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Search result: ${item.Title}`}
+          style={{
+            backgroundColor: colors.surfaceContainerLow,
             borderRadius: 20,
             padding: 14,
-          })}>
+          }}>
           <View style={{alignItems: 'center', flexDirection: 'row'}}>
             <View
               style={{
@@ -58,7 +69,7 @@ const SearchResultItem = memo(
                 color={colors.onSecondaryContainer}
               />
             </View>
-            <View className="flex-1">
+            <View style={{flex: 1}}>
               <AppText
                 role="bodyLargeEmphasized"
                 style={{color: colors.onSurface}}>
@@ -76,76 +87,25 @@ const SearchResultItem = memo(
               color={colors.onSurfaceVariant}
             />
           </View>
-        </Pressable>
+        </TVFocusable>
       </View>
     );
   },
 );
 
-// Memoized history item component
-const HistoryItem = memo(
-  ({
-    search,
-    onPress,
-    onRemove,
-  }: {
-    search: string;
-    onPress: (text: string) => void;
-    onRemove: (text: string) => void;
-  }) => {
-    const colors = useM3Colors();
-    const handlePress = useCallback(() => {
-      onPress(search);
-    }, [search, onPress]);
 
-    const handleRemove = useCallback(() => {
-      onRemove(search);
-    }, [search, onRemove]);
 
-    return (
-      <Pressable
-        onPress={handlePress}
-        className="flex-row items-center rounded-[20px] mb-2 px-4 py-3.5"
-        style={({pressed}) => ({
-          backgroundColor: colors.surfaceContainerLow,
-          opacity: pressed ? 0.72 : 1,
-        })}>
-        <MaterialCommunityIcons
-          name="history"
-          size={22}
-          color={colors.onSurfaceVariant}
-        />
-        <Text
-          numberOfLines={1}
-          className="flex-1 mx-3"
-          style={{
-            color: colors.onSurface,
-            fontSize: 16,
-            fontWeight: '500',
-          }}>
-          {search}
-        </Text>
-        <Pressable
-          onPress={handleRemove}
-          hitSlop={8}
-          accessibilityLabel={`Remove ${search} from recent searches`}>
-          <MaterialCommunityIcons
-            name="close"
-            size={18}
-            color={colors.onSurfaceVariant}
-          />
-        </Pressable>
-      </Pressable>
-    );
-  },
-);
+const HeaderContainer = isTV ? View : Animated.View;
+const AnimatedContainer = Animated.View;
 
 const Search = () => {
   const colors = useM3Colors();
   const navigation =
     useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
   const [searchText, setSearchText] = useState('');
-  const [isFocused, setIsFocused] = useState(false);
+  const [searchFieldNode, setSearchFieldNode] = useState<number | null>(null);
+  const [clearBtnNode, setClearBtnNode] = useState<number | null>(null);
+  const [firstItemNode, setFirstItemNode] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<IMDbSuggestion[]>([]);
   const [searchHistory, setSearchHistory] = useState<string[]>(
     MMKV.getArray<string>('searchHistory') || [],
@@ -175,14 +135,18 @@ const Search = () => {
         return;
       }
 
-      searchFieldRef.current?.focus();
+      if (!isTV) {
+        searchFieldRef.current?.focus();
+      }
     });
     const unsubscribeFocus = navigation.addListener('focus', () => {
       if (!focusAfterTabResetRef.current) {
         return;
       }
       focusAfterTabResetRef.current = false;
-      searchFieldRef.current?.focus();
+      if (!isTV) {
+        searchFieldRef.current?.focus();
+      }
     });
 
     return () => {
@@ -255,13 +219,15 @@ const Search = () => {
 
   const handleSearch = useCallback(
     (text: string) => {
+      Keyboard.dismiss();
       suppressSuggestionsRef.current = true;
       setSuggestions([]);
-      if (text.trim()) {
+      const trimmed = text.trim();
+      if (trimmed) {
         // Save to search history
         const prevSearches = MMKV.getArray<string>('searchHistory') || [];
-        if (!prevSearches.includes(text.trim())) {
-          const newSearches = [text.trim(), ...prevSearches].slice(
+        if (!prevSearches.includes(trimmed)) {
+          const newSearches = [trimmed, ...prevSearches].slice(
             0,
             MAX_HISTORY_ITEMS,
           );
@@ -270,18 +236,29 @@ const Search = () => {
         }
 
         navigation.navigate('SearchResults', {
-          filter: text.trim(),
+          filter: trimmed,
         });
       }
     },
     [navigation],
   );
 
-  const handleSelectSuggestion = useCallback((title: string) => {
-    // Auto-fill search bar on click without executing search
+  const handleSelectSuggestion = useCallback(
+    (title: string) => {
+      const cleanTitle = sanitizeSearchQuery(title);
+      Keyboard.dismiss();
+      suppressSuggestionsRef.current = true;
+      setSuggestions([]);
+      setSearchText(cleanTitle);
+      handleSearch(cleanTitle);
+    },
+    [handleSearch],
+  );
+
+  const handleEditSearch = useCallback((text: string) => {
     suppressSuggestionsRef.current = true;
     setSuggestions([]);
-    setSearchText(title);
+    setSearchText(text);
     searchFieldRef.current?.focus();
   }, []);
 
@@ -326,39 +303,19 @@ const Search = () => {
     [handleResultPress],
   );
 
-  // Memoized render function for history items
-  const renderHistoryItem = useCallback(
-    ({item}: {item: string}) => (
-      <HistoryItem
-        search={item}
-        onPress={handleSearch}
-        onRemove={removeHistoryItem}
-      />
-    ),
-    [handleSearch, removeHistoryItem],
-  );
-
-  // Memoized key extractors
   const searchResultKeyExtractor = useCallback(
     (item: OMDBResult) => item.imdbID.toString(),
-    [],
-  );
-  const historyKeyExtractor = useCallback(
-    (item: string, index: number) => `history-${index}`,
     [],
   );
 
   const showSuggestions =
     searchText.trim().length >= 2 && suggestions.length > 0;
 
-  // Conditionally render animations based on state
-  const AnimatedContainer = Animated.View;
-
   return (
     <SafeAreaView className="flex-1 bg-m3-background">
       {/* Title Section */}
-      <AnimatedContainer
-        entering={FadeInDown.duration(300)}
+      <HeaderContainer
+        {...(!isTV ? {entering: FadeInDown.duration(300)} : {})}
         className="px-4 pt-5">
         <AppText
           role="bodyLarge"
@@ -372,8 +329,10 @@ const Search = () => {
               value={searchText}
               onChangeText={handleTextChange}
               onSubmit={handleSearch}
-              onFocusChange={setIsFocused}
               placeholder="Search anime..."
+              nextFocusDown={firstItemNode}
+              nextFocusRight={searchText.length > 0 ? clearBtnNode : undefined}
+              onNodeHandle={setSearchFieldNode}
             />
           </View>
           {searchText.length > 0 && (
@@ -386,85 +345,79 @@ const Search = () => {
                 setSuggestions([]);
               }}
               size={18}
+              nextFocusLeft={searchFieldNode}
+              nextFocusDown={firstItemNode}
+              onNodeHandle={setClearBtnNode}
             />
           )}
         </View>
-      </AnimatedContainer>
+      </HeaderContainer>
 
       {/* Search Content */}
       <View className="flex-1">
-        {showSuggestions ? (
-          <SearchSuggestions
-            suggestions={suggestions}
-            onSelectSuggestion={handleSelectSuggestion}
-          />
-        ) : searchResults.length > 0 ? (
-          <FlatList
-            data={searchResults}
-            keyExtractor={searchResultKeyExtractor}
-            renderItem={renderSearchResult}
-            contentContainerStyle={{paddingTop: 4}}
-            showsVerticalScrollIndicator={false}
-            removeClippedSubviews={true}
-            maxToRenderPerBatch={10}
-            updateCellsBatchingPeriod={50}
-            windowSize={10}
-            initialNumToRender={10}
-            keyboardShouldPersistTaps="handled"
-          />
-        ) : searchHistory.length > 0 ? (
-          <AnimatedContainer
-            entering={FadeInDown.duration(250)}
-            className="px-4 flex-1 pt-4">
-            <View className="flex-row items-center justify-between mb-3">
-              <AppText
-                role="titleMediumEmphasized"
-                className="text-m3-on-surface">
-                Recent Searches
-              </AppText>
-              <Button compact variant="text" onPress={clearHistory}>
-                Clear all
-              </Button>
-            </View>
-
-            <FlatList
-              data={searchHistory}
-              keyExtractor={historyKeyExtractor}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{paddingBottom: 20}}
-              renderItem={renderHistoryItem}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={10}
-              updateCellsBatchingPeriod={50}
-              windowSize={10}
-              initialNumToRender={10}
-              keyboardShouldPersistTaps="handled"
-            />
-          </AnimatedContainer>
-        ) : (
-          // Empty State - Only show when no history and no results
-          <AnimatedContainer
-            entering={FadeInDown.duration(300)}
-            className="items-center justify-center flex-1 px-8">
-            <View className="mb-5 rounded-[28px] bg-m3-secondary-container p-7">
-              <MaterialCommunityIcons
-                name="magnify"
-                size={32}
-                color={colors.onSecondaryContainer}
+        <View className="flex-1">
+          {showSuggestions ? (
+            <View style={{flex: 1}}>
+              <SearchSuggestions
+                suggestions={suggestions}
+                onSelectSuggestion={handleSelectSuggestion}
+                searchFieldNodeHandle={searchFieldNode}
+                onFirstItemNodeHandle={setFirstItemNode}
               />
             </View>
-            <AppText
-              role="bodyLarge"
-              className="text-center text-m3-on-surface">
-              Your next watch starts here
-            </AppText>
-            <AppText
-              role="bodyMedium"
-              className="mt-1 text-center text-m3-on-surface-variant">
-              Search by title, then browse every provider in one place
-            </AppText>
-          </AnimatedContainer>
-        )}
+          ) : searchResults.length > 0 ? (
+            <TVFocusGuide trapFocusLeft={true} trapFocusRight={true} autoFocus={false} style={{flex: 1}}>
+              <FlatList
+                data={searchResults}
+                keyExtractor={searchResultKeyExtractor}
+                renderItem={renderSearchResult}
+                contentContainerStyle={{paddingTop: 4}}
+                showsVerticalScrollIndicator={false}
+                removeClippedSubviews={true}
+                maxToRenderPerBatch={10}
+                updateCellsBatchingPeriod={50}
+                windowSize={10}
+                initialNumToRender={10}
+                keyboardShouldPersistTaps="handled"
+              />
+            </TVFocusGuide>
+          ) : searchHistory.length > 0 ? (
+            <View style={{flex: 1}}>
+              <SearchHistory
+                history={searchHistory}
+                onSelectSearch={handleSearch}
+                onEditSearch={handleEditSearch}
+                onRemoveSearch={removeHistoryItem}
+                onClearHistory={clearHistory}
+                searchFieldNodeHandle={searchFieldNode}
+                onFirstItemNodeHandle={setFirstItemNode}
+              />
+            </View>
+          ) : (
+            // Empty State - Only show when no history and no results
+            <AnimatedContainer
+              entering={FadeInDown.duration(300)}
+              className="items-center justify-center flex-1 px-8">
+              <View className="mb-5 rounded-[28px] bg-m3-secondary-container p-7">
+                <MaterialCommunityIcons
+                  name="magnify"
+                  size={32}
+                  color={colors.onSecondaryContainer}
+                />
+              </View>
+              <AppText
+                role="bodyLarge"
+                className="text-center text-m3-on-surface">
+                Your next watch starts here
+              </AppText>
+              <AppText
+                role="bodyMedium"
+                className="mt-1 text-center text-m3-on-surface-variant">
+                Search by title, then browse every provider in one place
+              </AppText>
+            </AnimatedContainer>
+          )}
+        </View>
       </View>
     </SafeAreaView>
   );

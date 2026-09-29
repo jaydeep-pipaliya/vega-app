@@ -1,4 +1,4 @@
-import {SafeAreaView, ScrollView, RefreshControl, View} from 'react-native';
+import {SafeAreaView, ScrollView, RefreshControl, View, Modal, Pressable} from 'react-native';
 import Slider from '../../components/Slider';
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {useFocusEffect} from '@react-navigation/native';
@@ -26,6 +26,7 @@ import AppText from '../../components/ui/Text';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import ContinueWatching from '../../components/ContinueWatching';
 import StatusBarScrim from '../../components/ui/StatusBarScrim';
+import {isTV} from '../../lib/tv/constants';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Home'>;
 
@@ -165,9 +166,10 @@ const Home = ({}: Props) => {
         title={item.title}
         posts={item.Posts}
         filter={item.filter}
+        providerValue={provider?.value}
       />
     ));
-  }, [homeData]);
+  }, [homeData, provider?.value]);
 
   // Memoized error message - only show if there is no cached data and an error occurred
   const errorComponent = useMemo(() => {
@@ -206,16 +208,20 @@ const Home = ({}: Props) => {
         <StatusBarScrim visible={statusBarScrimVisible} />
         <SafeAreaView className="flex-1 bg-m3-background">
           <Drawer
-            open={isDrawerOpen}
-            onOpen={() => setIsDrawerOpen(true)}
-            onClose={() => setIsDrawerOpen(false)}
+            open={!isTV && isDrawerOpen}
+            onOpen={() => {
+              if (!isTV) setIsDrawerOpen(true);
+            }}
+            onClose={() => {
+              if (!isTV) setIsDrawerOpen(false);
+            }}
             drawerPosition="left"
             drawerType="front"
             drawerStyle={{width: 200, backgroundColor: 'transparent'}}
             swipeEdgeWidth={disableDrawer ? 0 : 70}
-            swipeEnabled={!disableDrawer}
+            swipeEnabled={!disableDrawer && !isTV}
             renderDrawerContent={() =>
-              !disableDrawer ? (
+              !disableDrawer && !isTV ? (
                 <ProviderDrawer onClose={() => setIsDrawerOpen(false)} />
               ) : null
             }>
@@ -226,6 +232,7 @@ const Home = ({}: Props) => {
               scrollEventThrottle={16} // Optimize scroll performance
               showsVerticalScrollIndicator={false}
               className="bg-m3-background"
+              contentContainerStyle={{ paddingBottom: isTV ? 120 : 32 }}
               refreshControl={
                 <RefreshControl
                   colors={[colors.primary]}
@@ -251,6 +258,26 @@ const Home = ({}: Props) => {
               <View className="h-8" />
             </ScrollView>
           </Drawer>
+
+          {isTV && isDrawerOpen ? (
+            <Modal
+              transparent
+              visible={isDrawerOpen}
+              animationType="fade"
+              statusBarTranslucent
+              onRequestClose={() => setIsDrawerOpen(false)}>
+              <View style={{flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0, 0, 0, 0.72)'}}>
+                <View style={{width: 340, height: '100%', backgroundColor: '#121214'}}>
+                  <ProviderDrawer onClose={() => setIsDrawerOpen(false)} />
+                </View>
+                <Pressable
+                  style={{flex: 1}}
+                  onPress={() => setIsDrawerOpen(false)}
+                  focusable={false}
+                />
+              </View>
+            </Modal>
+          ) : null}
         </SafeAreaView>
       </GestureHandlerRootView>
     </QueryErrorBoundary>

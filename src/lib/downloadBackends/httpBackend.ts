@@ -205,7 +205,7 @@ export const httpDownloadBackend: DownloadBackend = {
   directToSaf: hasNativeHttpDownloader,
   preservePartialOnFailure: hasNativeHttpDownloader,
   async start({record, destination}: DownloadBackendContext): Promise<void> {
-    if (hasNativeHttpDownloader) {
+    if (hasNativeHttpDownloader && destination.directFinalDocumentUri) {
       await startNativeDownload({record, destination});
       return;
     }

@@ -1,11 +1,15 @@
-import React, {useState, useEffect, useMemo, useCallback} from 'react';
+import React, {useState, useEffect, useMemo, useCallback, useRef} from 'react';
 import {
   View,
   Pressable,
   StatusBar,
+  ScrollView,
   FlatList,
   RefreshControl,
+  BackHandler,
+  findNodeHandle,
 } from 'react-native';
+import {useIsFocused} from '@react-navigation/native';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {SettingsStackParamList} from '../../App';
 import {MaterialCommunityIcons, FontAwesome6} from '@expo/vector-icons';
@@ -40,6 +44,9 @@ import ProviderSettingsModal from './components/ProviderSettingsModal';
 import type {ProviderDiagnosticProgress} from '../../lib/services/providerDiagnostics';
 import AppText from '../../components/ui/Text';
 import {useM3Colors} from '../../theme/M3PaletteContext';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
 
 type Props = NativeStackScreenProps<SettingsStackParamList, 'Extensions'>;
 
@@ -71,6 +78,27 @@ const isSameProvider = (
   left?.value === right.value && left.source?.author === right.source?.author;
 
 const Extensions = ({navigation}: Props) => {
+  const isScreenFocused = useIsFocused();
+  const backButtonRef = useRef<View>(null);
+  const backFocusHandleRef = useRef<number | null>(null);
+  const registerBackFocus = useCallback(() => {
+    if (!isTV || !isScreenFocused) return;
+    const handle = findNodeHandle(backButtonRef.current);
+    if (handle) {
+      backFocusHandleRef.current = handle;
+      useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
+    }
+  }, [isScreenFocused]);
+
+  useEffect(() => {
+    registerBackFocus();
+    return () => {
+      const store = useTVNavigationStore.getState();
+      if (store.activeScreenFocusHandle === backFocusHandleRef.current) {
+        store.setActiveScreenFocusHandle(null);
+      }
+    };
+  }, [registerBackFocus]);
   const colors = useM3Colors();
   const primary = colors.primary;
   const activeExtensionProvider = useContentStore(state => state.provider);
@@ -104,12 +132,23 @@ const Extensions = ({navigation}: Props) => {
   const [activeSourceAuthor, setActiveSourceAuthor] = useState<string>(
     extensionStorage.getProviderSource()?.author || '',
   );
+  const [isBackFocused, setIsBackFocused] = useState(false);
+  const [isRefreshFocused, setIsRefreshFocused] = useState(false);
   const showDialog = (
     title: string,
     message: string,
     variant: AppDialogVariant = 'info',
     actions?: AppDialogAction[],
   ) => setDialog({title, message, variant, actions});
+
+  useEffect(() => {
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.navigate('Settings');
+      return true;
+    });
+    return () => backSub.remove();
+  }, [navigation]);
+
   // Load providers immediately on component mount (synchronous 0ms load)
   useEffect(() => {
     const initialSource = extensionStorage.getProviderSource();
@@ -476,6 +515,7 @@ const Extensions = ({navigation}: Props) => {
 
   const renderProviderCard = useCallback(
     ({item}: {item: ProviderExtension}) => {
+      console.log('DEBUG renderProviderCard item:', item?.value, item?.display_name);
       if (!item || !item.value) {
         return null;
       }
@@ -530,20 +570,33 @@ const Extensions = ({navigation}: Props) => {
   );
 
   return (
-    <View className="flex-1 bg-m3-background pt-10">
-      <StatusBar backgroundColor={colors.background} barStyle="light-content" />
-      <View className="flex-row items-center justify-between px-4 pb-4 pt-2">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to settings"
-          onPress={() => navigation.navigate('Settings')}
-          className="h-12 w-12 items-center justify-center rounded-2xl"
-          style={{backgroundColor: colors.surfaceContainerHigh}}>
-          <FontAwesome6 name="arrow-left" size={20} color={colors.onSurface} />
-        </Pressable>
-        <View className="mx-4 flex-1">
-          <AppText
-            role="headlineSmallEmphasized"
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusDown={true} style={{flex: 1}}>
+      <View style={{flex: 1, height: '100%', width: '100%', backgroundColor: colors.background, paddingTop: 40}}>
+        <StatusBar backgroundColor={colors.background} barStyle="light-content" />
+        <View className="flex-row items-center justify-between px-4 pb-4 pt-2">
+          <TVFocusable
+            ref={backButtonRef}
+            onLayout={registerBackFocus}
+            onFocus={registerBackFocus}
+            hasTVPreferredFocus={isTV}
+            accessibilityRole="button"
+            accessibilityLabel="Back to settings"
+            onPress={() => navigation.navigate('Settings')}
+            borderRadius={16}
+            focusScale={1.12}
+            style={{
+              height: 48,
+              width: 48,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: colors.surfaceContainerHigh,
+              borderRadius: 16,
+            }}>
+            <FontAwesome6 name="arrow-left" size={20} color={colors.onSurface} />
+          </TVFocusable>
+          <View className="mx-4 flex-1">
+            <AppText
+              role="headlineSmallEmphasized"
             className="text-m3-on-background">
             Providers
           </AppText>
@@ -551,22 +604,26 @@ const Extensions = ({navigation}: Props) => {
             Install and test streaming sources
           </AppText>
         </View>
-        <Pressable
+        <TVFocusable
           accessibilityRole="button"
           accessibilityLabel="Refresh providers"
           onPress={handleRefresh}
-          className="h-12 w-12 items-center justify-center rounded-2xl"
-          style={({pressed}) => ({
-            backgroundColor: pressed
-              ? colors.secondaryContainer
-              : colors.surfaceContainerHigh,
-          })}>
+          borderRadius={16}
+          focusScale={1.12}
+          style={{
+            height: 48,
+            width: 48,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.surfaceContainerHigh,
+            borderRadius: 16,
+          }}>
           <MaterialCommunityIcons
             name="refresh"
             size={22}
             color={colors.primary}
           />
-        </Pressable>
+        </TVFocusable>
       </View>
       <ProviderSourceManager
         visible
@@ -598,14 +655,11 @@ const Extensions = ({navigation}: Props) => {
       </View>
 
       {/* Provider list */}
-      <FlatList
-        data={currentData}
-        keyExtractor={(item, index) =>
-          `${item?.source?.author || 'none'}:${item?.value || `provider-${index}`}`
-        }
-        renderItem={renderProviderCard}
-        className="mt-3 flex-1"
-        contentContainerStyle={{paddingBottom: 24}}
+      <ScrollView
+        focusable={false}
+        accessible={false}
+        style={{flex: 1, marginTop: 12}}
+        contentContainerStyle={{paddingBottom: 48}}
         onScroll={handleScroll}
         scrollEventThrottle={16}
         refreshControl={
@@ -617,8 +671,8 @@ const Extensions = ({navigation}: Props) => {
             progressBackgroundColor={colors.surfaceContainerHigh}
             enabled={isAtTop || refreshing}
           />
-        }
-        ListEmptyComponent={
+        }>
+        {currentData.length === 0 ? (
           <View className="flex-1 justify-center items-center py-20">
             <MaterialCommunityIcons
               name="package-variant"
@@ -636,8 +690,15 @@ const Extensions = ({navigation}: Props) => {
               Add or refresh a source to check for available providers
             </AppText>
           </View>
-        }
-      />
+        ) : (
+          currentData.map((item, index) => (
+            <View
+              key={`${item?.source?.author || 'none'}:${item?.value || index}`}>
+              {renderProviderCard({item})}
+            </View>
+          ))
+        )}
+      </ScrollView>
       <AppDialog
         visible={dialog !== null}
         title={dialog?.title || ''}
@@ -661,6 +722,7 @@ const Extensions = ({navigation}: Props) => {
         onClose={() => setSettingsProvider(null)}
       />
     </View>
+  </TVFocusGuide>
   );
 };
 

@@ -9,7 +9,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import {Image, Modal, Pressable, View} from 'react-native';
+import {Image, Modal, Pressable, View, findNodeHandle, Keyboard} from 'react-native';
 import {getColors} from 'react-native-image-colors';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, {FadeIn, FadeInDown} from 'react-native-reanimated';
@@ -25,10 +25,14 @@ import {
   fetchIMDbSuggestions,
   type IMDbSuggestion,
 } from '../lib/services/imdbSuggestions';
+import {sanitizeSearchQuery} from '../lib/utils/helpers';
 import SearchSuggestions from './search/SearchSuggestions';
 import Button from './ui/Button';
 import SearchField, {type SearchFieldRef} from './ui/SearchField';
 import AppText from './ui/Text';
+import {isTV} from '../lib/tv';
+import {TVFocusable, TVFocusGuide} from './tv';
+import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 
 interface HeroProps {
   isDrawerOpen: boolean;
@@ -50,33 +54,98 @@ const getReadableContentColor = (backgroundColor: string) => {
     : '#FFFFFF';
 };
 
-const HeroTopButton = ({
-  disabled = false,
-  icon,
-  iconColor,
-  label,
-  onPress,
-}: {
-  disabled?: boolean;
-  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
-  iconColor: string;
-  label: string;
-  onPress: () => void;
-}) => (
-  <Pressable
-    accessibilityLabel={label}
-    accessibilityRole="button"
-    disabled={disabled}
-    onPress={onPress}
-    style={({pressed}) => ({
-      alignItems: 'center',
-      height: 48,
-      justifyContent: 'center',
-      opacity: disabled ? 0 : pressed ? 0.62 : 1,
-      width: 48,
-    })}>
-    <MaterialCommunityIcons name={icon} size={30} color={iconColor} />
-  </Pressable>
+const HeroTopButton = React.forwardRef<
+  View,
+  {
+    disabled?: boolean;
+    icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+    iconColor: string;
+    label: string;
+    onPress: () => void;
+    nextFocusDown?: number | null;
+    nextFocusLeft?: number | null;
+    nextFocusRight?: number | null;
+    nextFocusUp?: number | null;
+    hasTVPreferredFocus?: boolean;
+    onLayout?: (event: any) => void;
+  }
+>(
+  (
+    {
+      disabled = false,
+      icon,
+      iconColor,
+      label,
+      onPress,
+      nextFocusDown,
+      nextFocusLeft,
+      nextFocusRight,
+      nextFocusUp,
+      hasTVPreferredFocus,
+      onLayout,
+    },
+    ref,
+  ) => {
+    const focusBorderColor = useTVFocusBorderColor();
+
+    if (isTV) {
+      return (
+        <TVFocusable
+          ref={ref}
+          onLayout={onLayout}
+          accessibilityLabel={label}
+          accessibilityRole="button"
+          disabled={disabled}
+          hasTVPreferredFocus={hasTVPreferredFocus}
+          nextFocusDown={nextFocusDown}
+          nextFocusLeft={nextFocusLeft}
+          nextFocusRight={nextFocusRight}
+          nextFocusUp={nextFocusUp}
+          onPress={onPress}
+          borderRadius={24}
+          focusScale={1.18}
+          focusBorderColor={focusBorderColor}
+          style={{
+            alignItems: 'center',
+            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+            borderColor: 'rgba(255, 255, 255, 0.15)',
+            borderRadius: 24,
+            borderWidth: 1,
+            height: 48,
+            justifyContent: 'center',
+            opacity: disabled ? 0 : 1,
+            width: 48,
+          }}>
+          {({focused}) => (
+            <MaterialCommunityIcons
+              name={icon}
+              size={28}
+              color={focused ? '#FFFFFF' : iconColor}
+            />
+          )}
+        </TVFocusable>
+      );
+    }
+
+    return (
+      <Pressable
+        ref={ref as any}
+        onLayout={onLayout}
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        disabled={disabled}
+        onPress={onPress}
+        style={({pressed}) => ({
+          alignItems: 'center',
+          height: 48,
+          justifyContent: 'center',
+          opacity: disabled ? 0 : pressed ? 0.62 : 1,
+          width: 48,
+        })}>
+        <MaterialCommunityIcons name={icon} size={30} color={iconColor} />
+      </Pressable>
+    );
+  },
 );
 
 const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
@@ -88,6 +157,44 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
   const [suggestions, setSuggestions] = useState<IMDbSuggestion[]>([]);
   const [searchButtonColor, setSearchButtonColor] = useState('#FFFFFF');
   const searchFieldRef = useRef<SearchFieldRef>(null);
+  const hamburgerRef = useRef<View>(null);
+  const searchRef = useRef<View>(null);
+  const watchNowRef = useRef<View>(null);
+
+  const [hamburgerNode, setHamburgerNode] = useState<number | null>(null);
+  const [searchNode, setSearchNode] = useState<number | null>(null);
+  const [watchNowNode, setWatchNowNode] = useState<number | null>(null);
+
+  const updateHamburgerNode = useCallback(() => {
+    if (hamburgerRef.current) {
+      const handle = findNodeHandle(hamburgerRef.current);
+      if (handle) setHamburgerNode(handle);
+    }
+  }, []);
+
+  const updateSearchNode = useCallback(() => {
+    if (searchRef.current) {
+      const handle = findNodeHandle(searchRef.current);
+      if (handle) setSearchNode(handle);
+    }
+  }, []);
+
+  const updateWatchNowNode = useCallback(() => {
+    if (watchNowRef.current) {
+      const handle = findNodeHandle(watchNowRef.current);
+      if (handle) setWatchNowNode(handle);
+    }
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      updateHamburgerNode();
+      updateSearchNode();
+      updateWatchNowNode();
+    }, 150);
+    return () => clearTimeout(t);
+  }, [updateHamburgerNode, updateSearchNode, updateWatchNowNode, isDrawerOpen]);
+
   const provider = useContentStore(state => state.provider);
   const hero = useHeroStore(state => state.hero);
   const navigation =
@@ -147,13 +254,44 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
     setSearchText(text);
   }, []);
 
-  const handleSelectSuggestion = useCallback((title: string) => {
-    // Fill the search bar with suggestion without executing search
-    suppressSuggestionsRef.current = true;
-    setSuggestions([]);
-    setSearchText(title);
-    searchFieldRef.current?.focus();
-  }, []);
+  const submitProviderSearch = useCallback(
+    (value: string) => {
+      Keyboard.dismiss();
+      const query = value.trim();
+      if (!query) {
+        return;
+      }
+      setSearchActive(false);
+      setSearchText('');
+      setSuggestions([]);
+      if (/^https?:\/\//i.test(query)) {
+        navigation.navigate('Info', {
+          link: query,
+          provider: provider.value,
+        });
+        return;
+      }
+      navigation.navigate('ScrollList', {
+        providerValue: provider.value,
+        filter: query,
+        title: provider.display_name,
+        isSearch: true,
+      });
+    },
+    [navigation, provider.display_name, provider.value],
+  );
+
+  const handleSelectSuggestion = useCallback(
+    (title: string) => {
+      const cleanTitle = sanitizeSearchQuery(title);
+      Keyboard.dismiss();
+      suppressSuggestionsRef.current = true;
+      setSuggestions([]);
+      setSearchText(cleanTitle);
+      submitProviderSearch(cleanTitle);
+    },
+    [submitProviderSearch],
+  );
 
   useEffect(() => {
     if (searchActive && searchText.trim().length >= 2) {
@@ -212,31 +350,6 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
       poster: heroData?.poster || heroData?.image || heroData?.background,
     });
   }, [hero, heroData, navigation, provider.value]);
-  const submitProviderSearch = useCallback(
-    (value: string) => {
-      const query = value.trim();
-      if (!query) {
-        return;
-      }
-      setSearchActive(false);
-      setSearchText('');
-      setSuggestions([]);
-      if (/^https?:\/\//i.test(query)) {
-        navigation.navigate('Info', {
-          link: query,
-          provider: provider.value,
-        });
-        return;
-      }
-      navigation.navigate('ScrollList', {
-        providerValue: provider.value,
-        filter: query,
-        title: provider.display_name,
-        isSearch: true,
-      });
-    },
-    [navigation, provider.display_name, provider.value],
-  );
 
   return (
     <View
@@ -272,30 +385,44 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
         style={{position: 'absolute', inset: 0}}
       />
 
-      <View
+      <TVFocusGuide
+        trapFocusUp={true}
         style={{
           alignItems: 'center',
           flexDirection: 'row',
           justifyContent: 'space-between',
-          left: 16,
+          left: isTV ? 24 : 16,
           position: 'absolute',
-          right: 16,
-          top: insets.top + 6,
+          right: isTV ? 48 : 16,
+          top: insets.top + (isTV ? 16 : 6),
+          zIndex: 30,
         }}>
         <HeroTopButton
+          ref={hamburgerRef}
+          onLayout={updateHamburgerNode}
           icon="menu"
           iconColor={searchButtonColor}
           label="Open provider drawer"
           disabled={isDrawerOpen}
+          hasTVPreferredFocus={isTV && !isDrawerOpen}
+          nextFocusRight={searchNode ?? undefined}
+          nextFocusDown={watchNowNode ?? undefined}
+          nextFocusUp={hamburgerNode ?? undefined}
           onPress={onOpenDrawer}
         />
         <HeroTopButton
+          ref={searchRef}
+          onLayout={updateSearchNode}
           icon="magnify"
           iconColor={searchButtonColor}
           label={`Search in ${provider.display_name}`}
+          nextFocusLeft={hamburgerNode ?? undefined}
+          nextFocusRight={searchNode ?? undefined}
+          nextFocusDown={watchNowNode ?? undefined}
+          nextFocusUp={searchNode ?? undefined}
           onPress={() => setSearchActive(true)}
         />
-      </View>
+      </TVFocusGuide>
 
       <Animated.View
         entering={FadeInDown.delay(100).springify().damping(18).stiffness(180)}
@@ -364,9 +491,12 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
             width: '100%',
           }}>
           <Button
+            ref={watchNowRef}
+            onLayout={updateWatchNowNode}
             variant="filled"
             containerColor={searchButtonColor}
             contentColor={getReadableContentColor(searchButtonColor)}
+            nextFocusUp={hamburgerNode ?? undefined}
             onPress={openDetails}>
             Watch now
           </Button>
@@ -406,27 +536,54 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
               paddingBottom: 10,
               gap: 8,
             }}>
-            <Pressable
-              accessibilityLabel="Close search"
-              accessibilityRole="button"
-              onPress={() => {
-                setSearchActive(false);
-                setSearchText('');
-                setSuggestions([]);
-              }}
-              style={({pressed}) => ({
-                alignItems: 'center',
-                height: 48,
-                justifyContent: 'center',
-                opacity: pressed ? 0.62 : 1,
-                width: 44,
-              })}>
-              <MaterialCommunityIcons
-                name="arrow-left"
-                size={26}
-                color={colors.onSurface}
-              />
-            </Pressable>
+            {isTV ? (
+              <TVFocusable
+                accessibilityLabel="Close search"
+                accessibilityRole="button"
+                hasTVPreferredFocus={true}
+                borderRadius={22}
+                focusScale={1.1}
+                onPress={() => {
+                  setSearchActive(false);
+                  setSearchText('');
+                  setSuggestions([]);
+                }}
+                style={{
+                  alignItems: 'center',
+                  borderRadius: 22,
+                  height: 44,
+                  justifyContent: 'center',
+                  width: 44,
+                }}>
+                <MaterialCommunityIcons
+                  name="arrow-left"
+                  size={26}
+                  color={colors.onSurface}
+                />
+              </TVFocusable>
+            ) : (
+              <Pressable
+                accessibilityLabel="Close search"
+                accessibilityRole="button"
+                onPress={() => {
+                  setSearchActive(false);
+                  setSearchText('');
+                  setSuggestions([]);
+                }}
+                style={({pressed}) => ({
+                  alignItems: 'center',
+                  height: 48,
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.62 : 1,
+                  width: 44,
+                })}>
+                <MaterialCommunityIcons
+                  name="arrow-left"
+                  size={26}
+                  color={colors.onSurface}
+                />
+              </Pressable>
+            )}
 
             <View style={{flex: 1}}>
               <SearchField

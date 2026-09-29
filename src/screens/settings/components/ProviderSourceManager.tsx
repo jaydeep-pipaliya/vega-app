@@ -1,27 +1,18 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {
-  Keyboard,
-  KeyboardAvoidingView,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from 'react-native';
+import {View} from 'react-native';
 import {MaterialCommunityIcons, MaterialIcons} from '@expo/vector-icons';
 import {
   extensionStorage,
   ProviderSource,
 } from '../../../lib/storage/extensionStorage';
 import {createProviderSource} from '../../../lib/utils/helpers';
-import {socialLinks} from '../../../lib/constants';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import AppDialog from '../../../components/AppDialog';
-import MaterialDialogSurface from '../../../components/ui/MaterialDialogSurface';
-import {readableOnColor} from '../../../theme/seeds';
 import Text from '../../../components/ui/Text';
+import {TVFocusable} from '../../../components/tv';
+import {isTV} from '../../../lib/tv/constants';
+import {AddSourceModal} from './AddSourceModal';
+import {SourcePickerModal} from './SourcePickerModal';
 
 type Props = {
   primary: string;
@@ -34,30 +25,8 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
   const [sources, setSources] = useState<ProviderSource[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showSourcePicker, setShowSourcePicker] = useState(false);
-  const [inputValue, setInputValue] = useState('');
   const [invalidSourceDialog, setInvalidSourceDialog] = useState(false);
   const [sourceToRemove, setSourceToRemove] = useState<string>();
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  useEffect(() => {
-    const showSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      e => {
-        setKeyboardHeight(e.endCoordinates.height);
-      },
-    );
-    const hideSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        setKeyboardHeight(0);
-      },
-    );
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
 
   const defaultSource = useMemo(() => {
     return sources.find(item => item.isDefault) || sources[0];
@@ -92,41 +61,34 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
     await onSourceChanged(extensionStorage.getProviderSource());
   };
 
-  const handleConfirmAdd = async () => {
+  const handleConfirmAdd = async (value: string) => {
     try {
-      const parsedSource = createProviderSource(inputValue);
-      extensionStorage.addProviderSources(
-        parsedSource.author,
-        parsedSource.url,
-      );
-      extensionStorage.setDefaultProviderSource(parsedSource.author);
-      setInputValue('');
+      const source = createProviderSource(value);
+      extensionStorage.addProviderSources(source.author, source.url);
+      extensionStorage.setDefaultProviderSource(source.author);
       setShowAddDialog(false);
       reloadSources();
-      await onSourceChanged(extensionStorage.getProviderSource());
-    } catch (error) {
+      await onSourceChanged(source);
+    } catch {
       setInvalidSourceDialog(true);
     }
-  };
-
-  const handleRemoveSource = (author: string) => {
-    setSourceToRemove(author);
   };
 
   const confirmRemoveSource = async () => {
     if (!sourceToRemove) {
       return;
     }
-    const installedForSource = extensionStorage
-      .getInstalledProviders()
-      .filter(provider => provider.source?.author === sourceToRemove);
 
-    installedForSource.forEach(provider => {
-      extensionStorage.uninstallProvider(provider.value, sourceToRemove);
-    });
-
-    extensionStorage.removeProviderSource(sourceToRemove);
+    const targetAuthor = sourceToRemove;
     setSourceToRemove(undefined);
+
+    const installed = extensionStorage.getInstalledProviders();
+    const remainingInstalled = installed.filter(
+      item => item.source?.author !== targetAuthor,
+    );
+    extensionStorage.setInstalledProviders(remainingInstalled);
+
+    extensionStorage.removeProviderSource(targetAuthor);
     reloadSources();
     await onSourceChanged(extensionStorage.getProviderSource());
   };
@@ -136,27 +98,32 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
   }
 
   return (
-    <View className="mx-4 mt-3">
+    <View className="px-5">
       <Text
-        className="mb-2 ml-1 text-sm font-bold"
+        role="labelLarge"
+        className="mb-2"
         style={{color: colors.onSurfaceVariant}}>
         Provider source
       </Text>
       <View className="flex-row items-stretch gap-2">
-        <View className="flex-1 overflow-hidden">
-          <Pressable
+        {/* Active source selector card */}
+        <View className="flex-1" style={{overflow: isTV ? 'visible' : 'hidden'}}>
+          <TVFocusable
             accessibilityRole="button"
             accessibilityLabel="Select provider source"
-            className="h-16 flex-row items-center px-4"
-            style={({pressed}) => ({
-              backgroundColor: pressed
-                ? colors.surfaceBright
-                : colors.surfaceContainerHigh,
+            onPress={() => setShowSourcePicker(true)}
+            borderRadius={20}
+            focusScale={1.03}
+            style={{
+              height: 64,
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 16,
+              backgroundColor: colors.surfaceContainerHigh,
               borderColor: colors.outlineVariant,
               borderRadius: 20,
               borderWidth: 1,
-            })}
-            onPress={() => setShowSourcePicker(true)}>
+            }}>
             <View
               className="h-10 w-10 items-center justify-center"
               style={{
@@ -193,253 +160,44 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
               size={24}
               color={colors.onSurfaceVariant}
             />
-          </Pressable>
+          </TVFocusable>
         </View>
 
-        <Pressable
+        {/* Plus button to add a source */}
+        <TVFocusable
           accessibilityRole="button"
           accessibilityLabel="Add provider source"
-          className="h-16 w-16 items-center justify-center"
-          style={({pressed}) => ({
-            backgroundColor: pressed ? colors.surfaceBright : '#171717',
-            borderColor: primary,
+          onPress={() => setShowAddDialog(true)}
+          borderRadius={20}
+          focusScale={1.08}
+          style={{
+            height: 64,
+            width: 64,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: '#171717',
+            borderColor: isTV ? colors.outlineVariant : primary,
             borderRadius: 20,
-            borderWidth: 2,
-          })}
-          onPress={() => setShowAddDialog(true)}>
+            borderWidth: isTV ? 1 : 2,
+          }}>
           <MaterialCommunityIcons name="plus" size={28} color={primary} />
-        </Pressable>
+        </TVFocusable>
       </View>
 
-      <MaterialDialogSurface
+      <SourcePickerModal
         visible={showSourcePicker}
+        sources={sources}
+        defaultSource={defaultSource}
         onDismiss={() => setShowSourcePicker(false)}
-        style={{maxHeight: 560}}>
-        <View className="mb-3 flex-row items-center justify-between">
-          <View>
-            <Text
-              className="text-lg font-semibold"
-              style={{color: colors.onSurface}}>
-              Provider source
-            </Text>
-            <Text
-              className="mt-1 text-xs"
-              style={{color: colors.onSurfaceVariant}}>
-              Select or remove a source
-            </Text>
-          </View>
-          <Pressable
-            accessibilityLabel="Close source picker"
-            className="h-10 w-10 items-center justify-center"
-            style={{
-              backgroundColor: colors.surfaceContainerHighest,
-              borderRadius: 14,
-            }}
-            onPress={() => setShowSourcePicker(false)}>
-            <MaterialCommunityIcons
-              name="close"
-              size={24}
-              color={colors.onSurfaceVariant}
-            />
-          </Pressable>
-        </View>
+        onSelectSource={handleSelectSource}
+        onRequestRemoveSource={author => setSourceToRemove(author)}
+      />
 
-        <ScrollView nestedScrollEnabled>
-          {sources.map(source => {
-            const isSelected = source.author === defaultSource?.author;
-            return (
-              <View
-                key={source.author}
-                className="mb-2 flex-row items-center border px-3 py-3"
-                style={{
-                  backgroundColor: colors.surfaceContainerHighest,
-                  borderColor: isSelected
-                    ? colors.primary
-                    : colors.outlineVariant,
-                  borderRadius: 16,
-                  borderWidth: isSelected ? 2 : 1,
-                }}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Use ${source.author} source`}
-                  className="flex-1 flex-row items-center pr-2"
-                  onPress={() => handleSelectSource(source)}>
-                  <View className="flex-1">
-                    <Text
-                      className="font-semibold"
-                      style={{color: colors.onSurface}}>
-                      {source.author}
-                    </Text>
-                    <Text
-                      className="mt-1 text-xs"
-                      style={{color: colors.onSurfaceVariant}}
-                      numberOfLines={1}>
-                      {source.url}
-                    </Text>
-                  </View>
-                  {isSelected && (
-                    <MaterialCommunityIcons
-                      name="check-circle"
-                      size={22}
-                      color={colors.primary}
-                    />
-                  )}
-                </Pressable>
-                <Pressable
-                  accessibilityLabel={`Remove ${source.author} source`}
-                  className="ml-3 h-10 w-10 items-center justify-center"
-                  style={{
-                    backgroundColor: colors.errorContainer,
-                    borderRadius: 14,
-                  }}
-                  onPress={() => handleRemoveSource(source.author)}>
-                  <MaterialCommunityIcons
-                    name="trash-can-outline"
-                    size={20}
-                    color={colors.onErrorContainer}
-                  />
-                </Pressable>
-              </View>
-            );
-          })}
-        </ScrollView>
-      </MaterialDialogSurface>
-
-      <Modal
+      <AddSourceModal
         visible={showAddDialog}
-        animationType="fade"
-        transparent
-        onRequestClose={() => {
-          setShowAddDialog(false);
-          setInputValue('');
-        }}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          className="flex-1 justify-center items-center bg-black/60 px-4"
-          style={{
-            paddingBottom: Platform.OS === 'android' ? keyboardHeight : 0,
-          }}>
-          <Pressable
-            style={{position: 'absolute', top: 0, bottom: 0, left: 0, right: 0}}
-            onPress={() => {
-              if (keyboardHeight > 0) {
-                Keyboard.dismiss();
-              } else {
-                setShowAddDialog(false);
-                setInputValue('');
-              }
-            }}
-          />
-          <View
-            style={{
-              backgroundColor: colors.surfaceContainerHigh,
-              borderRadius: 28,
-              maxWidth: 420,
-              overflow: 'hidden',
-              padding: 24,
-              width: 340,
-            }}>
-            <View className="flex-row items-center justify-between mb-3">
-              <Text
-                className="text-base font-semibold w-fit"
-                style={{color: colors.onSurface}}
-                numberOfLines={1}>
-                Add Source
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close add source dialog"
-                className="h-10 w-10 items-center justify-center"
-                style={{
-                  backgroundColor: colors.surfaceContainerHighest,
-                  borderRadius: 14,
-                }}
-                onPress={() => {
-                  setShowAddDialog(false);
-                  setInputValue('');
-                }}>
-                <MaterialCommunityIcons
-                  name="close"
-                  size={22}
-                  color={colors.onSurfaceVariant}
-                />
-              </Pressable>
-            </View>
-            <Text className="text-sm font-medium" style={{color: colors.onSurface}}>
-              Enter url of your hosted provider source or GitHub author
-            </Text>
-            <Text
-              className="text-sm mt-[4px]"
-              style={{color: colors.onSurfaceVariant, lineHeight: 20}}>
-              How to create provider{' '}
-              <Text
-                accessibilityRole="link"
-                style={{color: '#38BDF8', fontSize: 14, lineHeight: 20}}
-                onPress={() => Linking.openURL(socialLinks.github + '#vega-app')}>
-                here
-              </Text>
-            </Text>
-            <Text
-              className="text-sm mt-[4px]"
-              style={{color: colors.onSurfaceVariant, lineHeight: 20}}>
-              or join Discord for support{' '}
-              <Text
-                accessibilityRole="link"
-                style={{color: '#38BDF8', fontSize: 14, lineHeight: 20}}
-                onPress={() => Linking.openURL(socialLinks.discord)}>
-                Discord
-              </Text>
-            </Text>
-            <TextInput
-              className="h-14 px-4 mt-4"
-              style={{
-                backgroundColor: colors.surfaceContainerHighest,
-                borderColor: colors.outlineVariant,
-                borderRadius: 18,
-                borderWidth: 1,
-                color: colors.onSurface,
-              }}
-              placeholder="GitHub author or source URL"
-              placeholderTextColor={colors.onSurfaceVariant}
-              selectionColor={colors.primary}
-              value={inputValue}
-              onChangeText={setInputValue}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <View className="flex-row gap-2 mt-4">
-              <Pressable
-                className="h-12 flex-1 items-center justify-center"
-                style={{
-                  backgroundColor: colors.surfaceContainerHighest,
-                  borderRadius: 16,
-                }}
-                onPress={() => {
-                  setShowAddDialog(false);
-                  setInputValue('');
-                }}>
-                <Text className="font-medium" style={{color: colors.onSurface}}>
-                  Cancel
-                </Text>
-              </Pressable>
-
-              <Pressable
-                className="h-12 flex-1 items-center justify-center"
-                style={{
-                  backgroundColor: colors.primary,
-                  borderRadius: 16,
-                }}
-                onPress={handleConfirmAdd}>
-                <Text
-                  className="font-medium"
-                  style={{color: readableOnColor(colors.primary)}}>
-                  Confirm
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setShowAddDialog(false)}
+        onAdd={handleConfirmAdd}
+      />
 
       <AppDialog
         visible={invalidSourceDialog}
@@ -449,6 +207,7 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
         variant="error"
         onDismiss={() => setInvalidSourceDialog(false)}
       />
+
       <AppDialog
         visible={Boolean(sourceToRemove)}
         title="Remove source?"

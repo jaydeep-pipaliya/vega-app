@@ -1,42 +1,40 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import Ionicons from '@expo/vector-icons/Ionicons';
-import type { CompositeScreenProps } from '@react-navigation/native';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import React, { useEffect, useMemo, useState } from 'react';
+import type {CompositeScreenProps} from '@react-navigation/native';
+import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
 import {
-  ActivityIndicator,
+  BackHandler,
   Image,
-  Pressable,
+  Platform,
   ScrollView,
   StatusBar,
   Text,
-  TextInput,
-  TouchableOpacity,
   View,
+  findNodeHandle,
+  UIManager,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
-import type { DownloadsStackParamList, RootStackParamList } from '../../App';
+import type {DownloadsStackParamList, RootStackParamList} from '../../App';
 import AppDialog from '../../components/AppDialog';
 import DropdownField from '../../components/ui/DropdownField';
-import {
-  deleteDownloadOutput,
-  downloadOutputExists,
-} from '../../lib/downloadDestination';
-import { formatDownloadBytes } from '../../lib/downloadFormatting';
-import { getDownloadedVideoThumbnail } from '../../lib/downloadThumbnailCache';
-import {
-  createDownloadDirectoryName,
-  createDownloadSeasonDirectoryName,
-} from '../../lib/downloadId';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
+import {downloadOutputExists} from '../../lib/downloadDestination';
+import {formatDownloadBytes} from '../../lib/downloadFormatting';
 import {
   groupCompletedDownloads,
   sortDownloadedEpisodes,
 } from '../../lib/downloadLibrary';
-import type { DownloadItem } from '../../lib/zustand/downloadsStore';
+import type {DownloadItem} from '../../lib/zustand/downloadsStore';
 import useDownloadsStore, {
   selectCompletedDownloads,
 } from '../../lib/zustand/downloadsStore';
-import { useM3Colors } from '../../theme/M3PaletteContext';
+import {useM3Colors} from '../../theme/M3PaletteContext';
+import DownloadedEpisodeControls from './components/DownloadedEpisodeControls';
+import DownloadedEpisodeRow from './components/DownloadedEpisodeRow';
+import {deleteDownloadedItemAndSubtitles} from './utils/deleteDownloadedItem';
 
 type DownloadedDetailsProps = CompositeScreenProps<
   NativeStackScreenProps<DownloadsStackParamList, 'DownloadedDetails'>,
@@ -46,58 +44,27 @@ type DownloadedDetailsProps = CompositeScreenProps<
 const getSeasonTitle = (item: DownloadItem): string =>
   item.seasonTitle || 'Downloaded';
 
-const DownloadedItemThumbnail = ({ item }: { item: DownloadItem }) => {
-  const colors = useM3Colors();
-  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    setThumbnailUri(null);
-    getDownloadedVideoThumbnail(item.filePath)
-      .then(uri => {
-        if (active) setThumbnailUri(uri);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [item.filePath]);
-
-  return (
-    <View
-      style={{
-        alignItems: 'center',
-        backgroundColor: colors.secondaryContainer,
-        borderRadius: 12,
-        height: 45,
-        justifyContent: 'center',
-        overflow: 'hidden',
-        width: 80,
-      }}>
-      {thumbnailUri ? (
-        <Image
-          source={{ uri: thumbnailUri }}
-          resizeMode="cover"
-          style={{
-            bottom: 0,
-            left: 0,
-            position: 'absolute',
-            right: 0,
-            top: 0,
-          }}
-        />
-      ) : null}
-      <Ionicons name="play" size={18} color="#ffffff" />
-    </View>
+const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
+  const playerReturnFocusRef = useRef<View | null>(null);
+  const restorePlayerFocusRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV || !restorePlayerFocusRef.current) return;
+      const timer = setTimeout(() => {
+        const handle = findNodeHandle(playerReturnFocusRef.current);
+        if (handle) {
+          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+        }
+        restorePlayerFocusRef.current = false;
+      }, 350);
+      return () => clearTimeout(timer);
+    }, []),
   );
-};
-
-const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
   const colors = useM3Colors();
   const primary = colors.primary;
+  const focusBorderColor = useTVFocusBorderColor();
   const completed = useDownloadsStore(selectCompletedDownloads);
   const markMissing = useDownloadsStore(state => state.markMissing);
-  const removeDownload = useDownloadsStore(state => state.removeDownload);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DownloadItem | null>(null);
   const [readMore, setReadMore] = useState(false);
@@ -113,19 +80,29 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
     [group],
   );
   const seasonOptions = useMemo(
-    () => seasons.map(title => ({ title })),
+    () => seasons.map(title => ({title})),
     [seasons],
   );
   const [selectedSeason, setSelectedSeason] = useState<string | undefined>(
     seasons[0],
   );
+
   useEffect(() => {
     if (!selectedSeason || !seasons.includes(selectedSeason)) {
       setSelectedSeason(seasons[0]);
     }
   }, [seasons, selectedSeason]);
+
   const [searchText, setSearchText] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  useEffect(() => {
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.goBack();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [navigation]);
 
   const items = useMemo(() => {
     if (!group) {
@@ -152,14 +129,24 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
         <Text className="text-center text-white/70">
           This downloaded title is no longer available.
         </Text>
-        <TouchableOpacity
-          className="mt-5 px-6 py-3"
-          style={{ backgroundColor: primary }}
+        <TVFocusable
+          hasTVPreferredFocus={isTV}
+          accessibilityRole="button"
+          borderRadius={14}
+          focusScale={1.05}
+          focusBorderColor={focusBorderColor}
+          style={{
+            backgroundColor: primary,
+            borderRadius: 14,
+            marginTop: 20,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+          }}
           onPress={() => navigation.goBack()}>
-          <Text className="font-semibold" style={{ color: colors.onPrimary }}>
+          <Text className="font-semibold" style={{color: colors.onPrimary}}>
             Go back
           </Text>
-        </TouchableOpacity>
+        </TVFocusable>
       </View>
     );
   }
@@ -206,41 +193,7 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
     }
     setDeletingId(item.id);
     try {
-      const allDownloads = Object.values(useDownloadsStore.getState().downloads);
-      const subItems = allDownloads.filter(
-        d =>
-          d.id.startsWith(`${item.id}_subtitle_`) ||
-          (d.infoUrl === item.infoUrl &&
-            d.sourceLink === item.sourceLink &&
-            (d.isSubtitle || d.id.includes('_subtitle_'))),
-      );
-      for (const subItem of subItems) {
-        if (subItem.filePath) {
-          await deleteDownloadOutput(subItem.filePath, {
-            downloadLocation: subItem.downloadLocation,
-            outputDirectoryNames: [
-              createDownloadDirectoryName(subItem.showName || subItem.title),
-              ...[createDownloadSeasonDirectoryName(subItem.seasonTitle)].filter(
-                (name): name is string => Boolean(name),
-              ),
-            ],
-          }).catch(() => undefined);
-        }
-        removeDownload(subItem.id);
-      }
-
-      const deleted = await deleteDownloadOutput(item.filePath, {
-        downloadLocation: item.downloadLocation,
-        outputDirectoryNames: [
-          createDownloadDirectoryName(item.showName || item.title),
-          ...[createDownloadSeasonDirectoryName(item.seasonTitle)].filter(
-            (name): name is string => Boolean(name),
-          ),
-        ],
-      });
-      if (deleted || !(await downloadOutputExists(item.filePath))) {
-        removeDownload(item.id);
-      }
+      await deleteDownloadedItemAndSubtitles(item);
     } finally {
       setDeletingId(null);
     }
@@ -252,11 +205,11 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
     'https://placehold.jp/24/171717/ffffff/800x450.png?text=Vega';
 
   return (
-    <View className="h-full w-full bg-black">
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} style={{flex: 1, backgroundColor: '#000000'}}>
       <StatusBar translucent backgroundColor="transparent" />
       <View className="absolute h-[340px] w-full">
         <Image
-          source={{ uri: backgroundImage }}
+          source={{uri: backgroundImage}}
           className="h-[340px] w-full"
           resizeMode="cover"
         />
@@ -268,27 +221,34 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
             locations={[0, 0.55, 1]}
             className="absolute h-full w-full"
           />
-          <Pressable
+          <TVFocusable
+            hasTVPreferredFocus={isTV}
             accessibilityRole="button"
             accessibilityLabel="Go back"
-            className="ml-5 mt-14 h-12 w-12 items-center justify-center"
-            style={({ pressed }) => ({
-              backgroundColor: pressed
-                ? colors.secondaryContainer
-                : 'rgba(23,23,23,0.88)',
+            borderRadius={18}
+            focusScale={1.1}
+            focusBorderColor={focusBorderColor}
+            onPress={() => navigation.goBack()}
+            style={{
+              alignItems: 'center',
+              backgroundColor: 'rgba(23,23,23,0.88)',
               borderRadius: 18,
-            })}
-            onPress={() => navigation.goBack()}>
+              height: 48,
+              justifyContent: 'center',
+              marginLeft: isTV ? 24 : 20,
+              marginTop: Platform.OS === 'android' ? (isTV ? 24 : 48) : 14,
+              width: 48,
+            }}>
             <MaterialCommunityIcons
               name="arrow-left"
               size={26}
               color={colors.onSurface}
             />
-          </Pressable>
+          </TVFocusable>
           <View className="absolute bottom-3 right-0 w-full px-5">
             <Text
               className="text-3xl font-bold capitalize"
-              style={{ color: colors.onBackground }}>
+              style={{color: colors.onBackground}}>
               {group.title}
             </Text>
             <View className="mt-3 flex-row items-center">
@@ -299,9 +259,10 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
               />
               <Text
                 className="ml-2 text-sm font-medium"
-                style={{ color: colors.onSurfaceVariant }}>
-                {`${group.items.length} download${group.items.length === 1 ? '' : 's'
-                  }`}
+                style={{color: colors.onSurfaceVariant}}>
+                {`${group.items.length} download${
+                  group.items.length === 1 ? '' : 's'
+                }`}
                 {'  '}·{'  '}
                 {formatDownloadBytes(totalBytes)}
               </Text>
@@ -314,20 +275,31 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
             <View className="mb-7">
               <Text
                 className="mb-2 text-xl font-bold"
-                style={{ color: colors.onBackground }}>
+                style={{color: colors.onBackground}}>
                 Synopsis
               </Text>
               <Text
                 className="text-base leading-6"
-                style={{ color: colors.onSurfaceVariant }}>
+                style={{color: colors.onSurfaceVariant}}>
                 {metadata.synopsis.length > 240 && !readMore
                   ? `${metadata.synopsis.slice(0, 240)}...`
                   : metadata.synopsis}
               </Text>
               {metadata.synopsis.length > 240 ? (
-                <Pressable
+                <TVFocusable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    readMore ? 'Show less synopsis' : 'Read more synopsis'
+                  }
                   onPress={() => setReadMore(value => !value)}
-                  style={{ paddingVertical: 8 }}>
+                  borderRadius={8}
+                  focusScale={1.05}
+                  focusBorderColor={focusBorderColor}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 4,
+                    alignSelf: 'flex-start',
+                  }}>
                   <Text
                     style={{
                       color: colors.primary,
@@ -336,7 +308,7 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
                     }}>
                     {readMore ? 'Show less' : 'Read more'}
                   </Text>
-                </Pressable>
+                </TVFocusable>
               ) : null}
             </View>
           ) : null}
@@ -355,150 +327,43 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
 
           {/* Search and Sort Controls */}
           {(group.items.length > 2 || searchText) && (
-            <View className="flex-row items-center mt-3">
-              <View
-                style={{
-                  backgroundColor: colors.surfaceContainerHigh,
-                  borderColor: colors.outlineVariant,
-                  borderRadius: 18,
-                  borderWidth: 1,
-                  flex: 1,
-                  flexDirection: 'row',
-                  height: 48,
-                  marginRight: 10,
-                  overflow: 'hidden',
-                }}>
-                <View
-                  style={{
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingLeft: 14,
-                  }}>
-                  <MaterialCommunityIcons
-                    name="magnify"
-                    size={22}
-                    color={colors.primary}
-                  />
-                </View>
-                <TextInput
-                  accessibilityLabel="Find episode"
-                  placeholder="Find episode"
-                  placeholderTextColor={colors.onSurfaceVariant}
-                  selectionColor={colors.primary}
-                  returnKeyType="search"
-                  style={{
-                    color: colors.onSurface,
-                    flex: 1,
-                    fontSize: 16,
-                    paddingHorizontal: 10,
-                    paddingVertical: 0,
-                  }}
-                  value={searchText}
-                  onChangeText={setSearchText}
-                />
-              </View>
-              <TouchableOpacity
-                accessibilityLabel={
-                  sortOrder === 'asc'
-                    ? 'Sort episodes descending'
-                    : 'Sort episodes ascending'
-                }
-                className="h-12 w-12 flex-row items-center justify-center"
-                style={{
-                  backgroundColor: colors.secondaryContainer,
-                  borderRadius: 18,
-                }}
-                onPress={() =>
-                  setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
-                }>
-                <MaterialCommunityIcons
-                  name={
-                    sortOrder === 'asc' ? 'sort-ascending' : 'sort-descending'
-                  }
-                  size={24}
-                  color={colors.onSecondaryContainer}
-                />
-              </TouchableOpacity>
-            </View>
+            <DownloadedEpisodeControls
+              searchText={searchText}
+              onSearchChange={setSearchText}
+              sortOrder={sortOrder}
+              onToggleSort={() =>
+                setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
+              }
+            />
           )}
 
           <Text
             className="mb-3 mt-7 text-xl font-bold"
-            style={{ color: colors.onBackground }}>
+            style={{color: colors.onBackground}}>
             Ready to watch
           </Text>
           {items.length === 0 && searchText ? (
             <Text
               className="my-4 text-center text-sm"
-              style={{ color: colors.onSurfaceVariant }}>
+              style={{color: colors.onSurfaceVariant}}>
               No downloaded episodes found for "{searchText}"
             </Text>
           ) : null}
           {items.map((item, index) => (
-            <View
+            <DownloadedEpisodeRow
               key={item.id}
-              className="mb-3 w-full flex-row items-stretch gap-2">
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Play ${item.episodeName || item.title}`}
-                className="h-16 flex-1 flex-row items-center px-4"
-                style={({ pressed }) => ({
-                  backgroundColor: pressed
-                    ? colors.surfaceBright
-                    : colors.surfaceContainerHigh,
-                  borderColor: colors.outlineVariant,
-                  borderRadius: 20,
-                  borderWidth: 1,
-                })}
-                onPress={() => playItem(item)}>
-                <DownloadedItemThumbnail item={item} />
-                <View className="ml-3 flex-1">
-                  <Text
-                    className="font-semibold"
-                    style={{ color: colors.onSurface }}
-                    numberOfLines={1}>
-                    {item.episodeName || item.title}
-                  </Text>
-                  <Text
-                    className="mt-1 text-xs"
-                    style={{ color: colors.onSurfaceVariant }}>
-                    {items.length > 1 ? `Episode ${index + 1}  ·  ` : ''}
-                    {formatDownloadBytes(item.totalBytes)}
-                  </Text>
-                </View>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={22}
-                  color={colors.onSurfaceVariant}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityLabel={`Delete ${item.episodeName || item.title}`}
-                accessibilityRole="button"
-                className="h-16 w-16 items-center justify-center"
-                disabled={deletingId !== null}
-                style={({ pressed }) => ({
-                  backgroundColor: pressed
-                    ? colors.error
-                    : colors.errorContainer,
-                  borderRadius: 20,
-                  opacity: deletingId && deletingId !== item.id ? 0.45 : 1,
-                })}
-                onPress={() => setPendingDelete(item)}>
-                {deletingId === item.id ? (
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.onErrorContainer}
-                  />
-                ) : (
-                  <MaterialCommunityIcons
-                    name="delete-outline"
-                    size={26}
-                    color={colors.onErrorContainer}
-                  />
-                )}
-              </Pressable>
-            </View>
+              item={item}
+              index={index}
+              totalItems={items.length}
+              isDeleting={deletingId === item.id}
+              onPlay={playItem}
+              onBeforePlay={control => {
+                if (!isTV) return;
+                playerReturnFocusRef.current = control;
+                restorePlayerFocusRef.current = true;
+              }}
+              onDelete={setPendingDelete}
+            />
           ))}
         </View>
         <View className="h-16" />
@@ -506,11 +371,13 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
       <AppDialog
         visible={pendingDelete !== null}
         title="Delete download?"
-        message={`Remove ${pendingDelete?.episodeName || pendingDelete?.title || 'this download'} from your device?`}
+        message={`Remove ${
+          pendingDelete?.episodeName || pendingDelete?.title || 'this download'
+        } from your device?`}
         primary={primary}
         variant="warning"
         actions={[
-          { label: 'Cancel' },
+          {label: 'Cancel'},
           {
             label: 'Delete',
             variant: 'destructive',
@@ -525,7 +392,7 @@ const DownloadedDetails = ({ navigation, route }: DownloadedDetailsProps) => {
         ]}
         onDismiss={() => setPendingDelete(null)}
       />
-    </View>
+    </TVFocusGuide>
   );
 };
 

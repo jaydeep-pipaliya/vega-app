@@ -1,6 +1,7 @@
 import {beforeEach, describe, expect, it, jest} from '@jest/globals';
 
 jest.mock('@dr.pogodin/react-native-fs', () => ({
+  ExternalDirectoryPath: '/app-files',
   pickFile: jest.fn(),
   readDir: jest.fn(),
   exists: jest.fn(),
@@ -19,7 +20,7 @@ jest.mock('expo-file-system/legacy', () => ({
 
 jest.mock('react-native', () => ({
   NativeModules: {},
-  Platform: {OS: 'android'},
+  Platform: {OS: 'android', isTV: false},
 }));
 
 import {
@@ -28,6 +29,7 @@ import {
   serializeDownloadLocation,
 } from '../src/lib/downloadLocation';
 import * as FileSystem from 'expo-file-system/legacy';
+import {Platform} from 'react-native';
 
 const mockReadDirectory = FileSystem.StorageAccessFramework
   .readDirectoryAsync as jest.Mock;
@@ -36,6 +38,7 @@ const mockRequestDirectory = FileSystem.StorageAccessFramework
 
 describe('Android SAF download location', () => {
   beforeEach(() => {
+    (Platform as any).isTV = false;
     mockReadDirectory.mockClear();
     mockRequestDirectory.mockClear();
   });
@@ -44,6 +47,19 @@ describe('Android SAF download location', () => {
     expect(
       parseDownloadLocation('/storage/emulated/0/Download/vega'),
     ).toBeNull();
+  });
+
+  it('uses Vega app storage by default on TV without opening SAF', async () => {
+    (Platform as any).isTV = true;
+    const location = parseDownloadLocation(null);
+    expect(location).toEqual({
+      type: 'path',
+      path: '/app-files/Vega Downloads',
+      label: 'Vega app storage',
+    });
+    expect(parseDownloadLocation('/old/phone/downloads')).toEqual(location);
+    await expect(ensureDownloadLocationAccess(location)).resolves.toEqual(location);
+    expect(mockRequestDirectory).not.toHaveBeenCalled();
   });
 
   it('restores a persisted SAF tree', () => {

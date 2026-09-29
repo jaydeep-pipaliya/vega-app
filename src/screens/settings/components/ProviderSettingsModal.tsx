@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -12,6 +13,7 @@ import {
   TextInput,
   ToastAndroid,
   View,
+  findNodeHandle,
 } from 'react-native';
 import { providerManager } from '../../../lib/services/ProviderManager';
 import { providerKvStorage } from '../../../lib/storage/StorageService';
@@ -23,6 +25,8 @@ import { useM3Colors } from '../../../theme/M3PaletteContext';
 import AppText from '../../../components/ui/Text';
 import SettingsSwitchRow from '../../../components/ui/SettingsSwitchRow';
 import DropdownField from '../../../components/ui/DropdownField';
+import { TVFocusable, TVFocusGuide } from '../../../components/tv';
+import { isTV } from '../../../lib/tv';
 
 interface ProviderSettingsModalProps {
   visible: boolean;
@@ -36,6 +40,8 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
   onClose,
 }) => {
   const colors = useM3Colors();
+  const closeRef = React.useRef<View>(null);
+  const [closeHandle, setCloseHandle] = useState<number | null>(null);
   const [fields, setFields] = useState<SettingsField[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(false);
@@ -60,6 +66,15 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
       hideSub.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isTV || !visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
 
   const loadSchemaAndValues = useCallback(async () => {
     if (!provider) return;
@@ -174,81 +189,95 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
             }
           }}
         />
-        <View
-          className="max-h-[85%] rounded-t-3xl p-5"
-          style={{ backgroundColor: colors.surfaceContainer }}>
-          {/* Header */}
-          <View className="mb-4 flex-row items-center justify-between pb-3 border-b"
-            style={{ borderColor: colors.outlineVariant }}>
-            <View className="flex-row items-center gap-3">
-              <View
-                className="h-11 w-11 items-center justify-center overflow-hidden rounded-2xl"
-                style={{ backgroundColor: colors.surfaceContainerHighest }}>
-                {provider.icon ? (
-                  <Image
-                    source={{ uri: provider.icon }}
-                    className="h-full w-full"
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <MaterialCommunityIcons
-                    name="cog-outline"
-                    size={24}
-                    color={colors.primary}
-                  />
-                )}
+        <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusUp={true} trapFocusDown={true}>
+          <View
+            className="max-h-[85%] rounded-t-3xl p-5"
+            style={{ backgroundColor: colors.surfaceContainer }}>
+            {/* Header */}
+            <View className="mb-4 flex-row items-center justify-between pb-3 border-b"
+              style={{ borderColor: colors.outlineVariant }}>
+              <View className="flex-row items-center gap-3">
+                <View
+                  className="h-11 w-11 items-center justify-center overflow-hidden rounded-2xl"
+                  style={{ backgroundColor: colors.surfaceContainerHighest }}>
+                  {provider.icon ? (
+                    <Image
+                      source={{ uri: provider.icon }}
+                      className="h-full w-full"
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <MaterialCommunityIcons
+                      name="cog-outline"
+                      size={24}
+                      color={colors.primary}
+                    />
+                  )}
+                </View>
+                <View>
+                  <AppText role="titleMedium" style={{ color: colors.onSurface }}>
+                    {provider.display_name} Settings
+                  </AppText>
+                  <AppText role="bodySmall" style={{ color: colors.onSurfaceVariant }}>
+                    Configure provider options
+                  </AppText>
+                </View>
               </View>
-              <View>
-                <AppText role="titleMedium" style={{ color: colors.onSurface }}>
-                  {provider.display_name} Settings
-                </AppText>
-                <AppText role="bodySmall" style={{ color: colors.onSurfaceVariant }}>
-                  Configure provider options
-                </AppText>
-              </View>
+              <TVFocusable
+                ref={closeRef}
+                onLayout={() => setCloseHandle(findNodeHandle(closeRef.current))}
+                hasTVPreferredFocus={isTV}
+                onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close settings"
+                borderRadius={18}
+                style={{
+                  backgroundColor: colors.surfaceContainerHighest,
+                  height: 36,
+                  width: 36,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: 18,
+                }}>
+                <MaterialCommunityIcons
+                  name="close"
+                  size={20}
+                  color={colors.onSurfaceVariant}
+                />
+              </TVFocusable>
             </View>
-            <Pressable
-              onPress={onClose}
-              android_ripple={{ color: colors.onSurfaceVariant, borderless: true, radius: 18 }}
-              className="h-9 w-9 items-center justify-center rounded-full"
-              style={{ backgroundColor: colors.surfaceContainerHighest }}>
-              <MaterialCommunityIcons
-                name="close"
-                size={20}
-                color={colors.onSurfaceVariant}
-              />
-            </Pressable>
-          </View>
 
-          {/* Body */}
-          {loading ? (
-            <View className="items-center justify-center py-12">
-              <ActivityIndicator size="large" color={colors.primary} />
-              <AppText
-                role="bodyMedium"
-                style={{ color: colors.onSurfaceVariant, marginTop: 12 }}>
-                Loading settings...
-              </AppText>
-            </View>
-          ) : fields.length === 0 ? (
-            <View className="items-center justify-center py-10">
-              <MaterialCommunityIcons
-                name="tune-vertical"
-                size={40}
-                color={colors.onSurfaceVariant}
-              />
-              <AppText
-                role="bodyMedium"
-                style={{ color: colors.onSurfaceVariant, marginTop: 8 }}>
-                No configurable settings for this provider.
-              </AppText>
-            </View>
-          ) : (
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 20 }}>
+            {/* Body */}
+            {loading ? (
+              <View className="items-center justify-center py-12">
+                <ActivityIndicator size="large" color={colors.primary} />
+                <AppText
+                  role="bodyMedium"
+                  style={{ color: colors.onSurfaceVariant, marginTop: 12 }}>
+                  Loading settings...
+                </AppText>
+              </View>
+            ) : fields.length === 0 ? (
+              <View className="items-center justify-center py-10">
+                <MaterialCommunityIcons
+                  name="tune-vertical"
+                  size={40}
+                  color={colors.onSurfaceVariant}
+                />
+                <AppText
+                  role="bodyMedium"
+                  style={{ color: colors.onSurfaceVariant, marginTop: 8 }}>
+                  No configurable settings for this provider.
+                </AppText>
+              </View>
+            ) : (
+              <ScrollView
+                focusable={false}
+                accessible={false}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 20 }}>
               <View className="gap-4">
-                {fields.map(field => {
+                {fields.map((field, fieldIndex) => {
                   const currentValue = values[field.key];
 
                   if (field.type === 'toggle') {
@@ -262,6 +291,7 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
                           borderWidth: 1,
                         }}>
                         <SettingsSwitchRow
+                          nextFocusUp={fieldIndex === 0 ? closeHandle : undefined}
                           title={field.label}
                           description={field.description}
                           value={Boolean(currentValue)}
@@ -360,17 +390,25 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
                           {field.options.map((opt: SelectOption) => {
                             const isSelected = selectedList.includes(opt.value);
                             return (
-                              <Pressable
+                              <TVFocusable
                                 key={opt.value}
                                 onPress={() => toggleOption(opt.value)}
-                                className="flex-row items-center justify-between px-3 py-2.5 rounded-lg"
-                                style={({ pressed }) => ({
+                                accessibilityRole="checkbox"
+                                accessibilityState={{ checked: isSelected }}
+                                accessibilityLabel={opt.label}
+                                borderRadius={8}
+                                focusScale={1.02}
+                                style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  paddingHorizontal: 12,
+                                  paddingVertical: 10,
+                                  borderRadius: 8,
                                   backgroundColor: isSelected
                                     ? colors.primaryContainer
-                                    : pressed
-                                      ? colors.surfaceContainerHighest
-                                      : 'transparent',
-                                })}>
+                                    : 'transparent',
+                                }}>
                                 <AppText
                                   role="bodyMedium"
                                   style={{
@@ -394,7 +432,7 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
                                       : colors.onSurfaceVariant
                                   }
                                 />
-                              </Pressable>
+                              </TVFocusable>
                             );
                           })}
                         </View>
@@ -491,88 +529,86 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
           )}
 
           {/* Footer Actions */}
-          <View className="mt-3 flex-row items-center gap-2 pt-3 border-t"
-            style={{ borderColor: colors.outlineVariant }}>
-            <View
-              className="h-12 w-12 items-center justify-center overflow-hidden"
+          <TVFocusGuide style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 12, borderTopWidth: 1, borderColor: colors.outlineVariant, marginTop: 12 }}>
+            <TVFocusable
+              disabled={loading || fields.length === 0}
+              onPress={handleResetProvider}
+              accessibilityRole="button"
+              accessibilityLabel="Reset provider settings to default"
+              borderRadius={16}
+              focusScale={1.08}
               style={{
                 backgroundColor: colors.surfaceContainerHighest,
                 borderRadius: 16,
+                height: 48,
+                width: 48,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: loading || fields.length === 0 ? 0.4 : 1,
               }}>
-              <Pressable
-                disabled={loading || fields.length === 0}
-                onPress={handleResetProvider}
-                accessibilityLabel="Reset provider settings to default"
-                android_ripple={{ color: colors.onSurfaceVariant, borderless: false }}
-                className="h-full w-full items-center justify-center"
-                style={({ pressed }) => ({
-                  opacity: pressed ? 0.8 : 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                })}>
-                <MaterialCommunityIcons
-                  name="restore"
-                  size={22}
-                  color={
-                    loading || fields.length === 0
-                      ? colors.outline
-                      : colors.onSurfaceVariant
-                  }
-                />
-              </Pressable>
-            </View>
-            <View
-              className="h-12 flex-1 overflow-hidden"
+              <MaterialCommunityIcons
+                name="restore"
+                size={22}
+                color={
+                  loading || fields.length === 0
+                    ? colors.outline
+                    : colors.onSurfaceVariant
+                }
+              />
+            </TVFocusable>
+
+            <TVFocusable
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+              borderRadius={16}
+              focusScale={1.03}
               style={{
                 backgroundColor: colors.surfaceContainerHighest,
                 borderRadius: 16,
+                flex: 1,
+                height: 48,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}>
-              <Pressable
-                onPress={onClose}
-                android_ripple={{ color: colors.onSurfaceVariant, borderless: false }}
-                className="h-full w-full items-center justify-center">
-                <AppText role="labelLarge" style={{ color: colors.onSurface }}>
-                  Cancel
-                </AppText>
-              </Pressable>
-            </View>
-            <View
-              className="h-12 flex-1 overflow-hidden"
+              <AppText role="labelLarge" style={{ color: colors.onSurface }}>
+                Cancel
+              </AppText>
+            </TVFocusable>
+
+            <TVFocusable
+              disabled={loading || fields.length === 0}
+              onPress={handleSave}
+              accessibilityRole="button"
+              accessibilityLabel="Save Changes"
+              borderRadius={16}
+              focusScale={1.03}
               style={{
                 backgroundColor:
                   loading || fields.length === 0
                     ? colors.surfaceContainerHighest
                     : colors.primary,
                 borderRadius: 16,
+                flex: 1,
+                height: 48,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: loading || fields.length === 0 ? 0.5 : 1,
               }}>
-              <Pressable
-                disabled={loading || fields.length === 0}
-                onPress={handleSave}
-                android_ripple={{
+              <AppText
+                role="labelLarge"
+                style={{
                   color:
                     loading || fields.length === 0
                       ? colors.onSurfaceVariant
                       : colors.onPrimary,
-                  borderless: false,
-                }}
-                className="h-full w-full items-center justify-center"
-                style={({ pressed }) => ({
-                  opacity: pressed ? 0.8 : 1,
-                })}>
-                <AppText
-                  role="labelLarge"
-                  style={{
-                    color:
-                      loading || fields.length === 0
-                        ? colors.onSurfaceVariant
-                        : colors.onPrimary,
-                  }}>
-                  Save Changes
-                </AppText>
-              </Pressable>
-            </View>
-          </View>
+                }}>
+                Save Changes
+              </AppText>
+            </TVFocusable>
+          </TVFocusGuide>
         </View>
+      </TVFocusGuide>
       </KeyboardAvoidingView>
     </Modal>
   );

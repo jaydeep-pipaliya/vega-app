@@ -200,7 +200,9 @@ export class ProviderManager {
       );
       return this.requireArray<Post>(posts, providerValue, 'getPosts');
     } catch (error) {
-      console.error('Error in posts function:', error);
+      if (!signal.aborted) {
+        console.error('Error in posts function:', error);
+      }
       throw new Error(
         getErrorMessage(
           error,
@@ -262,7 +264,9 @@ export class ProviderManager {
         {link, provider},
       );
     } catch (error) {
-      console.error('Error in meta data function:', error);
+      if (getErrorMessage(error, '') !== 'Provider sandbox was torn down') {
+        console.error('Error in meta data function:', error);
+      }
       throw new Error(
         getErrorMessage(
           error,

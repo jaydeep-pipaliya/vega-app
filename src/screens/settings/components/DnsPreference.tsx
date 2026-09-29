@@ -1,14 +1,15 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import {
-  Host,
-  Shape,
-  Text,
-  TextField,
-  useNativeState,
-} from '@expo/ui/jetpack-compose';
-import { fillMaxWidth } from '@expo/ui/jetpack-compose/modifiers';
 import React, { useEffect, useState } from 'react';
-import { Switch, ToastAndroid, TouchableOpacity, View } from 'react-native';
+import {
+  Pressable,
+  Switch,
+  ToastAndroid,
+  TouchableOpacity,
+  View,
+  TextInput,
+  Keyboard,
+  BackHandler,
+} from 'react-native';
 import { settingsStorage } from '../../../lib/storage';
 import {
   DOH_PROVIDERS,
@@ -22,19 +23,27 @@ import {
   getByeDpiStatus,
   toggleByeDpi,
 } from '../../../lib/services/byeDpiService';
-import { useM3Colors, useM3HostTheme } from '../../../theme/M3PaletteContext';
+import { useM3Colors } from '../../../theme/M3PaletteContext';
 import AppText from '../../../components/ui/Text';
 import DropdownField from '../../../components/ui/DropdownField';
+import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
+import {TVFocusable} from '../../../components/tv';
+import {findNodeHandle} from 'react-native';
+import useTVNavigationStore from '../../../lib/zustand/tvNavigationStore';
 
 const DnsPreference = () => {
   const colors = useM3Colors();
-  const hostTheme = useM3HostTheme();
+  const focusBorderColor = useTVFocusBorderColor();
 
   const [warpEnabled, setWarpEnabledState] = useState<boolean>(
     settingsStorage.isWarpEnabled(),
   );
   const [isWarpBusy, setIsWarpBusy] = useState<boolean>(false);
   const [warpPort, setWarpPort] = useState<number | null>(null);
+  const warpRef = React.useRef<View>(null);
+  const [warpHandle, setWarpHandle] = useState<number | null>(null);
+  const byeDpiRef = React.useRef<View>(null);
+  const [byeDpiHandle, setByeDpiHandle] = useState<number | null>(null);
 
   const [byeDpiEnabled, setByeDpiEnabledState] = useState<boolean>(
     settingsStorage.isByeDpiEnabled(),
@@ -44,8 +53,37 @@ const DnsPreference = () => {
   const [byeDpiArgs, setByeDpiArgs] = useState(
     settingsStorage.getByeDpiCmdArgs() || DEFAULT_BYEDPI_ARGS,
   );
-  const byeDpiArgsValue = useNativeState(byeDpiArgs);
   const [showArgsEditor, setShowArgsEditor] = useState<boolean>(false);
+  const argsInputRef = React.useRef<TextInput>(null);
+  const [isArgsInputFocused, setIsArgsInputFocused] = useState<boolean>(false);
+  const customUrlInputRef = React.useRef<TextInput>(null);
+  const [isCustomUrlFocused, setIsCustomUrlFocused] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!showArgsEditor && !isArgsInputFocused && !isCustomUrlFocused) return;
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (argsInputRef.current?.isFocused() || isArgsInputFocused) {
+        argsInputRef.current?.blur();
+        setIsArgsInputFocused(false);
+        Keyboard.dismiss();
+        return true;
+      }
+      if (customUrlInputRef.current?.isFocused() || isCustomUrlFocused) {
+        customUrlInputRef.current?.blur();
+        setIsCustomUrlFocused(false);
+        Keyboard.dismiss();
+        return true;
+      }
+      if (showArgsEditor) {
+        setShowArgsEditor(false);
+        return true;
+      }
+      return false;
+    });
+
+    return () => sub.remove();
+  }, [showArgsEditor, isArgsInputFocused, isCustomUrlFocused]);
 
   useEffect(() => {
     getWarpStatus()
@@ -65,7 +103,6 @@ const DnsPreference = () => {
     : 'off';
   const [provider, setProvider] = useState<DohProviderValue>(initialProvider);
   const [customUrl, setCustomUrl] = useState(settingsStorage.getDohCustomUrl());
-  const customUrlValue = useNativeState(customUrl);
 
   const onToggleWarp = async (value: boolean) => {
     if (isWarpBusy || isByeDpiBusy) return;
@@ -185,7 +222,33 @@ const DnsPreference = () => {
   return (
     <View className="p-4">
       {/* Cloudflare WARP Section */}
-      <View className="mb-4 flex-row items-center justify-between">
+      <TVFocusable
+        ref={warpRef}
+        onLayout={() => {
+          if (warpRef.current) setWarpHandle(findNodeHandle(warpRef.current));
+        }}
+        onFocus={() => {
+          if (warpRef.current) {
+            const h = findNodeHandle(warpRef.current);
+            if (h) useTVNavigationStore.getState().setActiveScreenFocusHandle(h);
+          }
+        }}
+        nextFocusRight={warpHandle}
+        accessibilityRole="switch"
+        accessibilityState={{checked: warpEnabled}}
+        accessibilityLabel="Cloudflare WARP Mode"
+        disabled={isWarpBusy || isByeDpiBusy}
+        onPress={() => onToggleWarp(!warpEnabled)}
+        focusScale={1.02}
+        borderRadius={16}
+        style={{
+          marginBottom: 16,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: 8,
+          borderRadius: 16,
+        }}>
         <View className="mr-3 flex-1 flex-row items-center">
           <View
             className="mr-4 h-10 w-10 items-center justify-center rounded-full"
@@ -223,15 +286,17 @@ const DnsPreference = () => {
         <Switch
           accessibilityLabel="Cloudflare WARP Mode"
           value={warpEnabled}
-          disabled={isWarpBusy || isByeDpiBusy}
-          onValueChange={onToggleWarp}
+          disabled={true}
+          focusable={false}
+          pointerEvents="none"
+          importantForAccessibility="no"
           thumbColor={warpEnabled ? colors.onPrimary : colors.outline}
           trackColor={{
             false: colors.surfaceContainerHighest,
             true: colors.primary,
           }}
         />
-      </View>
+      </TVFocusable>
 
       {/* Divider */}
       <View
@@ -244,7 +309,32 @@ const DnsPreference = () => {
 
       {/* ByeDPI Section */}
       <View className="mb-4">
-        <View className="flex-row items-center justify-between">
+        <TVFocusable
+          ref={byeDpiRef}
+          onLayout={() => {
+            if (byeDpiRef.current) setByeDpiHandle(findNodeHandle(byeDpiRef.current));
+          }}
+          onFocus={() => {
+            if (byeDpiRef.current) {
+              const h = findNodeHandle(byeDpiRef.current);
+              if (h) useTVNavigationStore.getState().setActiveScreenFocusHandle(h);
+            }
+          }}
+          nextFocusRight={byeDpiHandle}
+          accessibilityRole="switch"
+          accessibilityState={{checked: byeDpiEnabled}}
+          accessibilityLabel="ByeDPI Anti-DPI Mode"
+          disabled={isByeDpiBusy || isWarpBusy}
+          onPress={() => onToggleByeDpi(!byeDpiEnabled)}
+          focusScale={1.02}
+          borderRadius={16}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: 8,
+            borderRadius: 16,
+          }}>
           <View className="mr-3 flex-1 flex-row items-center">
             <View
               className="mr-4 h-10 w-10 items-center justify-center rounded-full"
@@ -282,21 +372,25 @@ const DnsPreference = () => {
           <Switch
             accessibilityLabel="ByeDPI Anti-DPI Mode"
             value={byeDpiEnabled}
-            disabled={isByeDpiBusy || isWarpBusy}
-            onValueChange={onToggleByeDpi}
+            disabled={true}
+            focusable={false}
+            pointerEvents="none"
+            importantForAccessibility="no"
             thumbColor={byeDpiEnabled ? colors.onPrimary : colors.outline}
             trackColor={{
               false: colors.surfaceContainerHighest,
               true: colors.primary,
             }}
           />
-        </View>
+        </TVFocusable>
 
         {/* Optional Args Editor Toggle & Config */}
         <View className="mt-2 ml-14">
-          <TouchableOpacity
+          <TVFocusable
             onPress={() => setShowArgsEditor(!showArgsEditor)}
-            className="flex-row items-center py-1">
+            focusScale={1.03}
+            borderRadius={8}
+            style={{flexDirection: 'row', alignItems: 'center', paddingVertical: 4}}>
             <AppText
               role="labelSmall"
               style={{ color: colors.primary, marginRight: 4 }}>
@@ -307,7 +401,7 @@ const DnsPreference = () => {
               size={16}
               color={colors.primary}
             />
-          </TouchableOpacity>
+          </TVFocusable>
 
           {showArgsEditor ? (
             <View className="mt-2 pr-1">
@@ -317,11 +411,15 @@ const DnsPreference = () => {
                   style={{ color: colors.onSurfaceVariant }}>
                   Command Line Arguments
                 </AppText>
-                <TouchableOpacity onPress={resetByeDpiArgs}>
+                <TVFocusable
+                  onPress={resetByeDpiArgs}
+                  focusScale={1.05}
+                  borderRadius={8}
+                  style={{paddingHorizontal: 8, paddingVertical: 4}}>
                   <AppText role="labelSmall" style={{ color: colors.primary }}>
                     Reset default
                   </AppText>
-                </TouchableOpacity>
+                </TVFocusable>
               </View>
 
               {/* Preset Strategies */}
@@ -330,16 +428,20 @@ const DnsPreference = () => {
                   const isSelected =
                     (byeDpiArgs || DEFAULT_BYEDPI_ARGS) === preset.args;
                   return (
-                    <TouchableOpacity
+                    <TVFocusable
                       key={preset.id}
                       onPress={() => saveByeDpiArgs(preset.args)}
-                      className="rounded-full px-2.5 py-1"
+                      focusScale={1.08}
+                      borderRadius={16}
                       style={{
                         backgroundColor: isSelected
                           ? colors.primaryContainer
                           : colors.surfaceContainerHigh,
                         borderWidth: isSelected ? 1 : 0,
                         borderColor: colors.primary,
+                        borderRadius: 16,
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
                       }}>
                       <AppText
                         role="labelSmall"
@@ -351,54 +453,63 @@ const DnsPreference = () => {
                         }}>
                         {preset.name}
                       </AppText>
-                    </TouchableOpacity>
+                    </TVFocusable>
                   );
                 })}
               </View>
 
-              <View style={{ width: '100%', minHeight: 48 }}>
-                <Host
-                  matchContents={{ vertical: true }}
-                  style={{ width: '100%', minHeight: 48 }}
-                  {...hostTheme}>
-                  <TextField
-                    value={byeDpiArgsValue}
-                    singleLine
-                    onValueChange={setByeDpiArgs}
-                    keyboardOptions={{
-                      autoCorrectEnabled: false,
-                      capitalization: 'none',
-                      imeAction: 'done',
-                    }}
-                    keyboardActions={{ onDone: saveByeDpiArgs }}
-                    modifiers={[fillMaxWidth()]}
-                    shape={Shape.RoundedCorner({
-                      cornerRadii: {
-                        topStart: 12,
-                        topEnd: 12,
-                        bottomStart: 12,
-                        bottomEnd: 12,
-                      },
-                    })}
-                    textStyle={{ fontSize: 13, color: colors.onSurface }}
-                    colors={{
-                      focusedContainerColor: colors.surfaceContainerHigh,
-                      unfocusedContainerColor: colors.surfaceContainerHigh,
-                      focusedTextColor: colors.onSurface,
-                      unfocusedTextColor: colors.onSurface,
-                      cursorColor: colors.primary,
-                      focusedIndicatorColor: 'transparent',
-                      unfocusedIndicatorColor: 'transparent',
-                      focusedPlaceholderColor: colors.onSurfaceVariant,
-                      unfocusedPlaceholderColor: colors.onSurfaceVariant,
-                    }}>
-                    <TextField.Placeholder>
-                      <Text color={colors.onSurfaceVariant}>
-                        {DEFAULT_BYEDPI_ARGS}
-                      </Text>
-                    </TextField.Placeholder>
-                  </TextField>
-                </Host>
+              <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4}}>
+                <TextInput
+                  ref={argsInputRef}
+                  value={byeDpiArgs}
+                  onChangeText={setByeDpiArgs}
+                  onFocus={() => setIsArgsInputFocused(true)}
+                  onBlur={() => {
+                    setIsArgsInputFocused(false);
+                    saveByeDpiArgs(byeDpiArgs);
+                  }}
+                  onSubmitEditing={() => {
+                    saveByeDpiArgs(byeDpiArgs);
+                    argsInputRef.current?.blur();
+                    Keyboard.dismiss();
+                  }}
+                  returnKeyType="done"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholder={DEFAULT_BYEDPI_ARGS}
+                  placeholderTextColor={colors.onSurfaceVariant}
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.surfaceContainerHigh,
+                    borderRadius: 12,
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    fontSize: 13,
+                    color: colors.onSurface,
+                    borderWidth: isArgsInputFocused ? 2 : 1,
+                    borderColor: isArgsInputFocused ? colors.primary : colors.outlineVariant,
+                  }}
+                />
+                <TVFocusable
+                  onPress={() => {
+                    saveByeDpiArgs(byeDpiArgs);
+                    argsInputRef.current?.blur();
+                    Keyboard.dismiss();
+                  }}
+                  borderRadius={12}
+                  focusScale={1.05}
+                  style={{
+                    backgroundColor: colors.primary,
+                    borderRadius: 12,
+                    paddingHorizontal: 16,
+                    paddingVertical: 10,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                  }}>
+                  <AppText role="labelMedium" style={{color: colors.onPrimary, fontWeight: '700'}}>
+                    Save
+                  </AppText>
+                </TVFocusable>
               </View>
             </View>
           ) : null}
@@ -466,50 +577,59 @@ const DnsPreference = () => {
               style={{ color: colors.onSurfaceVariant, marginBottom: 8 }}>
               Custom DoH URL
             </AppText>
-            <View style={{ width: '100%', minHeight: 56 }}>
-              <Host
-                matchContents={{ vertical: true }}
-                style={{ width: '100%', minHeight: 56 }}
-                {...hostTheme}>
-                <TextField
-                  value={customUrlValue}
-                  singleLine
-                  onValueChange={setCustomUrl}
-                  keyboardOptions={{
-                    autoCorrectEnabled: false,
-                    capitalization: 'none',
-                    imeAction: 'done',
-                    keyboardType: 'uri',
-                  }}
-                  keyboardActions={{ onDone: saveCustomUrl }}
-                  modifiers={[fillMaxWidth()]}
-                  shape={Shape.RoundedCorner({
-                    cornerRadii: {
-                      topStart: 16,
-                      topEnd: 16,
-                      bottomStart: 16,
-                      bottomEnd: 16,
-                    },
-                  })}
-                  textStyle={{ fontSize: 14, color: colors.onSurface }}
-                  colors={{
-                    focusedContainerColor: colors.surfaceContainerHigh,
-                    unfocusedContainerColor: colors.surfaceContainerHigh,
-                    focusedTextColor: colors.onSurface,
-                    unfocusedTextColor: colors.onSurface,
-                    cursorColor: colors.primary,
-                    focusedIndicatorColor: 'transparent',
-                    unfocusedIndicatorColor: 'transparent',
-                    focusedPlaceholderColor: colors.onSurfaceVariant,
-                    unfocusedPlaceholderColor: colors.onSurfaceVariant,
-                  }}>
-                  <TextField.Placeholder>
-                    <Text color={colors.onSurfaceVariant}>
-                      https://dns.example.com/dns-query
-                    </Text>
-                  </TextField.Placeholder>
-                </TextField>
-              </Host>
+            <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4}}>
+              <TextInput
+                ref={customUrlInputRef}
+                value={customUrl}
+                onChangeText={setCustomUrl}
+                onFocus={() => setIsCustomUrlFocused(true)}
+                onBlur={() => {
+                  setIsCustomUrlFocused(false);
+                  saveCustomUrl(customUrl);
+                }}
+                onSubmitEditing={() => {
+                  saveCustomUrl(customUrl);
+                  customUrlInputRef.current?.blur();
+                  Keyboard.dismiss();
+                }}
+                returnKeyType="done"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                placeholder="https://dns.example.com/dns-query"
+                placeholderTextColor={colors.onSurfaceVariant}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surfaceContainerHigh,
+                  borderRadius: 12,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  fontSize: 13,
+                  color: colors.onSurface,
+                  borderWidth: isCustomUrlFocused ? 2 : 1,
+                  borderColor: isCustomUrlFocused ? colors.primary : colors.outlineVariant,
+                }}
+              />
+              <TVFocusable
+                onPress={() => {
+                  saveCustomUrl(customUrl);
+                  customUrlInputRef.current?.blur();
+                  Keyboard.dismiss();
+                }}
+                borderRadius={12}
+                focusScale={1.05}
+                style={{
+                  backgroundColor: colors.primary,
+                  borderRadius: 12,
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}>
+                <AppText role="labelMedium" style={{color: colors.onPrimary, fontWeight: '700'}}>
+                  Apply
+                </AppText>
+              </TVFocusable>
             </View>
           </View>
         ) : null}

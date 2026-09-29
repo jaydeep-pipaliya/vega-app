@@ -17,9 +17,12 @@ import useContinueWatchingStore, {
 import { useM3Colors } from '../theme/M3PaletteContext';
 import MediaPosterCard from './MediaPosterCard';
 import AppText from './ui/Text';
+import { isTV } from '../lib/tv/constants';
+import {TVFocusable} from './tv';
 
 interface ContinueWatchingCardProps {
   item: ContinueWatchingItem;
+  width?: number;
   selected?: boolean;
   selectionMode?: boolean;
   onOpen: (item: ContinueWatchingItem) => void;
@@ -28,6 +31,7 @@ interface ContinueWatchingCardProps {
 
 const ContinueWatchingCard = ({
   item,
+  width = 124,
   selected = false,
   selectionMode = false,
   onOpen,
@@ -47,12 +51,12 @@ const ContinueWatchingCard = ({
       : 0;
 
   return (
-    <View style={{ width: 124 }}>
+    <View style={{ width, overflow: 'visible' }}>
       <MediaPosterCard
         title={item.title}
         subtitle={episodeTitle}
         poster={poster}
-        width={124}
+        width={width}
         selected={selected}
         selectionMode={selectionMode}
         onPress={() => onOpen(item)}
@@ -65,6 +69,7 @@ const ContinueWatchingCard = ({
           height: 3,
           marginTop: selected ? 4 : 7,
           overflow: 'hidden',
+          width: '100%',
         }}>
         <View
           style={{
@@ -155,6 +160,10 @@ const ContinueWatching = () => {
     setSelectedIds(new Set());
   }, [triggerHaptic]);
 
+  const handleStartSelection = useCallback(() => {
+    if (items[0]) handleCardLongPress(items[0]);
+  }, [items, handleCardLongPress]);
+
   const handleToggleSelectAll = useCallback(() => {
     triggerHaptic(HapticFeedbackTypes.effectClick);
     if (selectedIds.size === items.length) {
@@ -215,7 +224,15 @@ const ContinueWatching = () => {
               flex: 1,
               marginRight: 8,
             }}>
-            <TouchableOpacity
+            {isTV ? (
+              <TVFocusable
+                accessibilityRole="button"
+                accessibilityLabel="Exit Continue Watching selection"
+                onPress={handleExitSelection}
+                style={{padding: 6}}>
+                <MaterialCommunityIcons name="close" size={22} color={colors.onBackground} />
+              </TVFocusable>
+            ) : <TouchableOpacity
               activeOpacity={0.7}
               onPress={handleExitSelection}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -224,7 +241,7 @@ const ContinueWatching = () => {
                 size={22}
                 color={colors.onBackground}
               />
-            </TouchableOpacity>
+            </TouchableOpacity>}
             <AppText
               role="titleLargeEmphasized"
               numberOfLines={1}
@@ -244,7 +261,13 @@ const ContinueWatching = () => {
         {/* Delete button where the see all button appears in slider */}
         {isSelectionMode ? (
           <View style={{ alignItems: 'center', flexDirection: 'row', gap: 6 }}>
-            <TouchableOpacity
+            {isTV ? <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Select all Continue Watching items"
+              onPress={handleToggleSelectAll}
+              style={{alignItems: 'center', justifyContent: 'center', padding: 6}}>
+              <MaterialIcons name="select-all" size={22} color={isAllSelected ? colors.primary : colors.onSurfaceVariant} />
+            </TVFocusable> : <TouchableOpacity
               activeOpacity={0.7}
               onPress={handleToggleSelectAll}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -258,8 +281,15 @@ const ContinueWatching = () => {
                 size={22}
                 color={isAllSelected ? colors.primary : colors.onSurfaceVariant}
               />
-            </TouchableOpacity>
-            <TouchableOpacity
+            </TouchableOpacity>}
+            {isTV ? <TVFocusable
+              accessibilityRole="button"
+              accessibilityLabel="Clear selected Continue Watching items"
+              disabled={selectedIds.size === 0}
+              onPress={handleDeletePress}
+              style={{alignItems: 'center', justifyContent: 'center', backgroundColor: colors.errorContainer, borderRadius: 10, width: 32, height: 32}}>
+              <MaterialCommunityIcons name="trash-can-outline" size={18} color={colors.onErrorContainer} />
+            </TVFocusable> : <TouchableOpacity
               activeOpacity={0.75}
               disabled={selectedIds.size === 0}
               onPress={handleDeletePress}
@@ -277,8 +307,18 @@ const ContinueWatching = () => {
                 size={18}
                 color={colors.onErrorContainer}
               />
-            </TouchableOpacity>
+            </TouchableOpacity>}
           </View>
+        ) : isTV ? (
+          <TVFocusable
+            accessibilityRole="button"
+            accessibilityLabel="Select Continue Watching items"
+            onPress={handleStartSelection}
+            style={{paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.surfaceContainerHigh, borderRadius: 12}}>
+            <AppText role="labelMediumEmphasized" style={{color: colors.onSurface}}>
+              Select items
+            </AppText>
+          </TVFocusable>
         ) : null}
       </View>
 
@@ -287,7 +327,12 @@ const ContinueWatching = () => {
         data={items}
         keyExtractor={item => item.id}
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
+        style={{ overflow: 'visible' }}
+        contentContainerStyle={{
+          paddingVertical: 12,
+          paddingHorizontal: 20,
+          overflow: 'visible',
+        }}
         ItemSeparatorComponent={() => <View style={{ width: 14 }} />}
         renderItem={({ item }) => (
           <ContinueWatchingCard

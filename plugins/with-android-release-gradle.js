@@ -40,9 +40,10 @@ if (project.android) {
   project.android {
     splits {
       abi {
-        enable true
+        def isRelease = gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
+        enable isRelease
         reset()
-        include 'armeabi-v7a', 'arm64-v8a'
+        include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
         universalApk true
       }
     }

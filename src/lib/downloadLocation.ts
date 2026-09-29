@@ -1,6 +1,7 @@
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import * as FileSystem from 'expo-file-system/legacy';
 import {NativeModules, Platform} from 'react-native';
+import {sanitizeDownloadFileName} from './downloadId';
 
 export type PathDownloadLocation = {
   type: 'path';
@@ -18,6 +19,12 @@ export type DownloadLocationConfig = PathDownloadLocation | SafDownloadLocation;
 
 const DOWNLOAD_LOCATION_PREFIX = 'download-location:';
 
+export const getTVDefaultDownloadLocation = (): PathDownloadLocation => ({
+  type: 'path',
+  path: `${RNFS.ExternalDirectoryPath || RNFS.DocumentDirectoryPath}/Vega Downloads`,
+  label: 'Vega app storage',
+});
+
 export const serializeDownloadLocation = (
   config: DownloadLocationConfig,
 ): string => {
@@ -28,12 +35,12 @@ export const parseDownloadLocation = (
   storedValue?: string | null,
 ): DownloadLocationConfig | null => {
   if (!storedValue) {
-    return null;
+    return Platform.isTV ? getTVDefaultDownloadLocation() : null;
   }
 
   if (!storedValue.startsWith(DOWNLOAD_LOCATION_PREFIX)) {
     if (Platform.OS === 'android') {
-      return null;
+      return Platform.isTV ? getTVDefaultDownloadLocation() : null;
     }
     return {
       type: 'path',
@@ -51,7 +58,9 @@ export const parseDownloadLocation = (
       return parsed;
     }
 
-    if (parsed.type === 'path' && parsed.path && Platform.OS !== 'android') {
+    if (parsed.type === 'path' && parsed.path &&
+        (Platform.OS !== 'android' ||
+          (Platform.isTV && parsed.path === getTVDefaultDownloadLocation().path))) {
       return {
         type: 'path',
         path: parsed.path,
@@ -62,7 +71,7 @@ export const parseDownloadLocation = (
     console.log('Failed to parse download location:', error);
   }
 
-  return null;
+  return Platform.isTV ? getTVDefaultDownloadLocation() : null;
 };
 
 export const isSafDownloadLocation = (
@@ -77,7 +86,7 @@ export const getDownloadLocationDisplayValue = (
   if (!config) {
     return 'Select a download folder';
   }
-  return config.type === 'saf' ? config.label : config.path;
+  return config.type === 'saf' ? config.label : config.label || config.path;
 };
 
 export const getDownloadLocationPath = (
@@ -139,7 +148,8 @@ export const validateDownloadLocationAccess = async (
       await FileSystem.StorageAccessFramework.readDirectoryAsync(location.uri);
       return true;
     }
-    if (Platform.OS === 'android') {
+    if (Platform.OS === 'android' &&
+        (!Platform.isTV || location.path !== getTVDefaultDownloadLocation().path)) {
       return false;
     }
     if (!(await RNFS.exists(location.path))) {
@@ -165,7 +175,7 @@ export const ensureDownloadLocationAccess = async (
 };
 
 export const getDownloadFileName = (fileName: string, fileType: string) => {
-  return `${fileName}.${fileType}`;
+  return `${sanitizeDownloadFileName(fileName)}.${fileType}`;
 };
 
 export const getSafEntryName = (entryUri: string): string => {

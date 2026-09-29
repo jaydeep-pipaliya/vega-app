@@ -1,5 +1,5 @@
-import {View, ScrollView, Pressable, ToastAndroid} from 'react-native';
-import React, {useState} from 'react';
+import {View, ScrollView, Pressable, ToastAndroid, BackHandler} from 'react-native';
+import React, {useState, useEffect} from 'react';
 import {settingsStorage} from '../../lib/storage';
 import RNReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import Constants from 'expo-constants';
@@ -12,17 +12,34 @@ import SettingsSection from '../../components/ui/SettingsSection';
 import SettingsSwitchRow from '../../components/ui/SettingsSwitchRow';
 import Surface from '../../components/ui/Surface';
 import {useM3Colors} from '../../theme/M3PaletteContext';
+import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import {isTV} from '../../lib/tv';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   getAnalytics,
   getCrashlytics,
   isFirebaseNativeReady,
 } from '../../lib/utils/firebaseSafe';
 
-const Preferences = () => {
+const Preferences = ({navigation}: any) => {
   const hasFirebase =
     Boolean(Constants?.expoConfig?.extra?.hasFirebase) &&
     isFirebaseNativeReady();
   const colors = useM3Colors();
+
+  useEffect(() => {
+    if (!isTV) {
+      return;
+    }
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (navigation?.canGoBack?.()) {
+        navigation.goBack();
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [navigation]);
   // const [showRecentlyWatched, setShowRecentlyWatched] = useState(
   //   settingsStorage.getBool('showRecentlyWatched') || false,
   // );
@@ -89,16 +106,40 @@ const Preferences = () => {
   );
 
   return (
-    <ScrollView
-      className="h-full w-full bg-m3-background"
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={{paddingBottom: 40, paddingTop: 20}}>
-      <View className="px-5">
-        <AppText
-          role="headlineLargeEmphasized"
-          className="text-m3-on-background">
-          Preferences
-        </AppText>
+    <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusDown={true} style={{flex: 1}}>
+      <ScrollView
+        focusable={false}
+        accessible={false}
+        className="h-full w-full bg-m3-background"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{paddingBottom: 40, paddingTop: 20}}>
+        <View className="px-5">
+          <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 12}}>
+            <TVFocusable
+              hasTVPreferredFocus={isTV}
+              accessibilityLabel="Go back"
+              accessibilityRole="button"
+              onPress={() => navigation.goBack()}
+              borderRadius={22}
+              style={{
+                alignItems: 'center',
+                height: 44,
+                justifyContent: 'center',
+                marginRight: 10,
+                width: 44,
+              }}>
+              <MaterialCommunityIcons
+                name="arrow-left"
+                size={28}
+                color={colors.onBackground}
+              />
+            </TVFocusable>
+            <AppText
+              role="headlineLargeEmphasized"
+              className="text-m3-on-background">
+              Preferences
+            </AppText>
+          </View>
         <AppText
           role="bodyLarge"
           className="mb-7 mt-1 text-m3-on-surface-variant">
@@ -283,8 +324,11 @@ const Preferences = () => {
               {['360p', '480p', '720p'].map(quality => {
                 const selected = ExcludedQualities.includes(quality);
                 return (
-                  <Pressable
+                  <TVFocusable
                     key={quality}
+                    borderRadius={16}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Quality ${quality}`}
                     onPress={() => {
                       if (settingsStorage.isHapticFeedbackEnabled()) {
                         RNReactNativeHapticFeedback.trigger('effectTick');
@@ -316,7 +360,7 @@ const Preferences = () => {
                       }}>
                       {quality}
                     </AppText>
-                  </Pressable>
+                  </TVFocusable>
                 );
               })}
             </View>
@@ -324,6 +368,7 @@ const Preferences = () => {
         </View>
       </View>
     </ScrollView>
+  </TVFocusGuide>
   );
 };
 

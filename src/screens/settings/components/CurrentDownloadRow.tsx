@@ -1,6 +1,8 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React from 'react';
-import {Image, Text, TouchableOpacity, View} from 'react-native';
+import {Image, Text, View} from 'react-native';
+import {TVFocusable} from '../../../components/tv';
+import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
 import {
   formatDownloadBytes,
   formatDownloadProgressLabel,
@@ -45,6 +47,8 @@ const CurrentDownloadRow = ({
   onResume,
   onRetry,
   onStartNow,
+  firstActionRef,
+  onFirstActionLayout,
 }: {
   item: DownloadItem;
   primary: string;
@@ -53,8 +57,11 @@ const CurrentDownloadRow = ({
   onResume: () => void;
   onRetry: () => void;
   onStartNow: () => void;
+  firstActionRef?: React.RefObject<View | null>;
+  onFirstActionLayout?: () => void;
 }) => {
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
   const progress =
     item.totalBytes > 0 ? item.downloadedBytes / item.totalBytes : 0;
   const failed = item.status === 'error' || item.status === 'interrupted';
@@ -152,14 +159,21 @@ const CurrentDownloadRow = ({
 
       <View className="mt-3 flex-row justify-end gap-2">
         {item.status === 'queued' && (
-          <TouchableOpacity
+          <TVFocusable
             testID={`start-now-download-${item.id}`}
+            accessibilityRole="button"
             accessibilityLabel={`Start ${item.title} now`}
             onPress={onStartNow}
-            className="flex-row items-center px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor={focusBorderColor}
             style={{
+              alignItems: 'center',
               backgroundColor: colors.secondaryContainer,
               borderRadius: 14,
+              flexDirection: 'row',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <MaterialCommunityIcons
               name="play-circle-outline"
@@ -171,16 +185,24 @@ const CurrentDownloadRow = ({
               style={{color: colors.onSecondaryContainer}}>
               Start now
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         )}
         {item.canPause && item.status === 'downloading' && (
-          <TouchableOpacity
+          <TVFocusable
             testID={`pause-download-${item.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={`Pause download ${item.title}`}
             onPress={onPause}
-            className="flex-row items-center px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor={focusBorderColor}
             style={{
+              alignItems: 'center',
               backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 14,
+              flexDirection: 'row',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <MaterialCommunityIcons name="pause" size={18} color={primary} />
             <Text
@@ -188,16 +210,24 @@ const CurrentDownloadRow = ({
               style={{color: colors.onSurface}}>
               Pause
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         )}
         {item.canResume && item.status === 'paused' && (
-          <TouchableOpacity
+          <TVFocusable
             testID={`resume-download-${item.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={`Resume download ${item.title}`}
             onPress={onResume}
-            className="flex-row items-center px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor={focusBorderColor}
             style={{
+              alignItems: 'center',
               backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 14,
+              flexDirection: 'row',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <MaterialCommunityIcons name="play" size={18} color={primary} />
             <Text
@@ -205,15 +235,23 @@ const CurrentDownloadRow = ({
               style={{color: colors.onSurface}}>
               Resume
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         )}
         {failed && item.retryable && (
-          <TouchableOpacity
+          <TVFocusable
+            accessibilityRole="button"
+            accessibilityLabel={`Retry download ${item.title}`}
             onPress={onRetry}
-            className="flex-row items-center px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor={focusBorderColor}
             style={{
+              alignItems: 'center',
               backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 14,
+              flexDirection: 'row',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <MaterialCommunityIcons name="refresh" size={18} color={primary} />
             <Text
@@ -221,15 +259,26 @@ const CurrentDownloadRow = ({
               style={{color: colors.onSurface}}>
               Retry
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         )}
         {canCancel && (
-          <TouchableOpacity
+          <TVFocusable
+            ref={firstActionRef}
+            onLayout={onFirstActionLayout}
+            hasTVPreferredFocus={Boolean(firstActionRef)}
+            accessibilityRole="button"
+            accessibilityLabel={`Cancel download ${item.title}`}
             onPress={onCancel}
-            className="flex-row items-center px-3 py-2"
+            borderRadius={14}
+            focusScale={1.05}
+            focusBorderColor="#FFFFFF"
             style={{
+              alignItems: 'center',
               backgroundColor: colors.errorContainer,
               borderRadius: 14,
+              flexDirection: 'row',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
             }}>
             <MaterialCommunityIcons
               name="close"
@@ -241,7 +290,7 @@ const CurrentDownloadRow = ({
               style={{color: colors.onErrorContainer}}>
               Cancel
             </Text>
-          </TouchableOpacity>
+          </TVFocusable>
         )}
       </View>
     </View>

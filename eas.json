@@ -24,6 +24,17 @@
         "gradleCommand": ":app:assembleRelease"
       }
     },
+    "preview_tv": {
+      "env": {
+        "APP_VARIANT": "tv",
+        "EXPO_TV": "1"
+      },
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      }
+    },
     "production": {
       "env": {
         "APP_VARIANT": "playstore"

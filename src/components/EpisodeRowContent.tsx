@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, {useEffect, useState} from 'react';
 import {Image, TouchableOpacity, View} from 'react-native';
 import Text from './ui/Text';
+import {isTV} from '../lib/tv';
 
 type EpisodeRowContentProps = {
   title: string;
@@ -145,7 +146,7 @@ const EpisodeRowContent = ({
               {visibleDescription}
               {descriptionTruncated ? '…' : ''}
             </Text>
-            {descriptionTruncated && onShowDetails && morePosition ? (
+            {!isTV && descriptionTruncated && onShowDetails && morePosition ? (
               <TouchableOpacity
                 accessibilityLabel={`Show full description for ${title}`}
                 accessibilityRole="button"

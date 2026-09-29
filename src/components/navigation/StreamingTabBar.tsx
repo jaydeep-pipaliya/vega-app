@@ -1,11 +1,14 @@
 import type {BottomTabBarProps} from '@react-navigation/bottom-tabs';
-import React from 'react';
+import React, {useState} from 'react';
 import {
   Platform,
-  StyleSheet,
+  Pressable,
   TouchableOpacity,
+  StyleSheet,
+  UIManager,
   useWindowDimensions,
   View,
+  findNodeHandle,
 } from 'react-native';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -13,6 +16,9 @@ import {settingsStorage} from '../../lib/storage';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import AppText from '../ui/Text';
 import {AnimatedTabIcon, type AnimatedTabIconName} from './AnimatedTabIcon';
+import {isTV} from '../../lib/tv/constants';
+import {useTVRemote} from '../../lib/tv/useTVRemote';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 
 const TAB_ICONS: Record<string, AnimatedTabIconName> = {
   HomeStack: 'home',
@@ -22,15 +28,215 @@ const TAB_ICONS: Record<string, AnimatedTabIconName> = {
   SettingsStack: 'settings',
 };
 
+interface TabButtonProps {
+  routeKey: string;
+  routeName: string;
+  isFocused: boolean;
+  hasTVPreferredFocus?: boolean;
+  label: string;
+  icon: AnimatedTabIconName;
+  accessibilityLabel?: string;
+  isNavigationRail: boolean;
+  showLabels: boolean;
+  colors: any;
+  onPress: () => void;
+  onLongPress: () => void;
+}
+
+import {TVFocusable, TVFocusGuide} from '../tv';
+
+import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
+import useContentStore from '../../lib/zustand/contentStore';
+
+const StreamingTabButton = ({
+  routeKey,
+  routeName,
+  isFocused,
+  hasTVPreferredFocus,
+  label,
+  icon,
+  accessibilityLabel,
+  isNavigationRail,
+  showLabels,
+  colors,
+  onPress,
+  onLongPress,
+}: TabButtonProps) => {
+  const focusBorderColor = useTVFocusBorderColor();
+  const activeScreenFocusHandle = useTVNavigationStore(
+    state => state.activeScreenFocusHandle,
+  );
+  const tabRef = React.useRef<View>(null);
+  const railFocusedRef = React.useRef(false);
+  const [tabHandle, setTabHandle] = useState<number | null>(null);
+
+  useTVRemote(evt => {
+    if (!railFocusedRef.current || evt.eventType !== 'right' ||
+        (evt.eventKeyAction !== undefined && evt.eventKeyAction !== 0)) return;
+    const handle = useTVNavigationStore.getState().activeScreenFocusHandle;
+    if (handle) {
+      requestAnimationFrame(() => {
+        UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+      });
+    }
+  }, isTV);
+
+  if (isTV) {
+    return (
+      <TVFocusable
+        ref={tabRef}
+        onFocus={() => { railFocusedRef.current = true; }}
+        onBlur={() => { railFocusedRef.current = false; }}
+        onLayout={() => {
+          if (tabRef.current) {
+            setTabHandle(findNodeHandle(tabRef.current));
+          }
+        }}
+        hasTVPreferredFocus={hasTVPreferredFocus}
+        nextFocusLeft={tabHandle}
+        nextFocusRight={activeScreenFocusHandle ?? tabHandle ?? undefined}
+        key={routeKey}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel || label}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        focusScale={1.08}
+        showFocusBorder={false}
+        style={{
+          alignItems: 'center',
+          height: showLabels ? 72 : 56,
+          justifyContent: 'center',
+          minWidth: 48,
+          width: 88,
+          marginVertical: 4,
+        }}>
+        {({focused}) => (
+          <>
+            <View
+              pointerEvents="none"
+              style={{
+                alignItems: 'center',
+                backgroundColor: isFocused
+                  ? colors.secondaryContainer
+                  : focused
+                    ? colors.surfaceContainerHighest
+                    : 'transparent',
+                borderColor: focused ? focusBorderColor : 'transparent',
+                borderWidth: focused ? 2.5 : 0,
+                borderRadius: 16,
+                height: 34,
+                justifyContent: 'center',
+                overflow: 'hidden',
+                width: 58,
+              }}>
+              <AnimatedTabIcon
+                name={icon}
+                active={isFocused || focused}
+                color={
+                  isFocused
+                    ? colors.onSecondaryContainer
+                    : focused
+                      ? colors.onSurface
+                      : colors.onSurfaceVariant
+                }
+                size={24}
+              />
+            </View>
+            {showLabels ? (
+              <AppText
+                role={isFocused || focused ? 'labelMediumEmphasized' : 'labelMedium'}
+                numberOfLines={1}
+                style={{
+                  color: isFocused || focused ? colors.onSurface : colors.onSurfaceVariant,
+                  marginTop: 4,
+                  textAlign: 'center',
+                  fontWeight: focused ? '700' : isFocused ? '600' : '400',
+                }}>
+                {label}
+              </AppText>
+            ) : null}
+          </>
+        )}
+      </TVFocusable>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      key={routeKey}
+      accessibilityRole="button"
+      accessibilityState={isFocused ? {selected: true} : {}}
+      accessibilityLabel={accessibilityLabel}
+      activeOpacity={0.85}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={{
+        alignItems: 'center',
+        flex: isNavigationRail ? undefined : 1,
+        height: isNavigationRail
+          ? showLabels
+            ? 72
+            : 56
+          : showLabels
+            ? 58
+            : 42,
+        justifyContent: 'center',
+        minWidth: 48,
+        width: isNavigationRail ? 88 : undefined,
+      }}>
+      <View
+        pointerEvents="none"
+        style={{
+          alignItems: 'center',
+          backgroundColor: isFocused
+            ? colors.secondaryContainer
+            : 'transparent',
+          borderRadius: 16,
+          height: 34,
+          justifyContent: 'center',
+          overflow: 'hidden',
+          width: 58,
+        }}>
+        <AnimatedTabIcon
+          name={icon}
+          active={isFocused}
+          color={
+            isFocused
+              ? colors.onSecondaryContainer
+              : colors.onSurfaceVariant
+          }
+          size={24}
+        />
+      </View>
+      {showLabels ? (
+        <AppText
+          role={isFocused ? 'labelMediumEmphasized' : 'labelMedium'}
+          numberOfLines={1}
+          style={{
+            color: isFocused ? colors.onSurface : colors.onSurfaceVariant,
+            marginTop: 4,
+            textAlign: 'center',
+            fontWeight: isFocused ? '600' : '400',
+          }}>
+          {label}
+        </AppText>
+      ) : null}
+    </TouchableOpacity>
+  );
+};
+
 const StreamingTabBar = ({
   state,
   descriptors,
   navigation,
 }: BottomTabBarProps) => {
   const colors = useM3Colors();
+  const hasProvider = useContentStore(state =>
+    Boolean(state.provider?.value && state.installedProviders?.length),
+  );
   const insets = useSafeAreaInsets();
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
-  const isNavigationRail = Math.min(windowWidth, windowHeight) >= 600;
+  const isNavigationRail = isTV || Math.min(windowWidth, windowHeight) >= 600;
   const showLabels = settingsStorage.showTabBarLabels();
   const bottomBarPadding = Math.max(insets.bottom, 8);
 
@@ -85,68 +291,26 @@ const StreamingTabBar = ({
             }
           };
 
+          const isHomeTab = route.name === 'HomeStack' || index === 0;
+
           return (
-            <TouchableOpacity
+            <StreamingTabButton
               key={route.key}
-              accessibilityRole="button"
-              accessibilityState={focused ? {selected: true} : {}}
+              routeKey={route.key}
+              routeName={route.name}
+              isFocused={focused}
+              hasTVPreferredFocus={isTV && isHomeTab && hasProvider}
+              label={label}
+              icon={icon}
               accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
-              activeOpacity={0.8}
+              isNavigationRail={isNavigationRail}
+              showLabels={showLabels}
+              colors={colors}
+              onPress={onPress}
               onLongPress={() =>
                 navigation.emit({type: 'tabLongPress', target: route.key})
               }
-              onPress={onPress}
-              style={{
-                alignItems: 'center',
-                flex: isNavigationRail ? undefined : 1,
-                height: isNavigationRail
-                  ? showLabels
-                    ? 72
-                    : 56
-                  : showLabels
-                    ? 58
-                    : 42,
-                justifyContent: 'center',
-                minWidth: 48,
-                width: isNavigationRail ? 88 : undefined,
-              }}>
-              <View
-                pointerEvents="none"
-                style={{
-                  alignItems: 'center',
-                  backgroundColor: focused
-                    ? colors.secondaryContainer
-                    : 'transparent',
-                  borderRadius: 16,
-                  height: 32,
-                  justifyContent: 'center',
-                  overflow: 'hidden',
-                  width: 56,
-                }}>
-                <AnimatedTabIcon
-                  name={icon}
-                  active={focused}
-                  color={
-                    focused
-                      ? colors.onSecondaryContainer
-                      : colors.onSurfaceVariant
-                  }
-                  size={24}
-                />
-              </View>
-              {showLabels ? (
-                <AppText
-                  role={focused ? 'labelMediumEmphasized' : 'labelMedium'}
-                  numberOfLines={1}
-                  style={{
-                    color: focused ? colors.onSurface : colors.onSurfaceVariant,
-                    marginTop: 4,
-                    textAlign: 'center',
-                  }}>
-                  {label}
-                </AppText>
-              ) : null}
-            </TouchableOpacity>
+            />
           );
         })}
       </View>

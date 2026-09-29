@@ -10,6 +10,9 @@ import useContentStore from '../lib/zustand/contentStore';
 import SkeletonLoader from './Skeleton';
 import MediaPosterCard, {parseAspectRatio} from './MediaPosterCard';
 import {useM3Colors} from '../theme/M3PaletteContext';
+import {isTV} from '../lib/tv/constants';
+import {TVFocusable, TVFocusGuide} from './tv';
+import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 
 import AppText from './ui/Text';
 
@@ -32,6 +35,7 @@ const Slider = ({
 }): React.ReactElement => {
   const provider = useContentStore(state => state.provider);
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
   const navigation =
     useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
   const [isSelected, setSelected] = React.useState('');
@@ -40,10 +44,10 @@ const Slider = ({
     navigation.navigate('ScrollList', {
       title: title,
       filter: filter,
-      providerValue: providerValue,
+      providerValue: providerValue || posts[0]?.provider || provider?.value,
       isSearch: isSearch,
     });
-  }, [navigation, title, filter, providerValue, isSearch]);
+  }, [navigation, title, filter, providerValue, posts, provider?.value, isSearch]);
 
   const handleItemPress = useCallback(
     (item: Post) => {
@@ -80,7 +84,7 @@ const Slider = ({
   const keyExtractor = useCallback((item: Post) => item.link, []);
 
   return (
-    <Pressable onPress={() => setSelected('')} style={{gap: 14, marginTop: 28}}>
+    <TVFocusGuide autoFocus={false} style={{gap: 14, marginTop: 28, overflow: 'visible'}}>
       <View
         style={{
           alignItems: 'center',
@@ -100,43 +104,43 @@ const Slider = ({
           {title}
         </AppText>
         {filter !== 'recent' && (
-          <Pressable
+          <TVFocusable
             accessibilityRole="button"
+            accessibilityLabel={`See all ${title}`}
             onPress={handleMorePress}
-            style={({pressed}) => ({
+            borderRadius={18}
+            focusScale={1.1}
+            focusBorderColor={focusBorderColor}
+            style={{
               alignItems: 'center',
-              backgroundColor: pressed
-                ? colors.surfaceContainerHighest
-                : colors.surfaceContainerHigh,
+              backgroundColor: colors.surfaceContainerHigh,
               borderRadius: 18,
               flexShrink: 0,
               justifyContent: 'center',
               minHeight: 36,
-              width: 92,
-            })}>
+              paddingHorizontal: 12,
+            }}>
             <View
               style={{
                 alignItems: 'center',
                 flexDirection: 'row',
                 flexWrap: 'nowrap',
-                height: 36,
+                height: 24,
                 justifyContent: 'center',
-                width: 72,
               }}>
               <AppText
                 role="labelLargeEmphasized"
                 numberOfLines={1}
-                style={{color: colors.primary, width: 50}}>
+                style={{color: colors.primary, marginRight: 4}}>
                 See all
               </AppText>
               <MaterialCommunityIcons
                 name="chevron-right"
                 color={colors.primary}
                 size={18}
-                style={{height: 18, width: 18}}
               />
             </View>
-          </Pressable>
+          </TVFocusable>
         )}
       </View>
       {isLoading ? (
@@ -157,17 +161,18 @@ const Slider = ({
           data={posts}
           extraData={isSelected}
           horizontal
+          style={{overflow: 'visible'}}
           contentContainerStyle={{
-            paddingBottom: 4,
+            paddingVertical: 12,
             paddingHorizontal: 20,
-            alignItems: 'flex-end',
+            overflow: 'visible',
           }}
           ItemSeparatorComponent={() => <View style={{width: 14}} />}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          initialNumToRender={6}
-          maxToRenderPerBatch={6}
-          windowSize={5}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
           removeClippedSubviews={false}
           ListFooterComponent={
             !isLoading && error ? (
@@ -186,11 +191,59 @@ const Slider = ({
                   No content found
                 </AppText>
               </View>
+            ) : isTV && filter !== 'recent' && posts.length > 0 ? (
+              <View
+                style={{
+                  marginLeft: 14,
+                  marginRight: 20,
+                  justifyContent: 'center',
+                  paddingVertical: 6,
+                }}>
+                <TVFocusable
+                  accessibilityRole="button"
+                  accessibilityLabel={`See all ${title}`}
+                  onPress={handleMorePress}
+                  focusScale={1.05}
+                  focusBorderColor={focusBorderColor}
+                  borderRadius={18}
+                  style={{
+                    width: 124,
+                    height: 186,
+                    borderRadius: 18,
+                    backgroundColor: colors.surfaceContainerHigh,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 12,
+                  }}>
+                  <View
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 24,
+                      backgroundColor: colors.surfaceContainerHighest,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 10,
+                    }}>
+                    <MaterialCommunityIcons
+                      name="arrow-right"
+                      color={colors.primary}
+                      size={26}
+                    />
+                  </View>
+                  <AppText
+                    role="labelLargeEmphasized"
+                    numberOfLines={2}
+                    style={{color: colors.primary, textAlign: 'center'}}>
+                    See all
+                  </AppText>
+                </TVFocusable>
+              </View>
             ) : null
           }
         />
       )}
-    </Pressable>
+    </TVFocusGuide>
   );
 };
 

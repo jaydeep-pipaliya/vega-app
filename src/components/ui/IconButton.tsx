@@ -1,7 +1,9 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import React from 'react';
-import {ColorValue, Pressable} from 'react-native';
+import React, {useState, useRef, useEffect} from 'react';
+import {ColorValue, Pressable, View, findNodeHandle} from 'react-native';
 import {useM3Colors} from '../../theme/M3PaletteContext';
+import {isTV, useTVRemote} from '../../lib/tv';
+import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 
 interface IconButtonProps {
   icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -16,6 +18,11 @@ interface IconButtonProps {
   disabled?: boolean | null;
   onPress?: () => void;
   testID?: string;
+  nextFocusUp?: number | null;
+  nextFocusDown?: number | null;
+  nextFocusLeft?: number | null;
+  nextFocusRight?: number | null;
+  onNodeHandle?: (handle: number | null) => void;
 }
 
 const IconButton = ({
@@ -31,24 +38,75 @@ const IconButton = ({
   disabled,
   onPress,
   testID,
+  nextFocusUp,
+  nextFocusDown,
+  nextFocusLeft,
+  nextFocusRight,
+  onNodeHandle,
 }: IconButtonProps) => {
   const colors = useM3Colors();
+  const focusBorderColor = useTVFocusBorderColor();
+  const [isFocused, setIsFocused] = useState(false);
+  const buttonRef = useRef<View>(null);
+
+  useEffect(() => {
+    if (isTV && buttonRef.current && onNodeHandle) {
+      const handle = findNodeHandle(buttonRef.current);
+      onNodeHandle(handle);
+    }
+  }, [onNodeHandle]);
   const hasContainer = selected || filled;
   const resolvedContentColor =
     contentColor || (selected ? colors.onSecondaryContainer : colors.primary);
   const resolvedButtonWidth = buttonWidth || buttonSize;
   const touchWidth = Math.max(resolvedButtonWidth, 48);
   const touchHeight = Math.max(buttonSize, 48);
+  const lastPressTime = React.useRef<number>(0);
+  const handlePress = React.useCallback(() => {
+    if (disabled || !onPress) return;
+    if (!isTV) {
+      onPress();
+      return;
+    }
+    const now = Date.now();
+    if (now - lastPressTime.current < 300) return;
+    lastPressTime.current = now;
+    onPress();
+  }, [disabled, onPress]);
+
+  useTVRemote(
+    evt => {
+      if (
+        isFocused &&
+        onPress &&
+        !disabled &&
+        (evt.eventType === 'select' || evt.eventType === 'playPause') &&
+        (evt.eventKeyAction === undefined || evt.eventKeyAction === 1)
+      ) {
+        handlePress();
+      }
+    },
+    isTV && isFocused && Boolean(onPress),
+  );
 
   return (
     <Pressable
+      ref={buttonRef as any}
       testID={testID}
       accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{disabled: Boolean(disabled), selected}}
       disabled={Boolean(disabled)}
+      focusable={isTV ? !disabled : undefined}
+      isTVSelectable={isTV ? !disabled : undefined}
+      nextFocusUp={isTV ? nextFocusUp ?? undefined : undefined}
+      nextFocusDown={isTV ? nextFocusDown ?? undefined : undefined}
+      nextFocusLeft={isTV ? nextFocusLeft ?? undefined : undefined}
+      nextFocusRight={isTV ? nextFocusRight ?? undefined : undefined}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
       hitSlop={8}
-      onPress={onPress}
+      onPress={handlePress}
       pressRetentionOffset={24}
       android_ripple={{
         borderless: !buttonWidth,
@@ -59,13 +117,18 @@ const IconButton = ({
         alignItems: 'center',
         backgroundColor: hasContainer
           ? containerColor || colors.secondaryContainer
-          : pressed
-            ? colors.surfaceContainerHigh
-            : 'transparent',
+          : isTV && isFocused
+            ? colors.surfaceContainerHighest
+            : pressed
+              ? colors.surfaceContainerHigh
+              : 'transparent',
+        borderColor: isTV && isFocused ? focusBorderColor : 'transparent',
+        borderWidth: isTV && isFocused ? 2 : 0,
         borderRadius: buttonWidth ? buttonSize / 2.8 : touchHeight / 2,
         height: touchHeight,
         justifyContent: 'center',
         opacity: disabled ? 0.38 : pressed ? 0.8 : 1,
+        ...(isTV ? {transform: [{scale: isFocused ? 1.15 : pressed ? 0.9 : 1}]} : {}),
         width: touchWidth,
       })}>
       <MaterialCommunityIcons

@@ -451,6 +451,16 @@ export class ExtensionManager {
     try {
       this.migrateLegacyCustomProviderSource();
 
+      if (extensionStorage.getProviderSources().length === 0) {
+        try {
+          const defaultSource = createProviderSource('Zenda-Cross');
+          extensionStorage.addProviderSources(defaultSource.author, defaultSource.url);
+          extensionStorage.setDefaultProviderSource(defaultSource.author);
+        } catch (e) {
+          console.warn('Failed to seed default provider source:', e);
+        }
+      }
+
       // Load providers from cache
       const source = this.getActiveSource();
       const installed = extensionStorage.getInstalledProviders();

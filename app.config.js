@@ -19,6 +19,7 @@ const proxyApiUrl =
 
 module.exports = () => {
   const IS_PLAYSTORE = process.env.APP_VARIANT === 'playstore';
+  const IS_TV = process.env.EXPO_TV === '1' || process.env.APP_VARIANT === 'tv';
   const HAS_FIREBASE =
     !IS_PLAYSTORE && (hasAndroidGoogleServices || hasIosGooglePlist);
   const PACKAGE_NAME = IS_PLAYSTORE ? 'vega.app' : 'com.vega';
@@ -106,6 +107,17 @@ module.exports = () => {
     ],
     'expo-font',
     'expo-status-bar',
+    ...(IS_TV
+      ? [
+          [
+            '@react-native-tvos/config-tv',
+            {
+              isTV: true,
+              androidTVBanner: './assets/adaptive_icon.png',
+            },
+          ],
+        ]
+      : []),
   ];
   return {
     expo: {
@@ -117,7 +129,7 @@ module.exports = () => {
       autolinking: { exclude: ['expo-splash-screen'] },
       plugins,
       slug: 'vega',
-      version: '4.0.6',
+      version: '4.2.0',
       userInterfaceStyle: 'dark',
       experiments: {
         reactCompiler: true,
@@ -128,7 +140,7 @@ module.exports = () => {
           : {}),
         minSdkVersion: 28,
         package: PACKAGE_NAME,
-        versionCode: 192,
+        versionCode: 193,
         permissions: [
           'FOREGROUND_SERVICE',
           'FOREGROUND_SERVICE_DATA_SYNC',
@@ -174,6 +186,7 @@ module.exports = () => {
         },
         hasFirebase: HAS_FIREBASE,
         isPlayStore: IS_PLAYSTORE,
+        isTV: IS_TV,
         tmdbApiKey,
         proxyApiUrl,
       },

@@ -52,7 +52,10 @@ const createLauncherAlias = (packageName, variant) => ({
   'intent-filter': [
     {
       action: [{$: {'android:name': 'android.intent.action.MAIN'}}],
-      category: [{$: {'android:name': 'android.intent.category.LAUNCHER'}}],
+      category: [
+        {$: {'android:name': 'android.intent.category.LAUNCHER'}},
+        {$: {'android:name': 'android.intent.category.LEANBACK_LAUNCHER'}},
+      ],
     },
   ],
 });
