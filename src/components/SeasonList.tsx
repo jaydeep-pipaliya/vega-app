@@ -334,7 +334,7 @@ const ServerRowItem = ({
   );
 };
 
-const SeasonList: React.FC<SeasonListProps> = ({
+const SeasonListContent: React.FC<SeasonListProps> = ({
   LinkList,
   poster,
   type,
@@ -377,15 +377,6 @@ const SeasonList: React.FC<SeasonListProps> = ({
     restorePlayerFocusRef.current = true;
   }, []);
   const episodeSortOrderKey = `episodeSortOrder:${providerValue}:${routeParams.link}`;
-
-  // Early return if no LinkList provided
-  if (!LinkList || LinkList.length === 0) {
-    return (
-      <View className="p-4">
-        <Text className="text-white text-center">No Streams Available</Text>
-      </View>
-    );
-  }
 
   // Memoized initial active season
   const [activeSeason, setActiveSeason] = useState<Link>(() => {
@@ -1494,6 +1485,19 @@ const SeasonList: React.FC<SeasonListProps> = ({
       </MaterialDialogSurface>
     </View>
   );
+};
+
+// The empty state lives here so SeasonListContent always runs the same hooks
+// when LinkList goes from empty to loaded after a refresh.
+const SeasonList: React.FC<SeasonListProps> = props => {
+  if (!props.LinkList || props.LinkList.length === 0) {
+    return (
+      <View className="p-4">
+        <Text className="text-white text-center">No Streams Available</Text>
+      </View>
+    );
+  }
+  return <SeasonListContent {...props} />;
 };
 
 export default SeasonList;
