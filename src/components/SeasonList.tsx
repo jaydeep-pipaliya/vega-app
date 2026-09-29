@@ -58,6 +58,10 @@ import {setSyncedEpisodeProgress} from '../lib/sync/syncService';
 import {TVFocusable, TVFocusGuide} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 import SeasonSearchSortBar from './season/SeasonSearchSortBar';
+import ResumeEpisodeButton, {
+  findResumeEpisodeIndex,
+} from './season/ResumeEpisodeButton';
+import useContinueWatchingStore from '../lib/zustand/continueWatchingStore';
 
 const CONTROL_TEXT = '#F5F0EF';
 const CONTROL_TEXT_MUTED = '#D4CBC9';
@@ -749,6 +753,15 @@ const SeasonList: React.FC<SeasonListProps> = ({
     ],
   );
 
+  const continueWatchingItem = useContinueWatchingStore(state =>
+    state.items.find(item => item.id === routeParams.link),
+  );
+  const resumeIndex = useMemo(
+    () =>
+      findResumeEpisodeIndex(filteredAndSortedEpisodes, continueWatchingItem),
+    [continueWatchingItem, filteredAndSortedEpisodes],
+  );
+
   // Memoized long press handler
   const onLongPressHandler = useCallback(
     (active: boolean, link: string, streamType?: string) => {
@@ -1211,6 +1224,25 @@ const SeasonList: React.FC<SeasonListProps> = ({
           />
         )}
       </TVFocusGuide>
+
+      {continueWatchingItem && resumeIndex >= 0 && (
+        <ResumeEpisodeButton
+          title={filteredAndSortedEpisodes[resumeIndex].title}
+          position={continueWatchingItem.position}
+          duration={continueWatchingItem.duration}
+          accentColor={primary}
+          focusBorderColor={focusBorderColor}
+          onPress={() =>
+            playHandler({
+              linkIndex: resumeIndex,
+              type,
+              primaryTitle: metaTitle,
+              seasonTitle: activeSeason?.title || '',
+              episodeData: filteredAndSortedEpisodes,
+            })
+          }
+        />
+      )}
 
       {/* Episode/Direct Links List */}
       <View className="w-full mt-3">
