@@ -26,7 +26,7 @@ if (project.android) {
               System.getenv("EXPO_TV") == "1" ||
               System.getenv("APP_VARIANT") == "tv" ||
               ${isTvConfig})
-  def baseAppName = isTV ? "vega-tv" : "vega-mobile"
+  def baseAppName = isTV ? "vega-tv" : "vega-mobile-universal"
   project.ext { appName = baseAppName }
 
   project.android.applicationVariants.all { variant ->
@@ -34,7 +34,6 @@ if (project.android) {
       def version = variant.versionName
       def newName = output.outputFile.name
       newName = newName.replace("app-", "\${project.ext.appName}-")
-      newName = newName.replace("-universal", "")
       newName = newName.replace("-release", "-v" + version)
       output.outputFileName = newName
     }

@@ -42,10 +42,26 @@
       "android": {
         "buildType": "app-bundle"
       }
+    },
+    "production_tv": {
+      "env": {
+        "APP_VARIANT": "playstore",
+        "EXPO_TV": "1"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {
     "production": {
+      "android": {
+        "serviceAccountKeyPath": "./vega-eas.json",
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    },
+    "production_tv": {
       "android": {
         "serviceAccountKeyPath": "./vega-eas.json",
         "track": "internal",

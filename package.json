@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "start": "expo start",
     "build:playstore": "eas build --platform android --profile production --auto-submit",
+    "build:playstore:tv": "eas build --platform android --profile production_tv --auto-submit",
     "build:sandbox": "node scripts/build-sandbox-runtime.mjs",
     "test": "jest",
     "pretest": "npm run build:sandbox",
