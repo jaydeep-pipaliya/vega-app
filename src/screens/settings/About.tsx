@@ -128,7 +128,13 @@ export const checkForUpdate = async (
             label: 'Update',
             variant: 'primary',
             onPress: () => {
+              const targetKeyword = isTV ? 'tv' : 'mobile';
               const apkAsset =
+                data?.assets?.find(
+                  (asset: any) =>
+                    asset.name?.endsWith('.apk') &&
+                    asset.name?.toLowerCase().includes(targetKeyword),
+                ) ||
                 data?.assets?.find(
                   (asset: any) =>
                     asset.name?.endsWith('.apk') &&

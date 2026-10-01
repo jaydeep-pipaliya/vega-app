@@ -1,3 +1,4 @@
+import type {VideoAnimations} from '../../types';
 import React, {
   useCallback,
   useEffect,
@@ -70,6 +71,7 @@ interface SeekButtonProps {
    * while a gesture seek is being accumulated.
    */
   visible?: boolean;
+  controlOpacityStyle?: VideoAnimations['controlsOpacity'];
 }
 
 export const SeekButton = ({
@@ -81,6 +83,7 @@ export const SeekButton = ({
   size = 54,
   skipTime = 0,
   visible = true,
+  controlOpacityStyle,
 }: SeekButtonProps) => {
   const isForward = direction === 'forward';
   const prevSkipRef = useRef(0);
@@ -296,7 +299,7 @@ export const SeekButton = ({
     : `${seekSeconds}`;
 
   return (
-    <Animated.View style={wrapperAnimatedStyle}>
+    <Animated.View style={[wrapperAnimatedStyle, displaySkip === 0 && activeSkip === 0 ? controlOpacityStyle : undefined]}>
       <Control
         disabled={disabled}
         callback={handlePress}
@@ -328,6 +331,7 @@ interface SeekControlsProps {
   onPressForward: () => void;
   resetControlTimeout?: () => void;
   showControls: boolean;
+  controlOpacityStyle?: VideoAnimations['controlsOpacity'];
   skipFeedbackLeft?: number;
   skipFeedbackRight?: number;
   size?: number;
@@ -344,6 +348,7 @@ export const SeekControls = ({
   onPressForward,
   resetControlTimeout,
   showControls,
+  controlOpacityStyle,
   skipFeedbackLeft = 0,
   skipFeedbackRight = 0,
   size = 54,
@@ -357,6 +362,7 @@ export const SeekControls = ({
       direction="backward"
       seekSeconds={seekSeconds}
       size={size}
+      controlOpacityStyle={controlOpacityStyle}
       disabled={!showControls}
       visible={showControls || skipFeedbackLeft > 0}
       skipTime={skipFeedbackLeft}
@@ -368,6 +374,7 @@ export const SeekControls = ({
       direction="forward"
       seekSeconds={seekSeconds}
       size={size}
+      controlOpacityStyle={controlOpacityStyle}
       disabled={!showControls}
       visible={showControls || skipFeedbackRight > 0}
       skipTime={skipFeedbackRight}

@@ -12,6 +12,7 @@ import {RemoteControls} from './RemoteControls';
 import {RemoteActionBar} from './RemoteActionBar';
 import {RemoteSettingsSheets, RemoteSheetType} from './RemoteSettingsSheets';
 import {DevicePickerModal} from './DevicePickerModal';
+import {useRemoteStore} from '../../lib/remote/remoteStore';
 import {
   RemoteAudioTrack,
   RemoteQuality,
@@ -66,7 +67,10 @@ export const RemotePlayerScreen: React.FC<RemotePlayerScreenProps> = ({
 }) => {
   const colors = useDetailPalette(backdrop || poster);
   const [activeSheet, setActiveSheet] = useState<RemoteSheetType | null>(null);
-  const [devicePickerVisible, setDevicePickerVisible] = useState(false);
+  // Open the picker on arrival when nothing is connected yet.
+  const [devicePickerVisible, setDevicePickerVisible] = useState(
+    () => !useRemoteStore.getState().connectedDevice,
+  );
   const closeDevicePicker = useCallback(() => setDevicePickerVisible(false), []);
 
   if (isTV) return null;

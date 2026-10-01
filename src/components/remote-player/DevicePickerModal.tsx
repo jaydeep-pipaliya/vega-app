@@ -10,6 +10,7 @@ import {RemoteDevice} from '../../lib/remote/types';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {isTV} from '../../lib/tv';
 import Button from '../ui/Button';
+import IconButton from '../ui/IconButton';
 import AppText from '../ui/Text';
 import {
   RemoteSheet,
@@ -44,14 +45,18 @@ export const DevicePickerModal: React.FC<DevicePickerModalProps> = ({
   const [addingManual, setAddingManual] = useState(false);
   const [manualError, setManualError] = useState<string | undefined>();
 
-  // Scan for both kinds of device only while the sheet is open.
-  useEffect(() => {
-    if (!visible || isTV) return;
-    setConnectError(undefined);
+  const startScan = () => {
     dlnaService.startDiscovery();
     remoteDeliveryService.startCastDiscovery().catch(error =>
       console.warn('Cast discovery failed to start:', error),
     );
+  };
+
+  // Scan for both kinds of device only while the sheet is open.
+  useEffect(() => {
+    if (!visible || isTV) return;
+    setConnectError(undefined);
+    startScan();
     return () => {
       dlnaService.stopDiscovery();
       remoteDeliveryService.stopCastDiscovery().catch(() => {});
@@ -127,7 +132,14 @@ export const DevicePickerModal: React.FC<DevicePickerModalProps> = ({
       headerRight={
         isSearchingDlna ? (
           <ActivityIndicator size="small" color={colors.primary} />
-        ) : undefined
+        ) : (
+          <IconButton
+            icon="refresh"
+            label="Search again"
+            contentColor={colors.onSurface}
+            onPress={startScan}
+          />
+        )
       }>
       {!!connectedDevice && (
         <View style={{alignItems: 'flex-start', paddingBottom: 8, paddingHorizontal: 16}}>

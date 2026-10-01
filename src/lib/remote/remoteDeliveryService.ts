@@ -290,7 +290,7 @@ class RemoteDeliveryService {
     isLocal?: boolean;
     headers?: Record<string, string>;
     audioTrackIndex?: number;
-    mode: 'ffmpeg' | 'fmp4' | 'progressive' | 'proxy';
+    mode: 'ffmpeg' | 'hls' | 'progressive' | 'proxy';
     mimeType?: string;
     startPositionSeconds?: number;
     audioCodec?: string;

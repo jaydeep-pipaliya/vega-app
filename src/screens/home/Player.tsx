@@ -1,3 +1,4 @@
+import {usePlayerControlAnimations} from '../../components/media-console/hooks/usePlayerControlAnimations';
 import {isRemotePlaybackCanceled} from '../../lib/remote/remotePlaybackErrors';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
@@ -68,7 +69,7 @@ import { useTVFocusBorderColor } from '../../lib/tv/useTVFocusBorderColor';
 import useContinueWatchingStore from '../../lib/zustand/continueWatchingStore';
 import useLocalVideoStore from '../../lib/zustand/localVideoStore';
 import useDownloadsStore from '../../lib/zustand/downloadsStore';
-import { DevicePickerModal, RemotePlayerScreen } from '../../components/remote-player';
+import { RemotePlayerScreen } from '../../components/remote-player';
 import { useRemoteStore } from '../../lib/remote/remoteStore';
 import { remotePlaybackManager } from '../../lib/remote/remotePlaybackManager';
 import { remoteDeliveryService } from '../../lib/remote/remoteDeliveryService';
@@ -466,8 +467,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
   // Player ref
   const playerRef = useRef<VideoRef>(null as unknown as VideoRef);
   const remoteMediaClient = useRemoteMediaClient({ignoreSessionUpdatesInBackground: true});
-  const [castPickerVisible, setCastPickerVisible] = useState(false);
-  const closeCastPicker = useCallback(() => setCastPickerVisible(false), []);
+  // The cast button opens the remote screen before any device is connected.
+  const [castRequested, setCastRequested] = useState(false);
   const castDevice = useCastDevice({ignoreSessionUpdatesInBackground: true});
   const hasSetInitialAudioRef = useRef(false);
   const hasSetInitialTextRef = useRef(false);
@@ -512,8 +513,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
   const lockButtonOpacity = useSharedValue(0);
   const textVisibility = useSharedValue(0);
   const speedIconOpacity = useSharedValue(1);
-  const controlsTranslateY = useSharedValue(showControls ? 0 : 150);
-  const controlsOpacity = useSharedValue(showControls ? 1 : 0);
+  const {progress: controlsProgress, bottomStyle: controlsStyle, opacityStyle: controlsOpacityStyle, animations: sharedControlAnimations} = usePlayerControlAnimations(showControls, 350);
+  const useSharedControlAnimations = useCallback(() => sharedControlAnimations, [sharedControlAnimations]);
   const toastOpacity = useSharedValue(0);
   const settingsTranslateY = useSharedValue(10000);
   const settingsOpacity = useSharedValue(0);
@@ -540,17 +541,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
   }));
 
   const lockButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: lockButtonTranslateY.value }],
-    opacity: lockButtonOpacity.value,
-  }));
-
-  const controlsStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: controlsTranslateY.value }],
-    opacity: controlsOpacity.value,
-  }));
-
-  const controlsOpacityStyle = useAnimatedStyle(() => ({
-    opacity: controlsOpacity.value,
+    transform: [{ translateY: isPlayerLocked ? lockButtonTranslateY.value : -150 * (1 - controlsProgress.value) }],
+    opacity: isPlayerLocked ? lockButtonOpacity.value : controlsProgress.value,
   }));
 
   const toastStyle = useAnimatedStyle(() => ({
@@ -1030,15 +1022,13 @@ const Player = ({ route }: Props): React.JSX.Element => {
     !Platform.isTV &&
     (Boolean(remoteMediaClient) ||
       Boolean(connectedRemoteDevice) ||
+      castRequested ||
       Boolean((route.params as any)?.alwaysCast) ||
       settingsStorage.isAlwaysCastMode());
   const isCasting =
     !Platform.isTV && (Boolean(remoteMediaClient) || isRemoteActive);
   const isRemoteActiveRef = useRef(isRemoteActive);
   isRemoteActiveRef.current = isRemoteActive;
-  useEffect(() => {
-    if (isRemoteActive) closeCastPicker();
-  }, [isRemoteActive, closeCastPicker]);
 
   useEffect(() => {
     if (Platform.isTV) return;
@@ -2100,16 +2090,6 @@ const Player = ({ route }: Props): React.JSX.Element => {
   }, [isTextVisible]);
 
   useEffect(() => {
-    // Controls visibility
-    controlsTranslateY.value = withTiming(showControls ? 0 : 150, {
-      duration: 250,
-    });
-    controlsOpacity.value = withTiming(showControls ? 1 : 0, {
-      duration: 250,
-    });
-  }, [showControls]);
-
-  useEffect(() => {
     // Toast visibility
     toastOpacity.value = withTiming(showToast ? 1 : 0, { duration: 250 });
   }, [showToast]);
@@ -2340,7 +2320,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
       onVideoTracks: handleVideoTracks,
       selectedVideoTrack,
       style: { flex: 1, zIndex: 100 },
-      controlAnimationTiming: 250,
+      controlAnimationTiming: 350,
+      useAnimations: useSharedControlAnimations,
       controlTimeoutDelay: 10000,
       hideAllControlls: isTV || isPlayerLocked || showSettings || showEpisodeSidebar,
       onSeekSnap: handleSeekSnap,
@@ -2380,6 +2361,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       enableSwipeGesture,
       hideSeekButtons,
       showControls,
+      useSharedControlAnimations,
     ],
   );
 
@@ -2469,7 +2451,21 @@ const Player = ({ route }: Props): React.JSX.Element => {
           subtitle={activeEpisode?.title || route.params?.secondaryTitle}
           poster={route.params?.poster?.poster}
           backdrop={route.params?.poster?.background}
-          onBack={() => navigation.goBack()}
+          onBack={() => {
+            // Opened from the cast button with nothing connected: back returns to
+            // the local player instead of leaving.
+            if (
+              castRequested &&
+              !connectedRemoteDevice &&
+              !remoteMediaClient &&
+              !(route.params as any)?.alwaysCast &&
+              !settingsStorage.isAlwaysCastMode()
+            ) {
+              setCastRequested(false);
+              return;
+            }
+            navigation.goBack();
+          }}
           preparingText={
             streamLoading
               ? 'Finding servers…'
@@ -2713,7 +2709,10 @@ const Player = ({ route }: Props): React.JSX.Element => {
           )}
           {!isPlayerLocked && canCastStream && (
             <TouchableOpacity
-              onPress={() => setCastPickerVisible(true)}
+              onPress={() => {
+                flushProgress();
+                setCastRequested(true);
+              }}
               accessibilityRole="button"
               accessibilityLabel="Cast video"
               className="opacity-70 p-2 rounded-full">
@@ -2729,16 +2728,6 @@ const Player = ({ route }: Props): React.JSX.Element => {
       )}
 
       {/* Episode Sidebar Toggle Button (Center Right) */}
-      {!isTV && !isRemoteActive && (
-        <DevicePickerModal
-          visible={castPickerVisible}
-          onClose={closeCastPicker}
-          onStopCasting={() => {
-            closeCastPicker();
-            remotePlaybackManager.stop().catch(() => {});
-          }}
-        />
-      )}
       {!isCasting &&
         !streamLoading &&
         !isPlayerLocked &&
@@ -2963,15 +2952,15 @@ const Player = ({ route }: Props): React.JSX.Element => {
       {activeSkip &&
         !isCasting &&
         !streamLoading &&
-        !isPlayerLocked &&
-        showControls && (
+        !isPlayerLocked && (
           <Animated.View
-            style={{
+            pointerEvents={showControls ? 'auto' : 'none'}
+            style={[controlsOpacityStyle, {
               position: 'absolute',
               bottom: 95,
               right: 28,
               zIndex: 65,
-            }}>
+            }]}>
             <Pressable
               accessibilityRole="button"
               focusable={true}

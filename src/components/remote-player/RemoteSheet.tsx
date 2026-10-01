@@ -3,7 +3,7 @@ import BottomSheet, {
   BottomSheetBackdrop,
   BottomSheetScrollView,
 } from '@gorhom/bottom-sheet';
-import React, {ReactNode, useEffect, useRef} from 'react';
+import React, {ReactNode, useEffect, useRef, useState} from 'react';
 import {Image, Modal, Pressable, StyleSheet, View} from 'react-native';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import AppText from '../ui/Text';
@@ -90,6 +90,7 @@ interface RemoteSheetOptionProps {
   selected?: boolean;
   icon?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   thumbnail?: string;
+  thumbnailPlaceholder?: boolean;
   onPress: () => void;
 }
 
@@ -99,9 +100,12 @@ export const RemoteSheetOption: React.FC<RemoteSheetOptionProps> = ({
   selected = false,
   icon,
   thumbnail,
+  thumbnailPlaceholder = false,
   onPress,
 }) => {
   const colors = useM3Colors();
+  const [failedThumbnail, setFailedThumbnail] = useState<string>();
+  const hasThumbnail = Boolean(thumbnail?.trim() && thumbnail !== failedThumbnail);
   const contentColor = selected ? colors.onSecondaryContainer : colors.onSurface;
   const supportingColor = selected
     ? colors.onSecondaryContainer
@@ -125,9 +129,10 @@ export const RemoteSheetOption: React.FC<RemoteSheetOptionProps> = ({
         paddingHorizontal: 16,
         paddingVertical: 10,
       }}>
-      {thumbnail ? (
+      {hasThumbnail ? (
         <Image
           source={{uri: thumbnail}}
+          onError={() => setFailedThumbnail(thumbnail)}
           resizeMode="cover"
           style={{
             backgroundColor: colors.surfaceContainerHighest,
@@ -136,6 +141,10 @@ export const RemoteSheetOption: React.FC<RemoteSheetOptionProps> = ({
             width: 64,
           }}
         />
+      ) : thumbnailPlaceholder ? (
+        <View style={{backgroundColor: colors.surfaceContainerHighest, borderRadius: 8, height: 40, width: 64, alignItems: 'center', justifyContent: 'center'}}>
+          <MaterialCommunityIcons name={icon || 'play-circle'} size={28} color={supportingColor} />
+        </View>
       ) : icon ? (
         <MaterialCommunityIcons name={icon} size={22} color={supportingColor} />
       ) : null}

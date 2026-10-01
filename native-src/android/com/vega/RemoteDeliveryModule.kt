@@ -88,12 +88,12 @@ class RemoteDeliveryModule(
         val isLocal: Boolean,
         val headers: Map<String, String>,
         val audioTrackIndex: Int,
-        val mode: String, // "ffmpeg", "fmp4", "progressive" or "proxy"
+        val mode: String, // "ffmpeg", "hls", "progressive" or "proxy"
         val mimeType: String,
         val timelineOffsetUs: Long = 0L,
         @Volatile var activeStreamOffsetUs: Long? = null,
-        val packager: OnDemandMp4Packager? = null,
-        val ffmpegPackager: FFmpegMp4Packager? = null
+        val ffmpegPackager: FFmpegMp4Packager? = null,
+        val hlsPackager: HlsSegmentPackager? = null
     )
 
     private val sessions = ConcurrentHashMap<String, MediaSession>()
@@ -247,8 +247,8 @@ class RemoteDeliveryModule(
             server?.stop()
             server = null
             sessions.values.forEach {
-                it.packager?.clear()
                 it.ffmpegPackager?.close()
+                it.hlsPackager?.close()
             }
             sessions.clear()
             RemoteDeliveryService.releaseDelivery(this)
@@ -496,22 +496,6 @@ class RemoteDeliveryModule(
             }
             Log.i(TAG, "Registered session $sessionId with headers: ${headers.keys}")
 
-            fun packagerAt(startSeconds: Double) =
-                OnDemandMp4Packager(reactContext, sourceUrl, isLocal, headers, audioTrackIndex, startSeconds)
-
-            val packager: OnDemandMp4Packager? = if (mode == "fmp4") {
-                // A byte-seekable file covers the whole film from 0; the receiver's
-                // startTime resumes it and seeks are ordinary range requests.
-                val whole = packagerAt(0.0)
-                if (whole.supportsByteRanges || startPositionSeconds <= 0.0) {
-                    whole
-                } else {
-                    // Not seekable: start the one-way stream at the requested position.
-                    whole.clear()
-                    packagerAt(startPositionSeconds)
-                }
-            } else null
-
             val ffmpegStart = if (mode == "ffmpeg") {
                 snapToKeyframe(sourceUrl, isLocal, headers, startPositionSeconds)
             } else startPositionSeconds
@@ -544,11 +528,22 @@ class RemoteDeliveryModule(
                 )
             } else null
 
-            val timelineOffsetUs = if (mode == "ffmpeg") {
-                (ffmpegStart * 1_000_000.0).toLong()
-            } else {
-                packager?.timelineOffsetUs ?: 0L
-            }
+            // HLS output covers the whole film on the source clock, so the receiver
+            // seeks by itself. It needs a keyframe index and a duration; without
+            // them registration fails and JS falls back to the MP4 route.
+            val hlsPackager: HlsSegmentPackager? = if (mode == "hls") {
+                if (isRemoteHls) throw IllegalStateException("HLS output is not used for HLS sources")
+                val keyframes = keyframeCache[sourceUrl] ?: try {
+                    MkvCueIndex.videoKeyframesUs(reactContext, sourceUrl, isLocal, headers)
+                        ?.also { keyframeCache[sourceUrl] = it }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Keyframe index unavailable for HLS output: ${e.message}")
+                    null
+                } ?: throw IllegalStateException("No keyframe index for HLS output")
+                HlsSegmentPackager(reactContext, sourceUrl, isLocal, headers, audioTrackIndex, resolvedDuration, keyframes)
+            } else null
+
+            val timelineOffsetUs = if (mode == "ffmpeg") (ffmpegStart * 1_000_000.0).toLong() else 0L
 
             val session = MediaSession(
                 sessionId = sessionId,
@@ -558,23 +553,24 @@ class RemoteDeliveryModule(
                 audioTrackIndex = audioTrackIndex,
                 mode = mode,
                 mimeType = when {
-                    mode == "ffmpeg" || mode == "fmp4" -> "video/mp4"
+                    mode == "ffmpeg" -> "video/mp4"
+                    mode == "hls" -> "application/x-mpegurl"
                     mimeType.isNotBlank() -> mimeType
                     else -> "video/mp4"
                 },
                 timelineOffsetUs = timelineOffsetUs,
-                packager = packager,
-                ffmpegPackager = ffmpegPackager
+                ffmpegPackager = ffmpegPackager,
+                hlsPackager = hlsPackager
             )
             val lanIp = getLocalIpAddress()
             val port = server?.listeningPort ?: 0
             if (port <= 0 || lanIp == "127.0.0.1" || server == null) {
-                packager?.clear()
                 ffmpegPackager?.close()
+                hlsPackager?.close()
                 throw IllegalStateException("Cast delivery server stopped while preparing media")
             }
             sessions[sessionId] = session
-            if (mode == "ffmpeg" || mode == "fmp4") prefetchSubtitles(sourceUrl, isLocal, headers)
+            if (mode == "ffmpeg" || mode == "hls") prefetchSubtitles(sourceUrl, isLocal, headers)
             sessionErrors.remove(sessionId)
 
             val streamUrl = when (mode) {
@@ -583,15 +579,15 @@ class RemoteDeliveryModule(
                 } else {
                     "http://$lanIp:$port/ffmpeg/$sessionId/stream.mp4"
                 }
-                "fmp4" -> "http://$lanIp:$port/fmp4/$sessionId/stream.mp4"
+                "hls" -> "http://$lanIp:$port/hlsout/$sessionId/index.m3u8"
                 "progressive" -> "http://$lanIp:$port/dlna/$sessionId/stream.mp4"
                 else -> "http://$lanIp:$port/proxy/$sessionId/stream"
             }
             // Full URL for manual testing: adb logcat -s RemoteDeliveryModule
             Log.i(TAG, "Registered $mode delivery: $streamUrl")
 
-            val timelineOffset = if (mode == "ffmpeg") ffmpegStart else (packager?.timelineOffsetUs ?: 0L) / 1_000_000.0
-            val dur = if (mode == "ffmpeg" || isRemoteHls) (if (resolvedDuration > 0.0) resolvedDuration else 0.0) else (packager?.durationUs ?: 0L) / 1_000_000.0
+            val timelineOffset = if (mode == "ffmpeg") ffmpegStart else 0.0
+            val dur = if (resolvedDuration > 0.0) resolvedDuration else 0.0
 
             val result = Arguments.createMap()
             result.putString("sessionId", sessionId)
@@ -600,7 +596,7 @@ class RemoteDeliveryModule(
             result.putString("mimeType", session.mimeType)
             result.putDouble("timelineOffsetSeconds", timelineOffset)
             result.putDouble("durationSeconds", dur)
-            result.putBoolean("byteRangeSeek", if (mode == "ffmpeg") false else packager?.supportsByteRanges == true)
+            result.putBoolean("byteRangeSeek", mode == "hls")
             reactContext.runOnUiQueueThread { promise.resolve(result) }
         } catch (e: Exception) {
             reactContext.runOnUiQueueThread { promise.reject("SESSION_REG_ERROR", e.message, e) }
@@ -654,8 +650,8 @@ class RemoteDeliveryModule(
                 Thread.sleep(8_000)
             } catch (_: Exception) {}
             val s = sessions.remove(sessionId)
-            s?.packager?.clear()
             s?.ffmpegPackager?.close()
+            s?.hlsPackager?.close()
             sessionErrors.remove(sessionId)
         }.start()
         promise.resolve(true)
@@ -714,7 +710,7 @@ class RemoteDeliveryModule(
         return result
     }
 
-    private fun formatLanguageName(code: String, fallbackIdx: Int): String {
+    private fun formatLanguageName(code: String, fallbackIdx: Int, fallbackLabel: String = "Track"): String {
         return when (code.lowercase().trim()) {
             "hin", "hi" -> "Hindi"
             "eng", "en" -> "English"
@@ -738,7 +734,7 @@ class RemoteDeliveryModule(
             "guj", "gu" -> "Gujarati"
             "urd", "ur" -> "Urdu"
             "ara", "ar" -> "Arabic"
-            else -> if (code.isNotBlank() && code != "und") code.uppercase() else "Track $fallbackIdx"
+            else -> if (code.isNotBlank() && code != "und") code.uppercase() else "$fallbackLabel $fallbackIdx"
         }
     }
 
@@ -757,7 +753,8 @@ class RemoteDeliveryModule(
         var number: Int = 0,
         var type: Int = 0,
         var codec: String = "",
-        var language: String = "",
+        // Null when the track has no Language element; Matroska then means English.
+        var language: String? = null,
         var name: String = "",
         var width: Int = 0,
         var height: Int = 0,
@@ -920,7 +917,7 @@ class RemoteDeliveryModule(
                     aMap.putInt("index", trackIdx)
                     aMap.putString("id", "audio_${t.number.takeIf { it > 0 } ?: rawAudioCount}")
 
-                    val langCode = t.language.lowercase().trim()
+                    val langCode = (t.language ?: "").lowercase().trim()
                     aMap.putString("language", langCode.ifEmpty { "und" })
 
                     val codecName = when {
@@ -948,15 +945,17 @@ class RemoteDeliveryModule(
                 }
                 17 -> {
                     val sMap = Arguments.createMap()
+                    val language = t.language ?: "eng"
                     // Ordinal among subtitle tracks; the /subtitle endpoint resolves the same ordinal.
                     sMap.putInt("index", rawSubCount)
                     sMap.putString("id", "sub_${t.number.takeIf { it > 0 } ?: rawSubCount}")
 
-                    val langCode = t.language.lowercase().trim()
+                    val langCode = language.lowercase().trim()
                     sMap.putString("language", langCode.ifEmpty { "und" })
 
-                    val langDisplay = formatLanguageName(langCode, rawSubCount + 1)
-                    sMap.putString("title", "$langDisplay (Embedded)")
+                    val hasLanguage = langCode.isNotEmpty() && langCode != "und"
+                    val langDisplay = formatLanguageName(langCode, rawSubCount + 1, "Subtitle")
+                    sMap.putString("title", if (hasLanguage) "$langDisplay (Embedded)" else langDisplay)
                     sMap.putBoolean("isEmbedded", true)
                     subtitleTracks.pushMap(sMap)
                     rawSubCount++
@@ -1394,7 +1393,7 @@ class RemoteDeliveryModule(
                 when (endpoint) {
                     "proxy" -> handleProxy(mediaSession, rangeHeader, method, corsHeaders)
                     "dlna" -> handleDlnaProgressive(mediaSession, rangeHeader, method, corsHeaders)
-                    "fmp4" -> handleFragmentedMp4(mediaSession, rangeHeader, method, corsHeaders)
+                    "hlsout" -> handleHlsOutput(mediaSession, parts.getOrNull(2), method, corsHeaders)
                     "ffmpeg" -> handleFFmpegStream(mediaSession, session.parms, rangeHeader, session.headers, method, corsHeaders)
                     "subtitle" -> handleSubtitle(mediaSession, parts.getOrNull(2), session.parms, session.headers, corsHeaders)
                     "hls" -> handleHlsProxy(mediaSession, parts.getOrNull(2), rangeHeader, method, corsHeaders)
@@ -1402,8 +1401,7 @@ class RemoteDeliveryModule(
                     else -> addCors(newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Unknown endpoint"), corsHeaders)
                 }
             } catch (e: Exception) {
-                if (e is OnDemandMp4Packager.SupersededReaderException ||
-                    e is java.net.SocketException ||
+                if (e is java.net.SocketException ||
                     e is java.io.InterruptedIOException ||
                     e.message?.contains("Broken pipe") == true ||
                     e.message?.contains("Connection reset") == true ||
@@ -1597,65 +1595,33 @@ class RemoteDeliveryModule(
             }
         }
 
-        private fun handleFragmentedMp4(
+        /** VOD playlist and MPEG-TS segments of the HLS output. */
+        private fun handleHlsOutput(
             session: MediaSession,
-            rangeHeader: String?,
+            name: String?,
             method: Method,
             corsHeaders: Map<String, String>
         ): Response {
-            val packager = session.packager
-                ?: return addCors(newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Remux session unavailable"), corsHeaders)
-            if (packager.supportsByteRanges) {
-                return serveSeekableFragmentedMp4(packager, rangeHeader, method, corsHeaders)
+            val packager = session.hlsPackager
+                ?: return addCors(newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "HLS session unavailable"), corsHeaders)
+            if (name == null || name == "index.m3u8") {
+                val body = packager.playlist().toByteArray()
+                val stream = ByteArrayInputStream(if (method == Method.HEAD) ByteArray(0) else body)
+                return addCors(newFixedLengthResponse(Response.Status.OK, "application/x-mpegurl", stream, body.size.toLong()), corsHeaders).apply {
+                    addHeader("Cache-Control", "no-store")
+                }
             }
-            // Length unknown ahead of time: one-way chunked stream from the session start.
-            return addCors(newChunkedResponse(Response.Status.OK, "video/mp4", packager.sequentialStream()), corsHeaders).apply {
+            val index = Regex("^seg(\\d+)\\.ts$").find(name)?.groupValues?.get(1)?.toIntOrNull()
+                ?: return addCors(newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Unknown segment"), corsHeaders)
+            val segment = packager.segment(index)
+                ?: return addCors(newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "Segment not ready"), corsHeaders)
+            val body = if (method == Method.HEAD) {
+                segment.stream.close()
+                ByteArrayInputStream(ByteArray(0))
+            } else segment.stream
+            return addCors(newFixedLengthResponse(Response.Status.OK, "video/mp2t", body, segment.length), corsHeaders).apply {
                 addHeader("Cache-Control", "no-store")
-                addHeader("Accept-Ranges", "none")
             }
-        }
-
-        /** Byte-range MP4 over the packager's fixed layout; only requested segments are built. */
-        private fun serveSeekableFragmentedMp4(
-            packager: OnDemandMp4Packager,
-            rangeHeader: String?,
-            method: Method,
-            corsHeaders: Map<String, String>
-        ): Response {
-            val total = packager.progressiveLength
-            var start = 0L
-            var end = total - 1
-            val range = rangeHeader?.trim()?.removePrefix("bytes=")
-            if (!range.isNullOrBlank()) {
-                val parts = range.substringBefore(',').split("-", limit = 2)
-                val first = parts.getOrNull(0)?.trim().orEmpty()
-                val last = parts.getOrNull(1)?.trim().orEmpty()
-                if (first.isEmpty()) {
-                    // Suffix range: the last N bytes.
-                    val suffix = last.toLongOrNull() ?: 0L
-                    start = (total - suffix).coerceAtLeast(0L)
-                } else {
-                    start = first.toLongOrNull() ?: 0L
-                    if (last.isNotEmpty()) end = minOf(last.toLongOrNull() ?: end, total - 1)
-                }
-                if (start >= total || start > end) {
-                    return addCors(newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, MIME_PLAINTEXT, ""), corsHeaders).apply {
-                        addHeader("Content-Range", "bytes */$total")
-                    }
-                }
-            }
-            val partial = !range.isNullOrBlank()
-            val length = end - start + 1
-            val status = if (partial) Response.Status.PARTIAL_CONTENT else Response.Status.OK
-            // HEAD: report the real length without building any segment. NanoHTTPD writes
-            // Content-Length from this length and stops when the empty body ends.
-            val body = if (method == Method.HEAD) ByteArrayInputStream(ByteArray(0))
-                else packager.progressiveStream(start, end)
-            val response = newFixedLengthResponse(status, "video/mp4", body, length)
-            response.addHeader("Accept-Ranges", "bytes")
-            if (partial) response.addHeader("Content-Range", "bytes $start-$end/$total")
-            response.addHeader("Cache-Control", "no-store")
-            return addCors(response, corsHeaders)
         }
 
         private fun handleProxy(

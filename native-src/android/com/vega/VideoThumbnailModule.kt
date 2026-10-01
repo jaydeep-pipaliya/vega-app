@@ -65,6 +65,7 @@ class VideoThumbnailModule(
         val quality = options.intOr("quality", 85).coerceIn(0, 100)
         val maxWidth = options.intOr("maxWidth", 0).coerceAtLeast(0)
         val maxHeight = options.intOr("maxHeight", 0).coerceAtLeast(0)
+        val cropBlackBars = options.booleanOr("cropBlackBars", false)
         val useCache = options.booleanOr("cache", true)
         val requestedTimestampMs = timestampMs.roundToLong()
 
@@ -84,6 +85,7 @@ class VideoThumbnailModule(
                     quality,
                     maxWidth,
                     maxHeight,
+                    cropBlackBars,
                 )
                 val outputFile = File(outputDirectory, "$cacheKey.jpg")
                 if (useCache && outputFile.isFile && outputFile.length() > 0) {
@@ -117,7 +119,9 @@ class VideoThumbnailModule(
                 }
                 frame = extractedFrame
 
-                val bitmapToWrite = scaleBitmap(extractedFrame, maxWidth, maxHeight)
+                val scaledFrame = scaleBitmap(extractedFrame, maxWidth, maxHeight)
+                val bitmapToWrite = if (cropBlackBars) trimLetterbox(scaledFrame) else scaledFrame
+                if (scaledFrame !== extractedFrame && scaledFrame !== bitmapToWrite) scaledFrame.recycle()
                 outputBitmap = bitmapToWrite
                 FileOutputStream(outputFile).use { output ->
                     if (!bitmapToWrite.compress(Bitmap.CompressFormat.JPEG, quality, output)) {
@@ -333,6 +337,27 @@ class VideoThumbnailModule(
         )
     }
 
+    private fun trimLetterbox(bitmap: Bitmap): Bitmap {
+        val limit = bitmap.height / 4
+        if (limit < 3 || bitmap.width < 32) return bitmap
+        fun isBlackRow(y: Int): Boolean {
+            var black = 0
+            for (sample in 0 until 32) {
+                val x = ((sample + 1) * bitmap.width / 33).coerceAtMost(bitmap.width - 1)
+                val pixel = bitmap.getPixel(x, y)
+                if (((pixel shr 16) and 255) <= 16 && ((pixel shr 8) and 255) <= 16 && (pixel and 255) <= 16) black++
+            }
+            return black >= 31
+        }
+        var top = 0
+        var bottom = 0
+        while (top < limit && isBlackRow(top)) top++
+        while (bottom < limit && isBlackRow(bitmap.height - 1 - bottom)) bottom++
+        // Only trim matched letterboxing; preserve uniformly dark frames.
+        if (top < 2 || bottom < 2 || top == limit || bottom == limit || kotlin.math.abs(top - bottom) > 3) return bitmap
+        return Bitmap.createBitmap(bitmap, 0, top, bitmap.width, bitmap.height - top - bottom)
+    }
+
     private fun createResult(
         file: File,
         width: Int,
@@ -355,9 +380,11 @@ class VideoThumbnailModule(
         quality: Int,
         maxWidth: Int,
         maxHeight: Int,
+        cropBlackBars: Boolean,
     ): String {
         val value = buildString {
             append("media3-frame-extractor-v1|")
+            append("crop-bars=").append(cropBlackBars).append('|')
             append(source)
             append('|').append(timestampMs)
             append('|').append(quality)

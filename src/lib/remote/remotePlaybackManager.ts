@@ -18,13 +18,16 @@ import {
 } from './types';
 import {isTV} from '../tv';
 import {getCookieHeader} from '../services/cookieManager';
+import {mainStorage} from '../storage/StorageService';
+
+const CAST_HLS_KEY = 'remote.castHlsOutput';
 
 interface AmbiguousSessionState {
   playUrl: string;
   mimeType?: string;
   timelineOffset: number;
   sourceDuration: number;
-  engine: 'ffmpeg' | 'fmp4' | null;
+  engine: 'ffmpeg' | 'hls' | null;
   byteRangeSeek: boolean;
   subtitleTrackId?: string | null;
   audioTrackId?: string;
@@ -73,10 +76,11 @@ class RemotePlaybackManager {
   private activeByteRangeSeek = false;
   // Set by stop(); receiver events that follow a deliberate stop are not errors.
   private ending = false;
-  // Remux engine to use when streams require on-demand remuxing ('ffmpeg' or fallback 'fmp4').
-  private remuxEngine: 'ffmpeg' | 'fmp4' = 'ffmpeg';
-  // Actual remux engine used by the active session ('ffmpeg' | 'fmp4' | null).
-  private activeRemuxEngine: 'ffmpeg' | 'fmp4' | null = null;
+  // Remux engine used by the active session. 'hls' is Cast only: the receiver
+  // gets a VOD playlist and seeks by itself.
+  private activeRemuxEngine: 'ffmpeg' | 'hls' | null = null;
+  // The active source is an HLS or DASH manifest, which never gets HLS output.
+  private activeIsManifest = false;
   // Inspected container format (e.g. 'matroska', 'mov,mp4,m4a,3gp,3g2,mj2')
   private activeContainer: string | undefined;
   // Last requested media, kept even when the load failed so it can be retried.
@@ -236,7 +240,7 @@ class RemotePlaybackManager {
     if (device?.type !== 'cast') return false;
     if (
       !this.activeRemux ||
-      (this.activeByteRangeSeek && this.activeRemuxEngine === 'fmp4')
+      (this.activeByteRangeSeek && this.activeRemuxEngine === 'hls')
     ) {
       return false;
     }
@@ -591,23 +595,16 @@ class RemotePlaybackManager {
       let timelineOffset = 0;
       let sourceDuration = 0;
       let byteRangeSeek = false;
-      let activeEngine: 'ffmpeg' | 'fmp4' | null = null;
+      let activeEngine: 'ffmpeg' | 'hls' | null = null;
       const mediaDuration = inspected.durationSeconds || payload.duration || 0;
       if (device.type === 'cast') {
-        let usedEngine: 'fmp4' | 'ffmpeg' | null = null;
+        let usedEngine: 'hls' | 'ffmpeg' | null = null;
         if (needsRemux || isLocalFile || hasCustomHeaders) {
-          const isAacAudio =
-            selectedAudio?.codec?.toLowerCase().includes('aac') ||
-            selectedAudio?.codec?.toLowerCase() === 'mp4a' ||
-            (!selectedAudio?.codec &&
-              !audioTracks.some(
-                t => t.codec && !t.codec.toLowerCase().includes('aac'),
-              ));
-          const preferredMode: 'fmp4' | 'ffmpeg' =
-            this.remuxEngine === 'fmp4' && isAacAudio && !isManifest ? 'fmp4' : 'ffmpeg';
+          const preferredMode: 'hls' | 'ffmpeg' =
+            this.isCastHlsEnabled() && !isManifest ? 'hls' : 'ffmpeg';
 
           let prep: any;
-          if (needsRemux && preferredMode === 'fmp4') {
+          if (needsRemux && preferredMode === 'hls') {
             try {
               prep = await this.awaitPlaybackOperation(
                 this.preparePlaybackStream(
@@ -617,7 +614,7 @@ class RemotePlaybackManager {
                     isLocal: isLocalFile,
                     headers: resolvedHeaders,
                     audioTrackIndex: selectedAudio?.index ?? 0,
-                    mode: 'fmp4',
+                    mode: 'hls',
                     startPositionSeconds: payload.initialPosition,
                     audioCodec: selectedAudio?.codec,
                     durationSeconds: mediaDuration,
@@ -629,7 +626,7 @@ class RemotePlaybackManager {
               );
               if (!prep.byteRangeSeek) {
                 console.info(
-                  '[Cast] fmp4 does not support byte-range seeking, falling back to ffmpeg',
+                  '[Cast] HLS output unavailable, falling back to ffmpeg',
                 );
                 await this.awaitPlaybackOperation(
                   remoteDeliveryService
@@ -657,12 +654,12 @@ class RemotePlaybackManager {
                 );
                 usedEngine = 'ffmpeg';
               } else {
-                usedEngine = 'fmp4';
+                usedEngine = 'hls';
               }
             } catch (err) {
               this.assertPlaybackOperation(operationToken);
               console.warn(
-                '[Cast] fmp4 remux failed, falling back to ffmpeg:',
+                '[Cast] HLS output failed, falling back to ffmpeg:',
                 err,
               );
               await this.awaitPlaybackOperation(
@@ -767,7 +764,7 @@ class RemotePlaybackManager {
                 isLocal: isLocalFile,
                 headers: resolvedHeaders,
                 audioTrackIndex: selectedAudio?.index ?? 0,
-                mode: this.remuxEngine,
+                mode: 'ffmpeg',
                 startPositionSeconds: payload.initialPosition,
                 audioCodec: selectedAudio?.codec,
                 durationSeconds: mediaDuration,
@@ -805,7 +802,7 @@ class RemotePlaybackManager {
               operationToken,
             );
           }
-          activeEngine = this.remuxEngine;
+          activeEngine = 'ffmpeg';
         } else {
           const prep = await this.awaitPlaybackOperation(
             this.preparePlaybackStream(
@@ -876,6 +873,7 @@ class RemotePlaybackManager {
       this.activePlayUrl = playUrl;
       this.activeMimeType = preparedMimeType;
       this.activeRemux = needsRemux;
+      this.activeIsManifest = isManifest;
       this.activeByteRangeSeek = byteRangeSeek;
       this.timelineOffset = timelineOffset;
       this.sourceDuration = sourceDuration;
@@ -942,6 +940,31 @@ class RemotePlaybackManager {
     }
   }
 
+  /** Cast only: serve remuxed streams as HLS so the receiver seeks by itself. */
+  isCastHlsEnabled(): boolean {
+    return mainStorage.getBool(CAST_HLS_KEY, false);
+  }
+
+  /** Takes effect on the next load or audio switch. */
+  setCastHlsEnabled(enabled: boolean): void {
+    mainStorage.setBool(CAST_HLS_KEY, enabled);
+  }
+
+  /** URL the receiver is playing, for copying. */
+  getActiveStreamUrl(): string {
+    return this.activePlayUrl;
+  }
+
+  /** Subtitle URL the receiver gets for the selected track, for copying. */
+  getActiveSubtitleUrl(): string | undefined {
+    if (!this.activePlayUrl) return undefined;
+    const trackId = useRemoteStore.getState().activeSubtitleTrackId;
+    return (
+      (trackId ? this.registeredSubtitleUrls.get(trackId) : undefined) ||
+      this.resolveActiveSubtitleUrl(this.activePlayUrl)
+    );
+  }
+
   private resolveActiveSubtitleUrl(
     mediaUrl: string,
     explicitTrackId?: string | null,
@@ -974,7 +997,7 @@ class RemotePlaybackManager {
         const sessionId = parsed.pathname.split('/')[2];
         if (
           sessionId &&
-          /^\/(ffmpeg|fmp4|dlna|proxy)\//.test(parsed.pathname)
+          /^\/(ffmpeg|hlsout|dlna|proxy)\//.test(parsed.pathname)
         ) {
           const ordinal = Math.max(0, subs.indexOf(sub));
           resolvedUrl = `${parsed.origin}/extsub/${sessionId}/${ordinal}.vtt?u=${encodeURIComponent(sub.uri)}`;
@@ -1023,7 +1046,7 @@ class RemotePlaybackManager {
     const subtitles = useRemoteStore.getState().subtitleTracks;
     let deliveryUrl = subtitleDeliveryUrl || mediaUrl;
     // Restoring a direct video uses its existing subtitle-only session.
-    if (!/^\/(ffmpeg|fmp4|dlna|proxy|hls)\//.test(new URL(deliveryUrl).pathname) &&
+    if (!/^\/(ffmpeg|hlsout|dlna|proxy|hls)\//.test(new URL(deliveryUrl).pathname) &&
         subtitles.some(sub => !sub.isEmbedded && sub.uri) && this.currentSessionId) {
       const server = await this.awaitPlaybackOperation(
         remoteDeliveryService.ensureServerStarted(), operationToken,
@@ -1031,7 +1054,7 @@ class RemotePlaybackManager {
       deliveryUrl = `${server.baseUrl}/proxy/${this.currentSessionId}/stream`;
     }
     const parsedDelivery = new URL(deliveryUrl);
-    const sessionId = /^\/(ffmpeg|fmp4|dlna|proxy|hls)\//.test(parsedDelivery.pathname)
+    const sessionId = /^\/(ffmpeg|hlsout|dlna|proxy|hls)\//.test(parsedDelivery.pathname)
       ? parsedDelivery.pathname.split('/')[2] : undefined;
     const validSubs = subtitles.map((sub, ordinal) => {
       if (!sessionId) return undefined;
@@ -1111,6 +1134,10 @@ class RemotePlaybackManager {
         contentUrl: mediaUrl,
         contentType,
         streamType: 'buffered',
+        // The phone's HLS output is MPEG-TS with AAC audio muxed in.
+        ...(/^https?:\/\/[^/]+\/hlsout\//.test(mediaUrl)
+          ? {hlsSegmentFormat: 'TS', hlsVideoSegmentFormat: 'MPEG2-TS'}
+          : {}),
         ...(sourceDuration > timelineOffset
           ? {streamDuration: sourceDuration - timelineOffset}
           : {}),
@@ -1536,18 +1563,12 @@ class RemotePlaybackManager {
       const nextSessionId = `session_${Crypto.randomUUID()}`;
       let nextSessionLoadedOnDevice = false;
       let prep: any = null;
-      let usedEngine: 'fmp4' | 'ffmpeg' = 'ffmpeg';
+      let usedEngine: 'hls' | 'ffmpeg' = 'ffmpeg';
       useRemoteStore.getState().setErrorMessage(undefined);
       useRemoteStore.getState().setStatus('buffering');
 
       try {
         const sourceUrl = this.activePayload.sourceUrl;
-        if (
-          device.type === 'dlna' &&
-          (this.activeRemuxEngine || this.remuxEngine) !== 'ffmpeg'
-        ) {
-          throw new Error('On-demand audio packaging for DLNA requires FFmpeg');
-        }
         if (!this.activeRemux) {
           throw new Error(
             'This stream has a single audio track on the receiver',
@@ -1560,17 +1581,16 @@ class RemotePlaybackManager {
           this.activePayload.sourceType?.toLowerCase() === 'mkv' ||
           sourceUrl.toLowerCase().includes('.mkv') ||
           sourceUrl.toLowerCase().includes('matroska');
-        const isAacAudio =
-          track?.codec?.toLowerCase().includes('aac') ||
-          track?.codec?.toLowerCase() === 'mp4a' ||
-          (!track?.codec && this.activeRemuxEngine === 'fmp4');
-
-        let targetMode: 'fmp4' | 'ffmpeg' =
-          this.remuxEngine === 'fmp4' && isAacAudio ? 'fmp4' : 'ffmpeg';
+        const targetMode: 'hls' | 'ffmpeg' =
+          device.type === 'cast' &&
+          this.isCastHlsEnabled() &&
+          !this.activeIsManifest
+            ? 'hls'
+            : 'ffmpeg';
 
         usedEngine = targetMode;
 
-        if (targetMode === 'fmp4') {
+        if (targetMode === 'hls') {
           try {
             prep = await this.awaitPlaybackOperation(
               this.preparePlaybackStream(
@@ -1580,7 +1600,7 @@ class RemotePlaybackManager {
                   isLocal: this.activePayload.isLocal,
                   headers: this.activePayload.headers,
                   audioTrackIndex: track?.index ?? 0,
-                  mode: 'fmp4',
+                  mode: 'hls',
                   startPositionSeconds: currentPosition,
                   audioCodec: track?.codec,
                   durationSeconds: mediaDuration,
@@ -1592,7 +1612,7 @@ class RemotePlaybackManager {
             );
             if (!prep.byteRangeSeek) {
               console.info(
-                '[Cast] fmp4 audio switch missing byte-range seeking, falling back to ffmpeg',
+                '[Cast] HLS output unavailable for audio switch, falling back to ffmpeg',
               );
               await this.awaitPlaybackOperation(
                 remoteDeliveryService
@@ -1623,7 +1643,7 @@ class RemotePlaybackManager {
           } catch (err) {
             this.assertPlaybackOperation(operationToken);
             console.warn(
-              '[Cast] fmp4 audio switch failed, falling back to ffmpeg:',
+              '[Cast] HLS audio switch failed, falling back to ffmpeg:',
               err,
             );
             await this.awaitPlaybackOperation(
@@ -2459,6 +2479,7 @@ class RemotePlaybackManager {
     this.activePlayUrl = '';
     this.activeMimeType = undefined;
     this.activeRemux = false;
+    this.activeIsManifest = false;
     this.activeByteRangeSeek = false;
     this.activeRemuxEngine = null;
     this.activeContainer = undefined;

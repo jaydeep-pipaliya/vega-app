@@ -1,3 +1,4 @@
+import {useControlVisibility} from './hooks/useControlVisibility';
 import React, {
   Dispatch,
   SetStateAction,
@@ -115,9 +116,7 @@ const AnimatedVideoPlayer = (
   const [volumeTrackWidth, setVolumeTrackWidth] = useState<number>(0);
   const [volumeFillWidth, setVolumeFillWidth] = useState<number>(0);
   const [seekerFillWidth, setSeekerFillWidth] = useState<number>(0);
-  const [showControls, setShowControls] = useState(
-    props.showControls ?? showOnStart,
-  );
+  const [showControls, setShowControls] = useControlVisibility(props.showControls, showOnStart);
   const [volumePosition, setVolumePositionState] = useState(0);
   const [seekerPosition, setSeekerPositionState] = useState(0);
   const [volumeOffset, setVolumeOffset] = useState(0);
@@ -628,14 +627,6 @@ const AnimatedVideoPlayer = (
   const eventsRef = useRef(events);
   eventsRef.current = events;
 
-  useEffect(() => {
-    if (
-      typeof props.showControls === 'boolean' &&
-      props.showControls !== showControls
-    ) {
-      setShowControls(props.showControls);
-    }
-  }, [props.showControls, showControls]);
 
   useEffect(() => {
     if (showControls) {
@@ -1070,6 +1061,7 @@ const AnimatedVideoPlayer = (
             onPressRewind={rewind}
             onPressForward={forward}
             resetControlTimeout={resetControlTimeout}
+            controlOpacityStyle={animations.controlsOpacity}
             showControls={showControls && !loading}
             skipFeedbackLeft={skipFeedbackLeft}
             skipFeedbackRight={skipFeedbackRight}

@@ -27,7 +27,7 @@ const qualityDetail = (q: RemoteQuality): string =>
     q.width && q.height ? `${q.width}Ã—${q.height}` : q.resolution,
   ]
     .filter(Boolean)
-    .join(' Â· ');
+    .join(' · ');
 
 const qualityIcon = (
   q: RemoteQuality,
@@ -151,7 +151,7 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
                     ),
                   ]
                     .filter(Boolean)
-                    .join(' Â· ')}
+                    .join(' · ')}
                   selected={server.id === activeServerId}
                   onPress={() =>
                     select(() => {
@@ -200,7 +200,7 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
                 title={track.title || language || `Track ${i + 1}`}
                 supportingText={[language, track.codec]
                   .filter(Boolean)
-                  .join(' Â· ')}
+                  .join(' · ')}
                 selected={
                   activeAudioTrackId
                     ? track.id === activeAudioTrackId
@@ -239,7 +239,7 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
                     sub.isEmbedded ? 'Embedded' : 'External',
                   ]
                     .filter(Boolean)
-                    .join(' Â· ')}
+                    .join(' · ')}
                   selected={sub.id === activeSubtitleTrackId}
                   onPress={() => select(() => onSelectSubtitle?.(sub))}
                 />
@@ -266,7 +266,8 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
             <RemoteSheetOption
               key={ep.id || ep.link || i}
               thumbnail={ep.image}
-              icon={ep.image ? undefined : 'play-circle-outline'}
+              icon="play-circle"
+              thumbnailPlaceholder
               title={ep.title || `Episode ${i + 1}`}
               supportingText={ep.description}
               selected={i === activeEpisodeIndex}

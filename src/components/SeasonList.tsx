@@ -91,6 +91,8 @@ interface PlayHandlerProps {
   primaryTitle: string;
   seasonTitle: string;
   episodeData: EpisodeLink[] | Link['directLinks'];
+  /** Opens the cast screen instead of the local or external player. */
+  cast?: boolean;
 }
 
 interface StickyMenuState {
@@ -686,6 +688,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
       primaryTitle,
       seasonTitle,
       episodeData,
+      cast,
     }: PlayHandlerProps) => {
       if (!episodeData || episodeData.length === 0) {
         return;
@@ -713,7 +716,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
         (localDownload?.status === 'completed' && localDownload?.filePath) ||
         dwFile;
 
-      if (externalPlayer) {
+      if (externalPlayer && !cast) {
         if (localPath) {
           await IntentLauncher.startActivityAsync(
             'android.intent.action.VIEW',
@@ -737,7 +740,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
         poster: poster,
         providerValue: providerValue,
         infoUrl: routeParams.link,
-        alwaysCast: !isTV && settingsStorage.isAlwaysCastMode(),
+        alwaysCast: !isTV && (cast || settingsStorage.isAlwaysCastMode()),
       });
     },
     [
@@ -853,6 +856,39 @@ const SeasonList: React.FC<SeasonListProps> = ({
       handleExternalPlayer(stickyMenu.link, stickyMenu.type);
     }
   }, [stickyMenu.link, stickyMenu.type, handleExternalPlayer]);
+
+  // Cast the long-pressed episode, from whichever list it belongs to.
+  const handleStickyMenuCast = useCallback(() => {
+    setStickyMenu({active: false});
+    if (!stickyMenu.link) return;
+    const episodeIndex = filteredAndSortedEpisodes.findIndex(
+      item => item.link === stickyMenu.link,
+    );
+    const directIndex =
+      episodeIndex < 0
+        ? (filteredAndSortedDirectLinks || []).findIndex(
+            item => item.link === stickyMenu.link,
+          )
+        : -1;
+    if (episodeIndex < 0 && directIndex < 0) return;
+    playHandler({
+      linkIndex: episodeIndex >= 0 ? episodeIndex : directIndex,
+      type,
+      primaryTitle: metaTitle,
+      seasonTitle: activeSeason?.title || '',
+      episodeData:
+        episodeIndex >= 0 ? filteredAndSortedEpisodes : filteredAndSortedDirectLinks,
+      cast: true,
+    });
+  }, [
+    stickyMenu.link,
+    filteredAndSortedEpisodes,
+    filteredAndSortedDirectLinks,
+    playHandler,
+    type,
+    metaTitle,
+    activeSeason?.title,
+  ]);
 
   // Memoized episode render item
   const renderEpisodeItem = useCallback(
@@ -1491,6 +1527,26 @@ const SeasonList: React.FC<SeasonListProps> = ({
             <Feather name="external-link" size={20} color={primary} />
             <Text style={{color: colors.onSurface}}>External player</Text>
           </TVFocusable>
+          {!isTV && (
+            <TVFocusable
+              accessibilityRole="button"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
+              style={{
+                height: 48,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
+                backgroundColor: colors.surfaceContainerHighest,
+                borderRadius: 18,
+              }}
+              onPress={handleStickyMenuCast}>
+              <MaterialCommunityIcons name="cast" size={22} color={primary} />
+              <Text style={{color: colors.onSurface}}>Cast</Text>
+            </TVFocusable>
+          )}
         </View>
       </MaterialDialogSurface>
     </View>

@@ -60,9 +60,13 @@ const LANGUAGE_MAP: Record<string, string> = {
   tr: 'Turkish',
 };
 
-function formatLanguageName(code?: string, fallbackIndex?: number): string {
+function formatLanguageName(
+  code?: string,
+  fallbackIndex?: number,
+  fallbackLabel = 'Audio Track',
+): string {
   if (!code || code === 'und') {
-    return fallbackIndex !== undefined ? `Audio Track ${fallbackIndex}` : 'Unknown';
+    return fallbackIndex !== undefined ? `${fallbackLabel} ${fallbackIndex}` : 'Unknown';
   }
   const clean = code.toLowerCase().trim();
   return LANGUAGE_MAP[clean] || clean.toUpperCase();
@@ -395,10 +399,12 @@ export function parseMkvBuffer(bytes: Uint8Array, filenameOrUrl?: string): Parse
       const rawName = entry.name?.trim() || '';
       const isWatermark = /vegamovies|hubcloud|1vega|\.tw|\.com|\.org/i.test(rawName);
 
-      const langCode = entry.language && entry.language !== 'und' ? entry.language : '';
+      // Matroska defaults a missing Language element to English, as ExoPlayer does.
+      const language = entry.language === undefined ? 'eng' : entry.language;
+      const langCode = language && language !== 'und' ? language : '';
 
-      const langName = formatLanguageName(langCode, subIdx + 1);
-      const subTitle = !isWatermark && rawName ? rawName : `${langName} (Embedded)`;
+      const langName = formatLanguageName(langCode, subIdx + 1, 'Subtitle');
+      const subTitle = !isWatermark && rawName ? rawName : langCode ? `${langName} (Embedded)` : langName;
 
       subtitleTracks.push({
         id: `sub_mkv_${entry.number ?? subIdx}`,

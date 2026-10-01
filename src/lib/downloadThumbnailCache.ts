@@ -11,7 +11,7 @@ let extractionQueue: Promise<void> = Promise.resolve();
 let cacheGeneration = 0;
 
 const getCacheKey = (filePath: string): string =>
-  `${filePath}|${THUMBNAIL_TIMESTAMP_MS}`;
+  `${filePath}|${THUMBNAIL_TIMESTAMP_MS}|crop-bars-v1`;
 
 const uriToPath = (uri: string): string => {
   if (!uri.startsWith('file://')) {
@@ -66,6 +66,7 @@ export const getDownloadedVideoThumbnail = async (
         maxWidth: 320,
         maxHeight: 180,
         quality: 80,
+        cropBlackBars: true,
       },
     );
     if (requestGeneration === cacheGeneration) {

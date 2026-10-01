@@ -2,6 +2,7 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {useFocusEffect, useIsFocused, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {StatusBar} from 'expo-status-bar';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   BackHandler,
@@ -41,6 +42,7 @@ import DownloadsSelectionHeader from './components/DownloadsSelectionHeader';
 import {deleteDownloadedMediaGroups} from './utils/deleteDownloadGroups';
 
 const Downloads = () => {
+  const insets = useSafeAreaInsets();
   const colors = useM3Colors();
   const focusBorderColor = useTVFocusBorderColor();
   const navigation =
@@ -305,7 +307,7 @@ const Downloads = () => {
       destinations={currentDownloads.length > 0
         ? [currentDownloadActionRef]
         : groups.length > 0 ? [firstCardRef] : [exploreButtonRef]}
-      style={{flex: 1, backgroundColor: colors.background}}>
+      style={{flex: 1, backgroundColor: colors.background, paddingTop: isTV ? 0 : insets.top}}>
       <StatusBar />
 
       {isSelectionMode ? (

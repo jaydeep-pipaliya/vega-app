@@ -34,7 +34,7 @@ export const PlayPause = ({
   primaryColor,
 }: PlayPauseProps) => {
   const animatedStyles = {
-    zIndex: showControls ? 99999 : 0,
+    zIndex: 99999,
   };
 
   if (disablePlayPause) {
@@ -43,7 +43,7 @@ export const PlayPause = ({
 
   return (
     <AnimatedView
-      pointerEvents={'box-none'}
+      pointerEvents={showControls ? 'box-none' : 'none'}
       style={[styles.container, animatedStyles, animations.controlsOpacity]}>
       <Control
         disabled={!showControls}

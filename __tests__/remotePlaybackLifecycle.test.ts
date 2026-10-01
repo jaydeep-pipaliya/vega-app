@@ -4,6 +4,9 @@ import {dlnaService as dlna} from '../src/lib/remote/dlnaService';
 import {useRemoteStore} from '../src/lib/remote/remoteStore';
 import {RemotePlaybackCanceledError, isRemotePlaybackCanceled} from '../src/lib/remote/remotePlaybackErrors';
 import GoogleCast from 'react-native-google-cast';
+jest.mock('../src/lib/storage/StorageService', () => ({
+  mainStorage: {getBool: (_key: string, fallback?: boolean) => fallback ?? false, setBool: () => {}},
+}));
 jest.mock('../src/lib/tv', () => ({isTV: false}));
 jest.mock('../src/lib/services/cookieManager', () => ({
   getCookieHeader: jest.fn(async () => ''),

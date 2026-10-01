@@ -1,4 +1,4 @@
-import {useRef} from 'react';
+import {useCallback, useMemo, useRef} from 'react';
 import {Animated} from 'react-native';
 import type {VideoAnimations} from '../types';
 
@@ -16,7 +16,7 @@ export const useJSAnimations = (
     new Animated.Value(initialShowControls ? 0 : -100),
   ).current;
 
-  const hideControlAnimation = () => {
+  const hideControlAnimation = useCallback(() => {
     Animated.parallel([
       Animated.timing(controlsOpacity, {
         toValue: 0,
@@ -34,9 +34,9 @@ export const useJSAnimations = (
         useNativeDriver: false,
       }),
     ]).start();
-  };
+  }, [controlAnimationTiming, controlsOpacity, topControlMarginTop, bottomControlMarginBottom]);
 
-  const showControlAnimation = () => {
+  const showControlAnimation = useCallback(() => {
     Animated.parallel([
       Animated.timing(controlsOpacity, {
         toValue: 1,
@@ -54,9 +54,9 @@ export const useJSAnimations = (
         useNativeDriver: false,
       }),
     ]).start();
-  };
+  }, [controlAnimationTiming, controlsOpacity, topControlMarginTop, bottomControlMarginBottom]);
 
-  const animations = {
+  const animations = useMemo(() => ({
     bottomControl: {
       marginBottom: bottomControlMarginBottom,
     },
@@ -69,7 +69,7 @@ export const useJSAnimations = (
     showControlAnimation,
     hideControlAnimation,
     AnimatedView: Animated.View,
-  } as unknown as VideoAnimations;
+  } as unknown as VideoAnimations), [bottomControlMarginBottom, topControlMarginTop, controlsOpacity, showControlAnimation, hideControlAnimation]);
 
   return animations;
 };

@@ -16,16 +16,25 @@ module.exports = function withAndroidReleaseGradle(config) {
       const helperGradle = path.join(appDir, 'with-release-config.gradle');
       const abiSplitsGradle = path.join(appDir, 'with-abi-splits.gradle');
 
+      const isTvConfig = Boolean(config.extra?.isTV);
+
       // Write helper gradle to add the APK rename logic if not present
       const helperContent = `// Auto-applied by with-android-release-gradle config plugin
 if (project.android) {
+  def isTV = (project.findProperty("isTV") == "true" ||
+              project.findProperty("EXPO_TV") == "1" ||
+              System.getenv("EXPO_TV") == "1" ||
+              System.getenv("APP_VARIANT") == "tv" ||
+              ${isTvConfig})
+  def baseAppName = isTV ? "vega-tv" : "vega-mobile"
+  project.ext { appName = baseAppName }
+
   project.android.applicationVariants.all { variant ->
     variant.outputs.each { output ->
-      project.ext { appName = 'Vega' }
       def version = variant.versionName
       def newName = output.outputFile.name
-            // Keep project.ext.appName as a Gradle variable (escaped from Node template evaluation)
-      newName = newName.replace("app-", "${'${'}project.ext.appName${'}'}-")
+      newName = newName.replace("app-", "\${project.ext.appName}-")
+      newName = newName.replace("-universal", "")
       newName = newName.replace("-release", "-v" + version)
       output.outputFileName = newName
     }
@@ -34,17 +43,18 @@ if (project.android) {
 `;
       fs.writeFileSync(helperGradle, helperContent, 'utf8');
 
-      // Write ABI splits gradle which enforces the desired splits
+      // Write ABI splits gradle which disables splits and ensures universal ARM build
       const abiSplitsContent = `// Auto-applied by with-android-release-gradle config plugin
 if (project.android) {
   project.android {
     splits {
       abi {
-        def isRelease = gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
-        enable isRelease
-        reset()
-        include 'armeabi-v7a', 'arm64-v8a'
-        universalApk true
+        enable false
+      }
+    }
+    defaultConfig {
+      ndk {
+        abiFilters 'armeabi-v7a', 'arm64-v8a'
       }
     }
   }

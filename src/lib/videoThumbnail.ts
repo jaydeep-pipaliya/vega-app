@@ -5,6 +5,8 @@ export type VideoThumbnailHeaders = Record<string, string>;
 export type VideoThumbnailOptions = {
   /** JPEG output quality. Defaults to 85. */
   quality?: number;
+  /** Remove matched black bars embedded in the extracted frame. */
+  cropBlackBars?: boolean;
   /** Downscale to fit this width while preserving the aspect ratio. */
   maxWidth?: number;
   /** Downscale to fit this height while preserving the aspect ratio. */
