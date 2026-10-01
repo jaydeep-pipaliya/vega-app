@@ -113,6 +113,7 @@ export type RootStackParamList = {
     file?: string;
     providerValue?: string;
     infoUrl?: string;
+    alwaysCast?: boolean;
   };
 };
 
@@ -680,11 +681,21 @@ const App = () => {
                   <Stack.Screen
                     name="Player"
                     component={Player}
-                    options={{
-                      orientation: 'landscape',
-                      statusBarHidden: true,
-                      navigationBarHidden: true,
-                      autoHideHomeIndicator: true,
+                    options={({route}) => {
+                      const isRemotePortrait =
+                        !isTV &&
+                        (Boolean((route.params as any)?.alwaysCast) ||
+                          settingsStorage.isAlwaysCastMode());
+                      return {
+                        orientation: isTV
+                          ? 'landscape'
+                          : isRemotePortrait
+                            ? 'portrait'
+                            : 'default',
+                        statusBarHidden: isTV || !isRemotePortrait,
+                        navigationBarHidden: isTV || !isRemotePortrait,
+                        autoHideHomeIndicator: isTV || !isRemotePortrait,
+                      };
                     }}
                   />
                 </Stack.Navigator>

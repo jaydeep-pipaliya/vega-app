@@ -1,0 +1,91 @@
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import React from 'react';
+import {ActivityIndicator, View} from 'react-native';
+import AppText from '../ui/Text';
+import Button from '../ui/Button';
+import {useRemoteStore} from '../../lib/remote/remoteStore';
+import {useM3Colors} from '../../theme/M3PaletteContext';
+
+interface RemoteStatusLineProps {
+  skipInterval?: {from: number; to: number; title?: string} | null;
+  onSkipPress?: () => void;
+  preparingText?: string | null;
+}
+
+/**
+ * One fixed-height slot for error, skip, or playback state, so a message
+ * never pushes the poster or controls around.
+ */
+export const RemoteStatusLine: React.FC<RemoteStatusLineProps> = ({
+  skipInterval,
+  onSkipPress,
+  preparingText,
+}) => {
+  const colors = useM3Colors();
+  const status = useRemoteStore(state => state.status);
+  const seeking = useRemoteStore(state => !!state.pendingSeek);
+  const errorMessage = useRemoteStore(state => state.errorMessage);
+  const connectedDevice = useRemoteStore(state => state.connectedDevice);
+  const currentTime = useRemoteStore(state => state.currentTime);
+
+  const showSkip =
+    !!skipInterval &&
+    status !== 'error' &&
+    currentTime >= skipInterval.from &&
+    currentTime <= skipInterval.to;
+
+  let content: React.ReactNode;
+  if (errorMessage || status === 'error') {
+    content = (
+      <View style={{alignItems: 'center', flexDirection: 'row', gap: 8}}>
+        <MaterialCommunityIcons name="alert-circle-outline" size={18} color={colors.error} />
+        <AppText
+          role="bodyMedium"
+          numberOfLines={2}
+          style={{color: colors.error, flexShrink: 1}}>
+          {errorMessage || "The TV couldn't play this video"}
+        </AppText>
+      </View>
+    );
+  } else if (preparingText || seeking || status === 'buffering' || status === 'loading' || status === 'connecting') {
+    content = (
+      <View style={{alignItems: 'center', flexDirection: 'row', gap: 10}}>
+        <ActivityIndicator size="small" color={colors.primary} />
+        <AppText role="labelLarge" numberOfLines={1} style={{color: colors.primary}}>
+          {preparingText || (seeking ? 'Seeking…' : 'Buffering…')}
+        </AppText>
+      </View>
+    );
+  } else if (showSkip) {
+    content = (
+      <Button variant="tonal" compact onPress={onSkipPress}>
+        {skipInterval?.title || 'Skip intro'}
+      </Button>
+    );
+  } else {
+    const text = !connectedDevice
+      ? 'Choose a device to start'
+      : status === 'paused'
+          ? `Paused on ${connectedDevice.name}`
+          : status === 'stopped'
+            ? 'Finished'
+            : `Playing on ${connectedDevice.name}`;
+    content = (
+      <AppText role="labelLarge" numberOfLines={1} style={{color: colors.primary}}>
+        {text}
+      </AppText>
+    );
+  }
+
+  return (
+    <View
+      style={{
+        alignItems: 'center',
+        height: 48,
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+      }}>
+      {content}
+    </View>
+  );
+};

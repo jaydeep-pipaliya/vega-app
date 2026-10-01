@@ -78,7 +78,12 @@ module.exports = () => {
           ],
           enableProguardInReleaseBuilds: true,
           splits: {
-            abi: { enable: true, universalApk: true },
+            abi: {
+              enable: true,
+              reset: false,
+              include: ['armeabi-v7a', 'arm64-v8a'],
+              universalApk: true,
+            },
           },
           buildVariants: {
             release: {
@@ -129,7 +134,7 @@ module.exports = () => {
       autolinking: { exclude: ['expo-splash-screen'] },
       plugins,
       slug: 'vega',
-      version: '4.2.0',
+      version: '5.0.0',
       userInterfaceStyle: 'dark',
       experiments: {
         reactCompiler: true,
@@ -140,14 +145,18 @@ module.exports = () => {
           : {}),
         minSdkVersion: 28,
         package: PACKAGE_NAME,
-        versionCode: 193,
+        versionCode: 194,
         permissions: [
           'FOREGROUND_SERVICE',
           'FOREGROUND_SERVICE_DATA_SYNC',
           'FOREGROUND_SERVICE_MEDIA_PLAYBACK',
           'ACCESS_NETWORK_STATE',
+          'ACCESS_WIFI_STATE',
+          'CHANGE_WIFI_MULTICAST_STATE',
           'INTERNET',
           'WRITE_SETTINGS',
+          'WAKE_LOCK',
+          'POST_NOTIFICATIONS',
         ],
         blockedPermissions: [
           'android.permission.MANAGE_EXTERNAL_STORAGE',

@@ -737,6 +737,7 @@ const SeasonList: React.FC<SeasonListProps> = ({
         poster: poster,
         providerValue: providerValue,
         infoUrl: routeParams.link,
+        alwaysCast: !isTV && settingsStorage.isAlwaysCastMode(),
       });
     },
     [

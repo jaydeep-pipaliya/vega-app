@@ -22,6 +22,7 @@ import {TVFocusable, TVFocusGuide} from '../../components/tv';
 import {isTV} from '../../lib/tv';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 import {downloadOutputExists} from '../../lib/downloadDestination';
+import {settingsStorage} from '../../lib/storage';
 import {formatDownloadBytes} from '../../lib/downloadFormatting';
 import {
   groupCompletedDownloads,
@@ -184,6 +185,7 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
       },
       providerValue: item.provider || metadata.provider || 'vega',
       infoUrl: item.infoUrl || metadata.infoUrl,
+      alwaysCast: !isTV && settingsStorage.isAlwaysCastMode(),
     });
   };
 

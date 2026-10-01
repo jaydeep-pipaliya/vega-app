@@ -11,8 +11,24 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.ReactPackage
 import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.modules.network.OkHttpClientProvider
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.ServerSocket
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.SecureRandom
+import java.security.interfaces.ECPrivateKey
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "WarpModule"
@@ -96,6 +112,12 @@ class WarpModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun killOrphanProcesses() {
+        try {
+            Runtime.getRuntime().exec(arrayOf("killall", "libusque.so")).waitFor(500, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {}
+    }
+
     private fun stopInternal() {
         try {
             val proc = warpProcess
@@ -113,6 +135,163 @@ class WarpModule(reactContext: ReactApplicationContext) :
             currentPort = null
             DohOkHttpFactory.instance?.warpProxyPort = null
             flushConnections()
+            killOrphanProcesses()
+        }
+    }
+
+    private fun generateEcKeyPair(): KeyPair {
+        val kpg = KeyPairGenerator.getInstance("EC")
+        kpg.initialize(ECGenParameterSpec("prime256v1"))
+        return kpg.generateKeyPair()
+    }
+
+    private fun toFixedByteArray(bi: java.math.BigInteger, targetLen: Int): ByteArray {
+        val raw = bi.toByteArray()
+        if (raw.size == targetLen) return raw
+        val out = ByteArray(targetLen)
+        if (raw.size > targetLen) {
+            System.arraycopy(raw, raw.size - targetLen, out, 0, targetLen)
+        } else {
+            System.arraycopy(raw, 0, out, targetLen - raw.size, raw.size)
+        }
+        return out
+    }
+
+    private fun encodeSec1PrivateKey(keyPair: KeyPair): String {
+        val privKey = keyPair.private as ECPrivateKey
+        val pubKey = keyPair.public as ECPublicKey
+
+        val dBytes = toFixedByteArray(privKey.s, 32)
+        val xBytes = toFixedByteArray(pubKey.w.affineX, 32)
+        val yBytes = toFixedByteArray(pubKey.w.affineY, 32)
+
+        val uncompressed = byteArrayOf(0x04) + xBytes + yBytes
+        val sec1 = byteArrayOf(
+            0x30.toByte(), 0x77.toByte(),
+            0x02.toByte(), 0x01.toByte(), 0x01.toByte(),
+            0x04.toByte(), 0x20.toByte()
+        ) + dBytes + byteArrayOf(
+            0xa0.toByte(), 0x0a.toByte(),
+            0x06.toByte(), 0x08.toByte(),
+            0x2a.toByte(), 0x86.toByte(), 0x48.toByte(), 0xce.toByte(), 0x3d.toByte(), 0x03.toByte(), 0x01.toByte(), 0x07.toByte(),
+            0xa1.toByte(), 0x44.toByte(),
+            0x03.toByte(), 0x42.toByte(), 0x00.toByte()
+        ) + uncompressed
+
+        return android.util.Base64.encodeToString(sec1, android.util.Base64.NO_WRAP)
+    }
+
+    private fun registerCloudflare(configFile: File) {
+        val keyPair = generateEcKeyPair()
+        val sec1PrivKeyBase64 = encodeSec1PrivateKey(keyPair)
+        val masquePubKeyBase64 = android.util.Base64.encodeToString(keyPair.public.encoded, android.util.Base64.NO_WRAP)
+
+        val secureRandom = SecureRandom()
+        val wgRandom = ByteArray(32)
+        secureRandom.nextBytes(wgRandom)
+        val wgKeyBase64 = android.util.Base64.encodeToString(wgRandom, android.util.Base64.NO_WRAP)
+
+        val serialBytes = ByteArray(8)
+        secureRandom.nextBytes(serialBytes)
+        val serialHex = serialBytes.joinToString("") { "%02x".format(it) }
+
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        val tos = sdf.format(Date())
+
+        val client = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+
+        val jsonMediaType = "application/json; charset=UTF-8".toMediaType()
+
+        // 1. POST /v0a4471/reg
+        val regBodyJson = JSONObject().apply {
+            put("key", wgKeyBase64)
+            put("install_id", "")
+            put("fcm_token", "")
+            put("tos", tos)
+            put("model", "PC")
+            put("serial_number", serialHex)
+            put("os_version", "")
+            put("key_type", "curve25519")
+            put("tunnel_type", "wireguard")
+            put("locale", "en_US")
+        }
+
+        val regRequest = Request.Builder()
+            .url("https://api.cloudflareclient.com/v0a4471/reg")
+            .post(regBodyJson.toString().toRequestBody(jsonMediaType))
+            .header("User-Agent", "WARP for Android")
+            .header("CF-Client-Version", "a-6.35-4471")
+            .header("Content-Type", "application/json; charset=UTF-8")
+            .header("Connection", "Keep-Alive")
+            .build()
+
+        val (accountId, token) = client.newCall(regRequest).execute().use { response ->
+            val respStr = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("WARP registration failed (HTTP ${response.code}): $respStr")
+            }
+            val json = JSONObject(respStr)
+            val resObj = if (json.has("result") && !json.isNull("result")) json.getJSONObject("result") else json
+            Pair(resObj.getString("id"), resObj.getString("token"))
+        }
+
+        // 2. PATCH /v0a4471/reg/{id}
+        val patchBodyJson = JSONObject().apply {
+            put("key", masquePubKeyBase64)
+            put("key_type", "secp256r1")
+            put("tunnel_type", "masque")
+        }
+
+        val patchRequest = Request.Builder()
+            .url("https://api.cloudflareclient.com/v0a4471/reg/$accountId")
+            .patch(patchBodyJson.toString().toRequestBody(jsonMediaType))
+            .header("User-Agent", "WARP for Android")
+            .header("CF-Client-Version", "a-6.35-4471")
+            .header("Content-Type", "application/json; charset=UTF-8")
+            .header("Connection", "Keep-Alive")
+            .header("Authorization", "Bearer $token")
+            .build()
+
+        client.newCall(patchRequest).execute().use { response ->
+            val respStr = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IOException("MASQUE key enrollment failed (HTTP ${response.code}): $respStr")
+            }
+            val json = JSONObject(respStr)
+            val resObj = if (json.has("result") && !json.isNull("result")) json.getJSONObject("result") else json
+            val configObj = resObj.getJSONObject("config")
+            val peerObj = configObj.getJSONArray("peers").getJSONObject(0)
+            val endpointObj = peerObj.getJSONObject("endpoint")
+
+            val endpointV4 = endpointObj.getString("v4").removeSuffix(":0")
+            val endpointV6 = endpointObj.getString("v6").removePrefix("[").removeSuffix("]:0")
+            val peerPubKey = peerObj.getString("public_key")
+
+            val interfaceObj = configObj.getJSONObject("interface")
+            val addressesObj = interfaceObj.getJSONObject("addresses")
+            val ipv4 = addressesObj.getString("v4")
+            val ipv6 = addressesObj.getString("v6")
+
+            val finalConfig = JSONObject().apply {
+                put("private_key", sec1PrivKeyBase64)
+                put("endpoint_v4", endpointV4)
+                put("endpoint_v6", endpointV6)
+                put("endpoint_h2_v4", "162.159.198.2")
+                put("endpoint_h2_v6", "")
+                put("endpoint_pub_key", peerPubKey)
+                put("id", resObj.getString("id"))
+                put("access_token", token)
+                put("ipv4", ipv4)
+                put("ipv6", ipv6)
+            }
+
+            configFile.parentFile?.mkdirs()
+            configFile.writeText(finalConfig.toString(2))
+            Log.i(TAG, "WARP config.json written successfully")
         }
     }
 
@@ -129,6 +308,8 @@ class WarpModule(reactContext: ReactApplicationContext) :
                     return@Thread
                 }
 
+                killOrphanProcesses()
+
                 val binary = getBinaryFile()
                 if (!binary.exists()) {
                     promise.reject("WARP_BINARY_NOT_FOUND", "libusque.so not found at ${binary.absolutePath}")
@@ -137,37 +318,14 @@ class WarpModule(reactContext: ReactApplicationContext) :
 
                 val configFile = getConfigFile()
                 if (!configFile.exists() || configFile.length() == 0L) {
-                    Log.i(TAG, "Registering Cloudflare WARP account non-interactively (-a)...")
-                    val regPb = ProcessBuilder(binary.absolutePath, "-c", configFile.absolutePath, "register", "-a")
-                    regPb.directory(getWarpDir())
-                    regPb.redirectErrorStream(true)
-                    val regProc = regPb.start()
-
-                    var regOutput = StringBuilder()
-                    val readerThread = Thread {
-                        try {
-                            regProc.inputStream.bufferedReader().forEachLine { line ->
-                                Log.d("WarpRegister", line)
-                                regOutput.append(line).append("\n")
-                            }
-                        } catch (_: Exception) {}
-                    }
-                    readerThread.start()
-
-                    val finished = regProc.waitFor(20, TimeUnit.SECONDS)
-                    if (!finished) {
-                        regProc.destroyForcibly()
-                        promise.reject("WARP_REGISTRATION_TIMEOUT", "WARP registration timed out after 20s")
+                    Log.i(TAG, "Registering Cloudflare WARP account via HTTPS...")
+                    try {
+                        registerCloudflare(configFile)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "WARP registration error: ${e.message}", e)
+                        promise.reject("WARP_REGISTRATION_FAILED", "Failed to register WARP client: ${e.message}", e)
                         return@Thread
                     }
-                    readerThread.join(1000)
-
-                    val exitCode = regProc.exitValue()
-                    if (exitCode != 0 || !configFile.exists() || configFile.length() == 0L) {
-                        promise.reject("WARP_REGISTRATION_FAILED", "Failed to register WARP client (exit $exitCode): $regOutput")
-                        return@Thread
-                    }
-                    Log.i(TAG, "WARP registration completed successfully")
                 }
 
                 val port = try {
@@ -179,9 +337,12 @@ class WarpModule(reactContext: ReactApplicationContext) :
                 val pb = ProcessBuilder(
                     binary.absolutePath,
                     "-c", configFile.absolutePath,
-                    "http-proxy",
+                    "l4-http-proxy",
                     "-b", "127.0.0.1",
-                    "-p", port.toString()
+                    "-p", port.toString(),
+                    "-d", "8.8.8.8",
+                    "-d", "1.1.1.1",
+                    "--insecure"
                 )
                 pb.directory(getWarpDir())
                 pb.redirectErrorStream(true)
@@ -203,6 +364,17 @@ class WarpModule(reactContext: ReactApplicationContext) :
                     } catch (_: Exception) {}
                 }.start()
 
+                // Monitor process liveness in background
+                Thread {
+                    try {
+                        proc.waitFor()
+                    } catch (_: Exception) {}
+                    if (warpProcess == proc) {
+                        Log.i(TAG, "WARP proxy process terminated unexpectedly")
+                        stopInternal()
+                    }
+                }.start()
+
                 var waitedMs = 0
                 while (waitedMs < 2500 && proc.isAlive && !isListening) {
                     Thread.sleep(100)
@@ -210,8 +382,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
                 }
 
                 if (!proc.isAlive) {
-                    warpProcess = null
-                    currentPort = null
+                    stopInternal()
                     promise.reject("WARP_START_FAILED", "WARP proxy process terminated immediately: $logLines")
                     return@Thread
                 }

@@ -3,6 +3,10 @@ import {useQuery} from '@tanstack/react-query';
 import {getHomePageData, HomePageData} from '../getHomepagedata';
 import {Content} from '../zustand/contentStore';
 import {cacheStorage} from '../storage';
+import {deduplicatePosts} from '../providers/deduplicatePosts';
+
+const normalizeHomePosts = (data: HomePageData[]) =>
+  data.map(category => ({...category, Posts: deduplicatePosts(category.Posts || [])}));
 
 interface UseHomePageDataOptions {
   provider: Content['provider'];
@@ -16,6 +20,7 @@ export const useHomePageData = ({
   const cacheKey = 'homeData' + (provider?.value || '');
   const query = useQuery<HomePageData[], Error>({
     queryKey: ['homePageData', provider.value],
+    select: normalizeHomePosts,
     queryFn: async ({signal}) => {
       // Fetch fresh data from provider
       const data = await getHomePageData(provider, signal);

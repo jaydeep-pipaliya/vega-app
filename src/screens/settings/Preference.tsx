@@ -89,6 +89,10 @@ const Preferences = ({navigation}: any) => {
     settingsStorage.getBool('useExternalPlayer', false),
   );
 
+  const [alwaysCastMode, setAlwaysCastMode] = useState<boolean>(() =>
+    settingsStorage.isAlwaysCastMode(),
+  );
+
   const [hapticFeedback, setHapticFeedback] = useState(
     settingsStorage.isHapticFeedbackEnabled(),
   );
@@ -212,12 +216,24 @@ const Preferences = ({navigation}: any) => {
             title="Skip in-app webview"
             description="Open web links directly in your default browser"
             value={skipInAppWebview}
-            divider={false}
+            divider={!isTV}
             onValueChange={next => {
               settingsStorage.setSkipInAppWebview(next);
               setSkipInAppWebview(next);
             }}
           />
+          {!isTV && (
+            <SettingsSwitchRow
+              title="Always cast mode"
+              description="Stream directly to TV instead of opening the local phone player"
+              value={alwaysCastMode}
+              divider={false}
+              onValueChange={next => {
+                settingsStorage.setAlwaysCastMode(next);
+                setAlwaysCastMode(next);
+              }}
+            />
+          )}
         </SettingsSection>
 
         {hasFirebase ? (

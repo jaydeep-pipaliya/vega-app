@@ -1,8 +1,9 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {Pressable, View} from 'react-native';
 import {FlatList} from 'react-native-gesture-handler';
-import React, {memo, useCallback} from 'react';
+import React, {memo, useCallback, useMemo} from 'react';
 import type {Post} from '../lib/providers/types';
+import {deduplicatePosts} from '../lib/providers/deduplicatePosts';
 import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useNavigation} from '@react-navigation/native';
 import {HomeStackParamList} from '../App';
@@ -39,6 +40,7 @@ const Slider = ({
   const navigation =
     useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
   const [isSelected, setSelected] = React.useState('');
+  const uniquePosts = useMemo(() => deduplicatePosts(posts), [posts]);
 
   const handleMorePress = useCallback(() => {
     navigation.navigate('ScrollList', {
@@ -81,7 +83,9 @@ const Slider = ({
     [handleItemPress],
   );
 
-  const keyExtractor = useCallback((item: Post) => item.link, []);
+  const keyExtractor = useCallback((item: Post, index: number) =>
+    JSON.stringify([item.provider || providerValue || provider?.value || '', item.link || index]),
+  [providerValue, provider?.value]);
 
   return (
     <TVFocusGuide autoFocus={false} style={{gap: 14, marginTop: 28, overflow: 'visible'}}>
@@ -158,7 +162,7 @@ const Slider = ({
       ) : (
         <FlatList
           showsHorizontalScrollIndicator={false}
-          data={posts}
+          data={uniquePosts}
           extraData={isSelected}
           horizontal
           style={{overflow: 'visible'}}

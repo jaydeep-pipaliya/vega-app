@@ -130,6 +130,7 @@ export const BottomControls = ({
 
   return (
     <AnimatedView
+      pointerEvents={showControls ? 'box-none' : 'none'}
       style={[
         _styles.bottom,
         animations.controlsOpacity,

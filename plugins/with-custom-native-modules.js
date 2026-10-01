@@ -4,6 +4,7 @@ const {
   withDangerousMod,
   withMainApplication,
   withAppBuildGradle,
+  withAndroidManifest,
 } = require('expo/config-plugins');
 
 function withCustomNativeModules(config) {
@@ -78,6 +79,8 @@ function withCustomNativeModules(config) {
       'LauncherIconPackage()',
       'VideoThumbnailPackage()',
       'ProviderHttpPackage()',
+      'RemoteDeliveryPackage()',
+      'DlnaPackage()',
     ];
 
     for (const pkg of packagesToAdd) {
@@ -150,16 +153,66 @@ function withCustomNativeModules(config) {
       );
     }
 
-    // Make sure libtorrent4j and nanohttpd are re-added just in case the user's manual addition gets wiped
+    if (!contents.includes('androidx.media3:media3-muxer')) {
+      contents = contents.replace(
+        /dependencies\s*\{/,
+        match => `${match}\n    implementation 'androidx.media3:media3-muxer:1.8.0'\n`,
+      );
+    }
+
+    // Make sure nanohttpd and libtorrent4j are re-added during prebuild
+    if (!contents.includes('org.nanohttpd:nanohttpd')) {
+      contents = contents.replace(
+        /dependencies\s*\{/,
+        match =>
+          `${match}\n    implementation 'org.nanohttpd:nanohttpd:2.3.1'\n`,
+      );
+    }
+
+    if (!contents.includes('ffmpeg-kit-https')) {
+      contents = contents.replace(
+        /dependencies\s*\{/,
+        match =>
+          `${match}\n    implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-https:8.1.8'\n`,
+      );
+    }
+
     if (!contents.includes('libtorrent4j:2.1.0-39')) {
       contents = contents.replace(
         /dependencies\s*\{/,
         match =>
-          `${match}\n    implementation 'org.nanohttpd:nanohttpd:2.3.1'\n    implementation 'org.libtorrent4j:libtorrent4j:2.1.0-39'\n    implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39'\n    implementation 'org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-39'\n`,
+          `${match}\n    implementation 'org.libtorrent4j:libtorrent4j:2.1.0-39'\n    implementation 'org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39'\n`,
       );
     }
 
     cfg.modResults.contents = contents;
+    return cfg;
+  });
+
+  // 4. Ensure RemoteDeliveryService is declared in AndroidManifest.xml
+  config = withAndroidManifest(config, cfg => {
+    const app = cfg.modResults.manifest.application?.[0];
+    if (app) {
+      if (!app.service) app.service = [];
+      const serviceName = '.RemoteDeliveryService';
+      const exists = app.service.some(
+        s => s.$ && (s.$['android:name'] === serviceName || s.$['android:name'] === 'com.vega.RemoteDeliveryService'),
+      );
+      if (!exists) {
+        app.service.push({
+          $: {
+            'android:name': serviceName,
+            'android:exported': 'false',
+            'android:foregroundServiceType': 'mediaPlayback',
+            'android:stopWithTask': 'false',
+          },
+        });
+      }
+      const deliveryService = app.service.find(
+        s => s.$ && (s.$['android:name'] === serviceName || s.$['android:name'] === 'com.vega.RemoteDeliveryService'),
+      );
+      if (deliveryService) deliveryService.$['android:stopWithTask'] = 'false';
+    }
     return cfg;
   });
 

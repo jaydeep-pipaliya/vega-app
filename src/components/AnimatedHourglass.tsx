@@ -18,7 +18,7 @@ const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 type AnimatedHourglassProps = {
-  sandColor: string;
+  sandColor?: string;
   size?: number;
   frameColor?: string;
 };
@@ -26,10 +26,11 @@ type AnimatedHourglassProps = {
 const DURATION = 5200;
 
 export default function AnimatedHourglass({
-  sandColor,
+  sandColor = '#ffffff',
   size = 104,
   frameColor = '#ffffff',
 }: AnimatedHourglassProps) {
+  const activeSandColor = sandColor || '#ffffff';
   const cycle = useSharedValue(0);
 
   useEffect(() => {
@@ -153,7 +154,7 @@ export default function AnimatedHourglass({
             x={29}
             width={46}
             rx={1}
-            fill={sandColor}
+            fill={activeSandColor}
           />
         </G>
         <G clipPath="url(#hourglass-bottom-chamber)">
@@ -162,7 +163,7 @@ export default function AnimatedHourglass({
             x={29}
             width={46}
             rx={1}
-            fill={sandColor}
+            fill={activeSandColor}
           />
         </G>
         <G
@@ -191,7 +192,7 @@ export default function AnimatedHourglass({
           animatedProps={streamAnimatedProps}
           d="M52 48.5v15"
           fill="none"
-          stroke={sandColor}
+          stroke={activeSandColor}
           strokeWidth={2.2}
           strokeLinecap="round"
           strokeDasharray="1.5 3"
@@ -201,7 +202,7 @@ export default function AnimatedHourglass({
           cx={52}
           cy={52}
           r={1.7}
-          fill={sandColor}
+          fill={activeSandColor}
         />
       </Svg>
     </View>

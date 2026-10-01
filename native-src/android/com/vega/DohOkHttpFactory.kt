@@ -110,6 +110,7 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
     override fun createNewNetworkModuleClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .dns(DynamicDns())
+            .retryOnConnectionFailure(true)
             .cookieJar(ReactCookieJarContainer())
             .socketFactory(ByeDpiSocketFactory())
             .proxySelector(object : ProxySelector() {
@@ -121,7 +122,10 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
                     val warpPort = warpProxyPort
                     if (warpPort != null && warpPort > 0) {
                         Log.d(TAG, "Routing ${uri?.host} through WARP HTTP proxy on port $warpPort")
-                        return listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", warpPort)))
+                        return listOf(
+                            Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", warpPort)),
+                            Proxy.NO_PROXY
+                        )
                     }
                     // For ByeDPI, return Proxy.NO_PROXY so OkHttp resolves DNS via DoH,
                     // and ByeDpiSocketFactory routes the TCP connection to ByeDPI with the resolved IP!
@@ -130,6 +134,9 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
 
                 override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {
                     Log.w(TAG, "Proxy connection failed for $uri: ${ioe?.message}")
+                    if (warpProxyPort != null) {
+                        warpProxyPort = null
+                    }
                 }
             })
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -187,8 +194,14 @@ class ByeDpiSocket : Socket() {
             return
         }
 
-        // 1. Connect underlying socket to local ByeDPI proxy
-        super.connect(InetSocketAddress("127.0.0.1", byeDpiPort), timeout)
+        try {
+            // 1. Connect underlying socket to local ByeDPI proxy
+            super.connect(InetSocketAddress("127.0.0.1", byeDpiPort), timeout)
+        } catch (e: Exception) {
+            Log.w(TAG, "ByeDPI connection failed on port $byeDpiPort, resetting: ${e.message}")
+            DohOkHttpFactory.instance?.byeDpiProxyPort = null
+            throw e
+        }
 
         val oldSoTimeout = soTimeout
         soTimeout = if (timeout > 0) timeout else 10000
@@ -268,6 +281,10 @@ class ByeDpiSocket : Socket() {
                     throw IOException("Unsupported SOCKS5 ATYP: ${respHeader[3]}")
                 }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "ByeDPI handshake failed on port $byeDpiPort: ${e.message}")
+            DohOkHttpFactory.instance?.byeDpiProxyPort = null
+            throw e
         } finally {
             soTimeout = oldSoTimeout
         }

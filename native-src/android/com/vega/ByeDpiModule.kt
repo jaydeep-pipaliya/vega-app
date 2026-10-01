@@ -91,6 +91,12 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun killOrphanProcesses() {
+        try {
+            Runtime.getRuntime().exec(arrayOf("killall", "libciadpi.so")).waitFor(500, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {}
+    }
+
     private fun stopInternal() {
         try {
             val proc = byeDpiProcess
@@ -108,6 +114,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
             currentPort = null
             DohOkHttpFactory.instance?.byeDpiProxyPort = null
             flushConnections()
+            killOrphanProcesses()
         }
     }
 
@@ -124,6 +131,8 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                     return@Thread
                 }
 
+                killOrphanProcesses()
+
                 val binary = getBinaryFile()
                 if (!binary.exists()) {
                     promise.reject("BYEDPI_BINARY_NOT_FOUND", "libciadpi.so not found at ${binary.absolutePath}")
@@ -139,7 +148,8 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                 val cmdList = mutableListOf(
                     binary.absolutePath,
                     "-i", "127.0.0.1",
-                    "-p", port.toString()
+                    "-p", port.toString(),
+                    "-I", "0.0.0.0"
                 )
 
                 val userTokens = if (!customArgs.isNullOrBlank()) {
@@ -155,12 +165,14 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                         skipNext = false
                         continue
                     }
-                    if (token == "-i" || token == "--ip" || token == "-p" || token == "--port") {
+                    if (token == "-i" || token == "--ip" || token == "-p" || token == "--port" ||
+                        token == "-I" || token == "--conn-ip") {
                         skipNext = true
                         continue
                     }
                     if (token.startsWith("-i=") || token.startsWith("--ip=") ||
-                        token.startsWith("-p=") || token.startsWith("--port=")) {
+                        token.startsWith("-p=") || token.startsWith("--port=") ||
+                        token.startsWith("-I=") || token.startsWith("--conn-ip=")) {
                         continue
                     }
                     if (token == "-x" || token == "--debug" || token.startsWith("-x=") || token.startsWith("--debug=")) {
@@ -191,6 +203,17 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                             logLines.append(line).append("\n")
                         }
                     } catch (_: Exception) {}
+                }.start()
+
+                // Monitor process liveness in background
+                Thread {
+                    try {
+                        proc.waitFor()
+                    } catch (_: Exception) {}
+                    if (byeDpiProcess == proc) {
+                        Log.i(TAG, "ByeDPI process terminated unexpectedly")
+                        stopInternal()
+                    }
                 }.start()
 
                 var isListening = false

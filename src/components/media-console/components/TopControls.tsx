@@ -63,7 +63,9 @@ export const TopControls = memo(
     );
 
     return (
-      <AnimatedView style={[_styles.top, controlsOpacity, topControl]}>
+      <AnimatedView
+        pointerEvents={showControls ? 'box-none' : 'none'}
+        style={[_styles.top, controlsOpacity, topControl]}>
         <SafeAreaView style={_styles.topControlGroup}>
           <View style={_styles.sideControl}>
             {backControl}

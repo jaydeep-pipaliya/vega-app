@@ -75,6 +75,9 @@ export enum SettingsKeys {
 
   // Webview
   SKIP_IN_APP_WEBVIEW = 'skipInAppWebview',
+
+  // Remote Playback
+  ALWAYS_CAST_MODE = 'alwaysCastMode',
 }
 
 
@@ -82,6 +85,14 @@ export enum SettingsKeys {
  * Settings storage manager
  */
 export class SettingsStorage {
+  isAlwaysCastMode(): boolean {
+    return mainStorage.getBool(SettingsKeys.ALWAYS_CAST_MODE);
+  }
+
+  setAlwaysCastMode(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.ALWAYS_CAST_MODE, enabled);
+  }
+
   // Theme settings
   getPrimaryColor(): string {
     return mainStorage.getString(SettingsKeys.PRIMARY_COLOR) || '#FFFFFF';

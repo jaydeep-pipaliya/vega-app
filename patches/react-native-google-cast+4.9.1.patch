@@ -1,0 +1,24 @@
+diff --git a/node_modules/react-native-google-cast/android/src/main/java/com/reactnative/googlecast/types/RNGCMediaStatus.java b/node_modules/react-native-google-cast/android/src/main/java/com/reactnative/googlecast/types/RNGCMediaStatus.java
+index 0c5732c..dca7b0e 100644
+--- a/node_modules/react-native-google-cast/android/src/main/java/com/reactnative/googlecast/types/RNGCMediaStatus.java
++++ b/node_modules/react-native-google-cast/android/src/main/java/com/reactnative/googlecast/types/RNGCMediaStatus.java
+@@ -76,6 +76,8 @@ public class RNGCMediaStatus {
+
+     json.putDouble("volume", status.getStreamVolume());
+
++    json.putDouble("supportedMediaCommands", (double) status.getSupportedMediaCommands());
++
+     return json;
+   }
+ }
+diff --git a/node_modules/react-native-google-cast/lib/typescript/types/MediaStatus.d.ts b/node_modules/react-native-google-cast/lib/typescript/types/MediaStatus.d.ts
+index 2750562..6f2508e 100644
+--- a/node_modules/react-native-google-cast/lib/typescript/types/MediaStatus.d.ts
++++ b/node_modules/react-native-google-cast/lib/typescript/types/MediaStatus.d.ts
+@@ -47,4 +47,6 @@ export default interface MediaStatus {
+     videoInfo?: VideoInfo | null;
+     /** The stream's volume, between 0.0 and 1.0 */
+     volume: number;
++    /** The bitmask of supported media commands (e.g. 1 = PAUSE, 2 = SEEK). */
++    supportedMediaCommands?: number;
+ }

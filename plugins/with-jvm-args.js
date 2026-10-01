@@ -9,6 +9,9 @@ const GRADLE_PROPERTIES = {
   'org.gradle.workers.max': '4',
   // Bound the Kotlin daemon heap; it otherwise sizes to the host and adds up.
   'kotlin.daemon.jvmargs': '-Xmx1536m',
+  'reactNativeArchitectures': 'armeabi-v7a,arm64-v8a',
+  'expo.useLegacyPackaging': 'true',
+  'android.enableBundleCompression': 'true',
 };
 
 function upsertProperty(modResults, key, value) {

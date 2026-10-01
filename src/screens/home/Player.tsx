@@ -1,3 +1,4 @@
+import {isRemotePlaybackCanceled} from '../../lib/remote/remotePlaybackErrors';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   AppState,
@@ -29,6 +30,7 @@ import { RootStackParamList } from '../../App';
 import { cacheStorage, settingsStorage } from '../../lib/storage';
 import Orientation, {
   OrientationLocker,
+  PORTRAIT,
   LANDSCAPE,
 } from 'react-native-orientation-locker';
 import { SystemBars } from 'react-native-edge-to-edge';
@@ -47,7 +49,7 @@ import {
   BufferingStrategyType,
 } from 'react-native-video';
 import useContentStore from '../../lib/zustand/contentStore';
-import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
+import GoogleCast, { useCastDevice, useRemoteMediaClient } from 'react-native-google-cast';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import { FlashList } from '@shopify/flash-list';
@@ -66,7 +68,16 @@ import { useTVFocusBorderColor } from '../../lib/tv/useTVFocusBorderColor';
 import useContinueWatchingStore from '../../lib/zustand/continueWatchingStore';
 import useLocalVideoStore from '../../lib/zustand/localVideoStore';
 import useDownloadsStore from '../../lib/zustand/downloadsStore';
-import CastRemotePlayer from '../../components/CastRemotePlayer';
+import { DevicePickerModal, RemotePlayerScreen } from '../../components/remote-player';
+import { useRemoteStore } from '../../lib/remote/remoteStore';
+import { remotePlaybackManager } from '../../lib/remote/remotePlaybackManager';
+import { remoteDeliveryService } from '../../lib/remote/remoteDeliveryService';
+import {
+  RemoteAudioTrack,
+  RemoteDevice,
+  RemoteServer,
+  RemoteSubtitleTrack,
+} from '../../lib/remote/types';
 import {
   getEpisodeIdentity,
   getLocalVideoAssociationKey,
@@ -202,7 +213,14 @@ const getQualityIconName = (
 };
 
 const isCastableStreamUrl = (streamUrl: string, streamType?: string) => {
-  if (!/^https?:\/\//i.test(streamUrl) || streamType === 'torrent') {
+  if (streamType === 'torrent') {
+    return false;
+  }
+  // Downloaded files are served to the receiver by the phone's delivery server.
+  if (/^(content|file):\/\//i.test(streamUrl) || streamUrl.startsWith('/')) {
+    return true;
+  }
+  if (!/^https?:\/\//i.test(streamUrl)) {
     return false;
   }
 
@@ -212,25 +230,6 @@ const isCastableStreamUrl = (streamUrl: string, streamType?: string) => {
   } catch {
     return false;
   }
-};
-
-const getCastContentType = (streamUrl: string, streamType?: string) => {
-  const normalizedType = streamType?.toLowerCase() || '';
-  const normalizedUrl = streamUrl.toLowerCase().split('?')[0];
-
-  if (normalizedType === 'm3u8' || normalizedUrl.endsWith('.m3u8')) {
-    return 'application/vnd.apple.mpegurl';
-  }
-  if (normalizedType === 'dash' || normalizedUrl.endsWith('.mpd')) {
-    return 'application/dash+xml';
-  }
-  if (normalizedType === 'webm' || normalizedUrl.endsWith('.webm')) {
-    return 'video/webm';
-  }
-  if (normalizedType === 'mkv' || normalizedUrl.endsWith('.mkv')) {
-    return 'video/x-matroska';
-  }
-  return 'video/mp4';
 };
 
 const goFullScreen = () => {
@@ -264,12 +263,16 @@ const applyFullscreenMode = (isFullScreenEnabled: boolean) => {
   exitFullScreen();
 };
 
-const reapplyFullscreenMode = (isFullScreenEnabled: boolean) => {
+const reapplyFullscreenMode = (
+  isFullScreenEnabled: boolean,
+  stillFullscreen: () => boolean = () => true,
+) => {
   applyFullscreenMode(isFullScreenEnabled);
 
   if (Platform.OS === 'android' && isFullScreenEnabled) {
     setTimeout(() => {
-      applyFullscreenMode(true);
+      // The remote screen may have taken over during the delay.
+      if (stillFullscreen()) applyFullscreenMode(true);
     }, 150);
   }
 };
@@ -462,25 +465,55 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
   // Player ref
   const playerRef = useRef<VideoRef>(null as unknown as VideoRef);
-  const remoteMediaClient = useRemoteMediaClient();
+  const remoteMediaClient = useRemoteMediaClient({ignoreSessionUpdatesInBackground: true});
+  const [castPickerVisible, setCastPickerVisible] = useState(false);
+  const closeCastPicker = useCallback(() => setCastPickerVisible(false), []);
+  const castDevice = useCastDevice({ignoreSessionUpdatesInBackground: true});
   const hasSetInitialAudioRef = useRef(false);
   const hasSetInitialTextRef = useRef(false);
   const videoLoadedRef = useRef(false);
   const resumeAppliedRef = useRef(false);
   const loadedCastMediaRef = useRef('');
+  const loadingCastMediaRef = useRef('');
   const remoteCastPositionRef = useRef(0);
   const wasCastingRef = useRef(false);
   const appliedPersistedLocalVideoRef = useRef(false);
 
+  // Custom hooks for player settings
+  const {
+    showControls,
+    setShowControls,
+    showSettings,
+    setShowSettings,
+    activeTab,
+    setActiveTab,
+    resizeMode,
+    playbackRate,
+    setPlaybackRate,
+    isPlayerLocked,
+    showUnlockButton,
+    toastMessage,
+    showToast,
+    setToast,
+    isTextVisible,
+    isFullScreen,
+    // setIsFullScreen,
+    handleResizeMode,
+    togglePlayerLock,
+    toggleFullScreen,
+    handleLockedScreenTap,
+    unlockButtonTimerRef,
+  } = usePlayerSettings();
+
   // Shared values for animations
-  const loadingOpacity = useSharedValue(0);
-  const loadingScale = useSharedValue(0.8);
+  const loadingOpacity = useSharedValue(1);
+  const loadingScale = useSharedValue(1);
   const lockButtonTranslateY = useSharedValue(-150);
   const lockButtonOpacity = useSharedValue(0);
   const textVisibility = useSharedValue(0);
   const speedIconOpacity = useSharedValue(1);
-  const controlsTranslateY = useSharedValue(150);
-  const controlsOpacity = useSharedValue(0);
+  const controlsTranslateY = useSharedValue(showControls ? 0 : 150);
+  const controlsOpacity = useSharedValue(showControls ? 1 : 0);
   const toastOpacity = useSharedValue(0);
   const settingsTranslateY = useSharedValue(10000);
   const settingsOpacity = useSharedValue(0);
@@ -574,32 +607,6 @@ const Player = ({ route }: Props): React.JSX.Element => {
     handleVideoLoad,
     resetVideoTracks,
   } = useVideoSettings();
-
-  // Custom hooks for player settings
-  const {
-    showControls,
-    setShowControls,
-    showSettings,
-    setShowSettings,
-    activeTab,
-    setActiveTab,
-    resizeMode,
-    playbackRate,
-    setPlaybackRate,
-    isPlayerLocked,
-    showUnlockButton,
-    toastMessage,
-    showToast,
-    setToast,
-    isTextVisible,
-    isFullScreen,
-    // setIsFullScreen,
-    handleResizeMode,
-    togglePlayerLock,
-    toggleFullScreen,
-    handleLockedScreenTap,
-    unlockButtonTimerRef,
-  } = usePlayerSettings();
   const isFullScreenRef = useRef(isFullScreen);
   const continueWatchingId = route.params.infoUrl || activeEpisode?.link;
   const activeEpisodeKey = useMemo(
@@ -723,7 +730,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
     return () => clearTimeout(timer);
   }, [showControls, showSettings, showEpisodeSidebar, streamLoading, isPlayerLocked]);
 
-  const { videoPositionRef, handleProgress } = usePlayerProgress({
+  const { videoPositionRef, handleProgress, flushProgress, hasProgressRef } = usePlayerProgress({
     activeEpisode,
     onProgressSaved: saveContinueWatchingProgress,
   });
@@ -775,6 +782,13 @@ const Player = ({ route }: Props): React.JSX.Element => {
     },
     [handleProgress],
   );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') flushProgress();
+    });
+    return () => subscription.remove();
+  }, [flushProgress]);
 
   const downloads = useDownloadsStore(state => state.downloads);
 
@@ -946,6 +960,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
     resumeAppliedRef.current = false;
     videoLoadedRef.current = false;
     appliedPersistedLocalVideoRef.current = false;
+    remoteCastPositionRef.current = 0;
   }, [activeEpisode?.id, activeEpisode?.link, activeEpisode?.sourceLink]);
 
   // Auto-resume a remembered local video file for this episode (e.g. when
@@ -1003,7 +1018,44 @@ const Player = ({ route }: Props): React.JSX.Element => {
       isCastableStreamUrl(processedStreamUrl, selectedStream?.type),
     [processedStreamUrl, selectedStream?.type],
   );
-  const isCasting = Boolean(remoteMediaClient);
+  const isLocalOrDownloadedStream = useMemo(
+    () =>
+      selectedStream?.type === 'local' ||
+      selectedStream?.server === 'Downloaded' ||
+      Boolean(selectedStream?.link && isLocalPath(selectedStream.link)),
+    [selectedStream?.link, selectedStream?.server, selectedStream?.type],
+  );
+  const connectedRemoteDevice = useRemoteStore(state => state.connectedDevice);
+  const isRemoteActive =
+    !Platform.isTV &&
+    (Boolean(remoteMediaClient) ||
+      Boolean(connectedRemoteDevice) ||
+      Boolean((route.params as any)?.alwaysCast) ||
+      settingsStorage.isAlwaysCastMode());
+  const isCasting =
+    !Platform.isTV && (Boolean(remoteMediaClient) || isRemoteActive);
+  const isRemoteActiveRef = useRef(isRemoteActive);
+  isRemoteActiveRef.current = isRemoteActive;
+  useEffect(() => {
+    if (isRemoteActive) closeCastPicker();
+  }, [isRemoteActive, closeCastPicker]);
+
+  useEffect(() => {
+    if (Platform.isTV) return;
+    (navigation as any).setOptions({
+      orientation: isRemoteActive ? 'portrait' : 'landscape',
+      statusBarHidden: !isRemoteActive,
+      navigationBarHidden: !isRemoteActive,
+      autoHideHomeIndicator: !isRemoteActive,
+    });
+    if (isRemoteActive) {
+      Orientation.lockToPortrait();
+      exitFullScreen();
+    } else {
+      Orientation.lockToLandscape();
+      goFullScreen();
+    }
+  }, [isRemoteActive, navigation]);
   const [isResolvingStream, setIsResolvingStream] = useState(false);
   const progressIntervalRef = useRef<any>(null);
   const [torrentState, setTorrentState] = useState<string>('');
@@ -1242,14 +1294,15 @@ const Player = ({ route }: Props): React.JSX.Element => {
       setActiveEpisode(route.params.episodeList[currentIndex + 1]);
       hasSetInitialAudioRef.current = false;
       hasSetInitialTextRef.current = false;
+      setShowControls(true);
     } else {
       ToastAndroid.show('No more episodes', ToastAndroid.SHORT);
     }
   }, [activeEpisode, route.params?.episodeList]);
 
-  const hasNextEpisode = useMemo(() => {
-    if (!route.params?.episodeList?.length || !activeEpisode) return false;
-    const currentIndex = route.params.episodeList.findIndex(
+  const currentEpisodeIndex = useMemo(() => {
+    if (!route.params?.episodeList?.length || !activeEpisode) return -1;
+    return route.params.episodeList.findIndex(
       ep =>
         (activeEpisode?.id && ep?.id && activeEpisode.id === ep.id) ||
         (activeEpisode?.link && ep?.link && activeEpisode.link === ep.link) ||
@@ -1258,8 +1311,14 @@ const Player = ({ route }: Props): React.JSX.Element => {
           activeEpisode.sourceLink === ep.sourceLink) ||
         activeEpisode === ep,
     );
-    return currentIndex >= 0 && currentIndex < route.params.episodeList.length - 1;
   }, [activeEpisode, route.params?.episodeList]);
+
+  const hasNextEpisode = useMemo(() => {
+    return (
+      currentEpisodeIndex >= 0 &&
+      currentEpisodeIndex < (route.params?.episodeList?.length || 0) - 1
+    );
+  }, [currentEpisodeIndex, route.params?.episodeList]);
 
   // Memoized error handler
   const selectedStreamRef = useRef(selectedStream);
@@ -1370,182 +1429,511 @@ const Player = ({ route }: Props): React.JSX.Element => {
   ]);
 
   useEffect(() => {
-    if (!remoteMediaClient) {
+    if (isTV || !remoteMediaClient) {
       return;
     }
 
-    const subscription = remoteMediaClient.onMediaProgressUpdated(
+    const subProgress = remoteMediaClient.onMediaProgressUpdated(
       (progress, duration) => {
-        remoteCastPositionRef.current = progress;
-        if (duration > 0) {
-          handleProgress({ currentTime: progress, seekableDuration: duration });
+        if (remotePlaybackManager.isEnding() || remotePlaybackManager.isReloading()) return;
+        const timeline = remotePlaybackManager.mapTimeline(progress, duration);
+        if (timeline.duration > 0) {
+          useRemoteStore.getState().setTimeline(timeline.position, timeline.duration);
         }
       },
       1,
     );
 
-    return () => subscription.remove();
-  }, [handleProgress, remoteMediaClient]);
+    const subStatus = remoteMediaClient.onMediaStatusUpdated(status =>
+      remotePlaybackManager.handleCastStatus(status, selectedStream?.type),
+    );
+
+    return () => {
+      subProgress.remove();
+      subStatus.remove();
+    };
+  }, [handleProgress, remoteMediaClient, selectedStream?.type]);
+
+  // Cast and DLNA use the same confirmed timeline and persistence as local playback.
+  useEffect(() => {
+    if (isTV || !isRemoteActive || !processedStreamUrl) return;
+    const mediaSuffix = `:${getEpisodeIdentity(activeEpisode)}:${processedStreamUrl}`;
+    const unsubscribe = useRemoteStore.subscribe((state, previous) => {
+      if (!loadedCastMediaRef.current.endsWith(mediaSuffix)) return;
+      if (!state.connectedDevice && previous.connectedDevice) {
+        flushProgress();
+        return;
+      }
+      if (state.pendingSeek || state.duration <= 0) return;
+      if (state.status !== 'playing' && state.status !== 'paused' && state.status !== 'stopped') return;
+      // A disconnect resets the timeline; retain the final receiver position instead.
+      if (!state.connectedDevice) return;
+      if (state.currentTime === previous.currentTime && state.duration === previous.duration && state.status === previous.status) return;
+      remoteCastPositionRef.current = state.currentTime;
+      handleProgressWithTime({currentTime: state.currentTime, seekableDuration: state.duration});
+      if (state.status === 'paused' || state.status === 'stopped') flushProgress();
+    });
+    return () => {
+      unsubscribe();
+      flushProgress();
+    };
+  }, [activeEpisode, processedStreamUrl, isRemoteActive, handleProgressWithTime, flushProgress]);
 
   useEffect(() => {
+    if (isTV) return;
     if (remoteMediaClient) {
       wasCastingRef.current = true;
-      return;
+      // A newly connected session is a fresh start after any earlier stop.
+      remotePlaybackManager.clearEnding();
     }
-
-    if (!wasCastingRef.current) {
-      return;
-    }
-
-    wasCastingRef.current = false;
-    loadedCastMediaRef.current = '';
-    const resumePosition = remoteCastPositionRef.current;
-    if (resumePosition > 0) {
-      playerRef.current?.seek(resumePosition);
-    }
-    playerRef.current?.resume();
+    // A missing client can mean a suspended connection while the TV still
+    // requests our stream. Only a real session-ended event tears delivery down.
   }, [remoteMediaClient]);
 
   useEffect(() => {
-    if (!remoteMediaClient || !canCastStream || !processedStreamUrl) {
-      return;
+    if (isTV) return;
+    const subscription = GoogleCast.getSessionManager().onSessionEnded(() => {
+      if (!wasCastingRef.current || remotePlaybackManager.isEnding()) return;
+      wasCastingRef.current = false;
+      flushProgress();
+      loadedCastMediaRef.current = '';
+      loadingCastMediaRef.current = '';
+      if (useRemoteStore.getState().connectedDevice?.type === 'cast') {
+        remotePlaybackManager.stop().catch(() => {});
+      }
+      const resumePosition = remoteCastPositionRef.current;
+      if (resumePosition > 0) playerRef.current?.seek(resumePosition);
+      playerRef.current?.resume();
+    });
+    return () => subscription.remove();
+  }, [flushProgress]);
+
+  // Leaving the remote screen ends casting, whichever way the user leaves.
+  useEffect(() => {
+    if (isTV) return;
+    remotePlaybackManager.clearEnding();
+    return navigation.addListener('beforeRemove', () => {
+      if (!isRemoteActiveRef.current) return;
+      flushProgress();
+      if (AppState.currentState !== 'active') return;
+      loadingCastMediaRef.current = '';
+      remotePlaybackManager.stop().catch(() => {});
+    });
+  }, [navigation, flushProgress]);
+
+  // Synchronize stream data, audio tracks, and subtitles to Remote Store
+  useEffect(() => {
+    if (Platform.isTV || !isRemoteActive) return;
+
+    // 1. Servers (from streamData provider sources)
+    const servers: RemoteServer[] = (streamData || []).map((s: any, idx: number) => {
+      const rawTags: string[] = Array.isArray(s.tags)
+        ? s.tags
+        : typeof s.tag === 'string'
+        ? [s.tag]
+        : [];
+      const tags = rawTags
+        .map(t => (typeof t === 'string' ? t.trim() : ''))
+        .filter(t => Boolean(t) && t.toLowerCase() !== s.quality?.trim().toLowerCase());
+      return {
+        id: s.link || String(idx),
+        name: s.server || `Server ${idx + 1}`,
+        quality: s.quality,
+        tags: tags.length > 0 ? tags : undefined,
+        link: s.link,
+      };
+    });
+    useRemoteStore.getState().setServers(servers, selectedStream?.link);
+
+    // 2. Quality is a video variant of the selected server, never a server.
+    // Only real variants are listed; the receiver path fills them in.
+
+    // 3. Audio tracks (strictly from media source, never fake default 'en')
+    const remoteAudio: RemoteAudioTrack[] = (audioTracks || []).map(
+      (t: any, idx: number) => {
+        const lang = t.language && t.language !== 'und' ? t.language : '';
+        const title = t.title || (lang ? lang.toUpperCase() : `Audio Track ${idx + 1}`);
+        return {
+          id: String(t.index ?? idx),
+          index: typeof t.index === 'number' ? t.index : idx,
+          language: lang || (t.title ? t.title : `Track ${idx + 1}`),
+          title: title,
+          codec: t.type || t.codec,
+          isSelected: selectedAudioTrackIndex === idx,
+        };
+      },
+    );
+
+    const currentAudio = useRemoteStore.getState().audioTracks;
+    if (remoteAudio.length > 0 && (currentAudio.length === 0 || remoteAudio.length >= currentAudio.length)) {
+      useRemoteStore.getState().setAudioTracks(
+        remoteAudio,
+        remoteAudio[selectedAudioTrackIndex]?.id || remoteAudio[0]?.id,
+      );
     }
 
-    const mediaKey = `${getEpisodeIdentity(activeEpisode)}:${processedStreamUrl}`;
-    if (loadedCastMediaRef.current === mediaKey) {
-      return;
+    // 4. Subtitles (embedded tracks + external + stream subs)
+    const allSubs: RemoteSubtitleTrack[] = [];
+    (externalSubs || []).forEach((sub: any, i: number) => {
+      if (sub?.uri) {
+        allSubs.push({
+          id: `ext_${i}_${sub.uri}`,
+          language: sub.language || 'und',
+          title: sub.title || sub.language || `Subtitle ${i + 1}`,
+          uri: sub.uri,
+          isEmbedded: false,
+        });
+      }
+    });
+
+    if (Array.isArray(selectedStream?.subtitles)) {
+      selectedStream.subtitles.forEach((sub: any, i: number) => {
+        const uri = sub.url || sub.link;
+        if (uri) {
+          allSubs.push({
+            id: `stream_${i}_${uri}`,
+            language: sub.lang || sub.language || 'und',
+            title: sub.label || sub.title || sub.language || `Subtitle ${i + 1}`,
+            uri,
+            isEmbedded: false,
+          });
+        }
+      });
     }
+
+    if (Array.isArray(textTracks)) {
+      textTracks.forEach((t: any, i: number) => {
+        const lang = t.language && t.language !== 'und' ? t.language : '';
+        allSubs.push({
+          id: `track_${t.index ?? i}`,
+          language: lang || 'und',
+          title: t.title || (lang ? lang.toUpperCase() : `Track ${i + 1}`),
+          isEmbedded: true,
+        });
+      });
+    }
+
+    const currentSubs = useRemoteStore.getState().subtitleTracks;
+    if (allSubs.length > 0 && (currentSubs.length === 0 || allSubs.length >= currentSubs.length)) {
+      const activeSubTrack = allSubs.find((s, idx) => idx === selectedTextTrackIndex);
+      useRemoteStore.getState().setSubtitleTracks(allSubs, activeSubTrack?.id);
+    }
+  }, [
+    isRemoteActive,
+    streamData,
+    selectedStream,
+    audioTracks,
+    selectedAudioTrackIndex,
+    externalSubs,
+    textTracks,
+    selectedTextTrackIndex,
+  ]);
+
+  // Inspect media tracks directly via native module / direct EBML parser when remote player is active
+  useEffect(() => {
+    if (Platform.isTV || !isRemoteActive || !processedStreamUrl) return;
 
     let cancelled = false;
-    const loadCastMedia = async () => {
-      const castSubtitleTracks = externalSubs.flatMap((track, index) => {
-        const uri = track?.uri as string | undefined;
-        const type = String(track?.type || '').toLowerCase();
-        if (!uri || !/^https?:\/\//i.test(uri)) {
-          return [];
+    remoteDeliveryService
+      .inspectTracks(
+        processedStreamUrl,
+        Boolean(isLocalOrDownloadedStream),
+        selectedStream?.headers,
+      )
+      .then(inspected => {
+        if (cancelled) return;
+        if (inspected.audioTracks && inspected.audioTracks.length > 0) {
+          useRemoteStore.getState().setAudioTracks(
+            inspected.audioTracks,
+            inspected.audioTracks[0]?.id,
+          );
         }
-
-        const contentType = type.includes('ttml')
-          ? 'application/ttml+xml'
-          : type.includes('vtt') || uri.toLowerCase().includes('.vtt')
-            ? 'text/vtt'
-            : null;
-        if (!contentType) {
-          return [];
+        if (inspected.subtitleTracks && inspected.subtitleTracks.length > 0) {
+          useRemoteStore.getState().setSubtitleTracks(inspected.subtitleTracks);
         }
+        if (inspected.videoQualities && inspected.videoQualities.length > 0) {
+          useRemoteStore.getState().setQualities(inspected.videoQualities, inspected.videoQualities[0]?.id);
+        }
+      })
+      .catch(() => {});
 
-        return [
-          {
-            id: index + 1,
-            type: 'text' as const,
-            subtype: 'subtitles' as const,
-            contentId: uri,
-            contentType,
-            language: track?.language || 'und',
-            name: track?.title || track?.language || `Subtitle ${index + 1}`,
-          },
-        ];
-      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isRemoteActive,
+    processedStreamUrl,
+    isLocalOrDownloadedStream,
+    selectedStream?.headers,
+  ]);
 
+  useEffect(() => {
+    // stop() resets the store, which re-runs this effect; that must not reload.
+    if (isTV || !canCastStream || !processedStreamUrl || remotePlaybackManager.isEnding()) {
+      return;
+    }
+    // Wait until the server list has loaded and the chosen stream is resolved;
+    // otherwise a stale or placeholder URL gets sent to the receiver.
+    if (streamLoading || isResolvingStream || !selectedStream?.link) {
+      return;
+    }
+
+    // Ensure processedStreamUrl is synchronized with selectedStream.link for non-torrent streams
+    if (
+      !selectedStream.link.startsWith('magnet:') &&
+      selectedStream.type !== 'torrent' &&
+      processedStreamUrl !== selectedStream.link
+    ) {
+      return;
+    }
+
+    // DLNA comes from the store; Cast comes from the live session, so switching
+    // Cast devices reloads and the placeholder-then-real-id double load cannot happen.
+    const targetDevice: RemoteDevice | null =
+      connectedRemoteDevice?.type === 'dlna'
+        ? connectedRemoteDevice
+        : remoteMediaClient && castDevice
+          ? {
+              id: castDevice.deviceId,
+              name: castDevice.friendlyName || 'Cast device',
+              type: 'cast',
+              model: castDevice.modelName,
+            }
+          : null;
+
+    if (!targetDevice) {
+      return;
+    }
+
+    const canonicalStreamUrl = selectedStream.link.startsWith('magnet:') ? processedStreamUrl : selectedStream.link;
+    const mediaKey = `${targetDevice.id}:${getEpisodeIdentity(activeEpisode)}:${canonicalStreamUrl}`;
+    if (loadedCastMediaRef.current === mediaKey || loadingCastMediaRef.current === mediaKey) {
+      return;
+    }
+    loadingCastMediaRef.current = mediaKey;
+
+    let cancelled = false;
+    const loadRemoteMedia = async () => {
       try {
-        await remoteMediaClient.loadMedia({
-          autoplay: true,
-          playbackRate,
-          startTime: Math.max(
-            remoteCastPositionRef.current,
-            videoPositionRef.current.position,
-            watchedDuration,
-          ),
-          mediaInfo: {
-            contentUrl: processedStreamUrl,
-            contentType: getCastContentType(
-              processedStreamUrl,
-              selectedStream?.type,
-            ),
-            mediaTracks: castSubtitleTracks,
-            metadata: {
-              type: 'generic',
-              title: route.params?.primaryTitle,
-              subtitle: activeEpisode?.title || route.params?.secondaryTitle,
-              images: route.params?.poster?.poster
-                ? [{ url: route.params.poster.poster }]
-                : undefined,
-            },
-            customData: selectedStream?.headers
-              ? { headers: selectedStream.headers }
-              : undefined,
-          },
+        if (targetDevice.type === 'cast' && remoteMediaClient) {
+          remotePlaybackManager.initCastClient(remoteMediaClient);
+        }
+
+        const remoteSubtitles: RemoteSubtitleTrack[] = [];
+        externalSubs.forEach((sub: any, i: number) => {
+          if (sub?.uri) {
+            remoteSubtitles.push({
+              id: `ext_${i}_${sub.uri}`,
+              language: sub.language || 'und',
+              title: sub.title || sub.language || `Subtitle ${i + 1}`,
+              uri: sub.uri,
+              isEmbedded: false,
+            });
+          }
+        });
+        if (Array.isArray(selectedStream?.subtitles)) {
+          selectedStream.subtitles.forEach((sub: any, i: number) => {
+            const uri = sub.url || sub.link;
+            if (uri) {
+              remoteSubtitles.push({
+                id: `stream_${i}_${uri}`,
+                language: sub.lang || sub.language || 'und',
+                title: sub.label || sub.title || sub.language || `Subtitle ${i + 1}`,
+                uri,
+                isEmbedded: false,
+              });
+            }
+          });
+        }
+        if (Array.isArray(textTracks)) {
+          textTracks.forEach((t: any, i: number) => {
+            remoteSubtitles.push({
+              id: `track_${t.index ?? i}`,
+              language: t.language || 'und',
+              title: t.title || t.language || `Track ${i + 1}`,
+              isEmbedded: true,
+            });
+          });
+        }
+
+        const remoteAudio: RemoteAudioTrack[] = (audioTracks || []).map(
+          (t: any, idx: number) => ({
+            id: String(t.index ?? idx),
+            index: typeof t.index === 'number' ? t.index : idx,
+            language: t.language || 'und',
+            title: t.title || t.language || `Audio Track ${idx + 1}`,
+            codec: t.type,
+            isSelected: selectedAudioTrackIndex === idx,
+          }),
+        );
+
+        const candidateDuration =
+          (Number.isFinite(videoPositionRef.current?.duration) && videoPositionRef.current.duration > 0)
+            ? videoPositionRef.current.duration
+            : (Number.isFinite(syncedDuration) && syncedDuration > 0)
+              ? syncedDuration
+              : (readCachedProgress(activeEpisode?.link).duration > 0)
+                ? readCachedProgress(activeEpisode?.link).duration
+                : undefined;
+
+        await remotePlaybackManager.startRemotePlayback(targetDevice, {
+          sourceUrl: processedStreamUrl,
+          sourceType: selectedStream?.type,
+          isLocal: Boolean(isLocalOrDownloadedStream),
+          title: route.params?.primaryTitle || 'Vega Media',
+          subtitle: activeEpisode?.title || route.params?.secondaryTitle,
+          artwork:
+            route.params?.poster?.background || route.params?.poster?.poster,
+          headers: selectedStream?.headers || selectedStreamRef.current?.headers,
+          duration: candidateDuration,
+          audioTracks:
+            useRemoteStore.getState().audioTracks.length > remoteAudio.length
+              ? useRemoteStore.getState().audioTracks
+              : remoteAudio,
+          subtitles:
+            useRemoteStore.getState().subtitleTracks.length > remoteSubtitles.length
+              ? useRemoteStore.getState().subtitleTracks
+              : remoteSubtitles,
+          initialPosition: Math.max(0, hasProgressRef.current
+            ? videoPositionRef.current.position
+            : Number.isFinite(watchedDuration) ? watchedDuration : 0),
         });
 
-        if (!cancelled) {
+        if (loadingCastMediaRef.current === mediaKey) {
           loadedCastMediaRef.current = mediaKey;
           wasCastingRef.current = true;
           playerRef.current?.pause();
-          setToast('Playing on Cast device', 2000);
+          if (!cancelled) setToast(`Playing on ${targetDevice.name}`, 2000);
         }
       } catch (error) {
-        console.warn('Failed to load media on Cast device:', error);
-        if (!cancelled) {
+        if (isRemotePlaybackCanceled(error)) return;
+        console.warn('Failed to load media on remote device:', error);
+        if (!cancelled && loadingCastMediaRef.current === mediaKey) {
           loadedCastMediaRef.current = '';
-          setToast('This stream could not be played on the Cast device', 3000);
+          setToast(
+            'This stream could not be played on the remote device',
+            3000,
+          );
         }
+      } finally {
+        if (loadingCastMediaRef.current === mediaKey) loadingCastMediaRef.current = '';
       }
     };
 
-    loadCastMedia();
+    loadRemoteMedia().catch(e => {
+      if (isRemotePlaybackCanceled(e)) return;
+      console.warn('Unhandled loadRemoteMedia error:', e);
+    });
     return () => {
       cancelled = true;
     };
   }, [
     activeEpisode,
     canCastStream,
+    castDevice,
+    isResolvingStream,
+    selectedStream?.link,
+    streamLoading,
+    connectedRemoteDevice,
     externalSubs,
+    isLocalOrDownloadedStream,
     playbackRate,
     processedStreamUrl,
     remoteMediaClient,
+    route.params?.poster?.background,
     route.params?.poster?.poster,
     route.params?.primaryTitle,
     route.params?.secondaryTitle,
     selectedStream?.headers,
-    selectedStream?.type,
-    setToast,
+    selectedStream?.subtitles,
+    audioTracks,
+    selectedAudioTrackIndex,
+    textTracks,
     videoPositionRef,
     watchedDuration,
+    setToast,
   ]);
 
-  // Enter landscape and fullscreen on mount & focus, and restore on unmount
+  // Enter landscape or portrait (when remote active) and fullscreen on mount & focus
   useFocusEffect(
     useCallback(() => {
+      if (isRemoteActive) {
+        Orientation.lockToPortrait();
+        exitFullScreen();
+        return () => {
+          if (!Platform.isTV) {
+            Orientation.lockToPortrait();
+          } else {
+            Orientation.unlockAllOrientations();
+          }
+        };
+      }
+
       Orientation.lockToLandscape();
       goFullScreen();
-      reapplyFullscreenMode(isFullScreenRef.current);
+      reapplyFullscreenMode(
+        isFullScreenRef.current,
+        () => !isRemoteActiveRef.current && isFullScreenRef.current,
+      );
 
       return () => {
-        Orientation.unlockAllOrientations();
+        if (!Platform.isTV) {
+          Orientation.lockToPortrait();
+        } else {
+          Orientation.unlockAllOrientations();
+        }
         exitFullScreen();
       };
-    }, []),
+    }, [isRemoteActive]),
   );
 
   useEffect(() => {
+    if (isRemoteActive) {
+      Orientation.lockToPortrait();
+      exitFullScreen();
+      return () => {
+        if (!Platform.isTV) {
+          Orientation.lockToPortrait();
+        } else {
+          Orientation.unlockAllOrientations();
+        }
+      };
+    }
+
     Orientation.lockToLandscape();
     goFullScreen();
     return () => {
-      Orientation.unlockAllOrientations();
+      if (!Platform.isTV) {
+        Orientation.lockToPortrait();
+      } else {
+        Orientation.unlockAllOrientations();
+      }
       exitFullScreen();
     };
-  }, []);
+  }, [isRemoteActive]);
 
   useEffect(() => {
     isFullScreenRef.current = isFullScreen;
   }, [isFullScreen]);
+
+  // The portrait remote screen keeps the system bars; only local playback is immersive.
+  const applyPlayerSystemBars = useCallback(() => {
+    if (isRemoteActiveRef.current) {
+      exitFullScreen();
+      return;
+    }
+    reapplyFullscreenMode(
+      isFullScreenRef.current,
+      () => !isRemoteActiveRef.current && isFullScreenRef.current,
+    );
+  }, []);
 
   useEffect(() => {
     const subscription = AppState.addEventListener(
       'change',
       (nextAppState: AppStateStatus) => {
         if (nextAppState === 'active') {
-          reapplyFullscreenMode(isFullScreenRef.current);
+          applyPlayerSystemBars();
         }
       },
     );
@@ -1674,11 +2062,11 @@ const Player = ({ route }: Props): React.JSX.Element => {
   // Animation effects
   useEffect(() => {
     // Loading animations
-    if (streamLoading || isResolvingStream) {
-      loadingOpacity.value = withTiming(1, { duration: 800 });
-      loadingScale.value = withTiming(1, { duration: 800 });
+    if (streamLoading || isResolvingStream || !processedStreamUrl) {
+      loadingOpacity.value = withTiming(1, { duration: 250 });
+      loadingScale.value = withTiming(1, { duration: 250 });
     }
-  }, [isResolvingStream, streamLoading]);
+  }, [isResolvingStream, streamLoading, processedStreamUrl]);
 
   useEffect(() => {
     // Lock button animations
@@ -1779,8 +2167,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
   useEffect(() => {
     // Handle fullscreen toggle
-    reapplyFullscreenMode(isFullScreen);
-  }, [isFullScreen]);
+    applyPlayerSystemBars();
+  }, [applyPlayerSystemBars, isFullScreen, isRemoteActive]);
 
   const handleShowControls = useCallback(
     () => setShowControls(true),
@@ -1871,7 +2259,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
       disableGesture: isPlayerLocked || !enableSwipeGesture,
       doubleTapTime: 200,
       disableSeekButtons: isPlayerLocked || hideSeekButtons,
-      showOnStart: !isPlayerLocked,
+      showControls,
+      showOnStart: showControls,
       alwaysShowControls: false,
       source: {
         textTracks: externalSubs,
@@ -1951,7 +2340,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       onVideoTracks: handleVideoTracks,
       selectedVideoTrack,
       style: { flex: 1, zIndex: 100 },
-      controlAnimationTiming: 357,
+      controlAnimationTiming: 250,
       controlTimeoutDelay: 10000,
       hideAllControlls: isTV || isPlayerLocked || showSettings || showEpisodeSidebar,
       onSeekSnap: handleSeekSnap,
@@ -1990,16 +2379,12 @@ const Player = ({ route }: Props): React.JSX.Element => {
       processedStreamUrl,
       enableSwipeGesture,
       hideSeekButtons,
+      showControls,
     ],
   );
 
-  const isLocalOrDownloadedStream =
-    selectedStream?.type === 'local' ||
-    selectedStream?.server === 'Downloaded' ||
-    Boolean(selectedStream?.link && isLocalPath(selectedStream.link));
-
   // Show loading state
-  if (streamLoading && !isCasting && !isLocalOrDownloadedStream) {
+  if (streamLoading && !isRemoteActive && !isCasting && !isLocalOrDownloadedStream) {
     return (
       <SafeAreaView
         edges={{ right: 'off', top: 'off', left: 'off', bottom: 'off' }}
@@ -2029,7 +2414,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
   }
 
   // Show error state
-  if (streamError && !isCasting && !isLocalOrDownloadedStream) {
+  if (streamError && !isRemoteActive && !isCasting && !isLocalOrDownloadedStream) {
     return (
       <SafeAreaView className="bg-black flex-1 justify-center items-center">
         <SystemBars hidden={true} />
@@ -2068,22 +2453,89 @@ const Player = ({ route }: Props): React.JSX.Element => {
         bottom: 'off',
       }}
       className="bg-black flex-1 relative">
-      <SystemBars hidden={isFullScreen} />
-      <StatusBar translucent={true} hidden={true} />
-      <OrientationLocker orientation={LANDSCAPE} />
+      <SystemBars hidden={!isRemoteActive && isFullScreen} />
+      <StatusBar translucent={true} hidden={!isRemoteActive} />
+      {isRemoteActive ? (
+        <OrientationLocker orientation={PORTRAIT} />
+      ) : (
+        <OrientationLocker orientation={LANDSCAPE} />
+      )}
 
-      {/* Local or Cast player */}
-      {remoteMediaClient ? (
-        <CastRemotePlayer
-          client={remoteMediaClient}
+
+      {/* Local or Remote player */}
+      {isRemoteActive ? (
+        <RemotePlayerScreen
           title={route.params?.primaryTitle}
           subtitle={activeEpisode?.title || route.params?.secondaryTitle}
-          artwork={
-            route.params?.poster?.background || route.params?.poster?.poster
-          }
-          accentColor={primary}
+          poster={route.params?.poster?.poster}
+          backdrop={route.params?.poster?.background}
           onBack={() => navigation.goBack()}
-          onError={message => setToast(message, 3000)}
+          preparingText={
+            streamLoading
+              ? 'Finding servers…'
+              : isResolvingStream
+                ? 'Preparing stream…'
+                : null
+          }
+          episodes={route.params?.episodeList}
+          activeEpisodeIndex={
+            currentEpisodeIndex >= 0 ? currentEpisodeIndex : undefined
+          }
+          onSelectEpisode={index => {
+            const ep = route.params?.episodeList?.[index];
+            if (ep && ep !== activeEpisode) {
+              setActiveEpisode(ep);
+              hasSetInitialAudioRef.current = false;
+              hasSetInitialTextRef.current = false;
+              setShowControls(true);
+            }
+          }}
+          onSelectServer={server => {
+            const matchedStream = streamData?.find(
+              (s: any) => s.link === server.id || s.link === server.link,
+            );
+            if (matchedStream) {
+              setSelectedStream(matchedStream);
+              appliedPersistedLocalVideoRef.current = true;
+              if (activeEpisodeKey) {
+                clearLocalVideoAssociation(activeEpisodeKey);
+              }
+            }
+          }}
+          onSelectAudio={track => {
+            remotePlaybackManager.switchAudioTrack(track).then(() => {
+              setSelectedAudioTrackIndex(track.index);
+              setSelectedAudioTrack({
+                type: SelectedTrackType.INDEX,
+                value: String(track.index),
+              });
+            }).catch((error: Error) => {
+              if (isRemotePlaybackCanceled(error)) return;
+              setToast(error.message || 'Unable to switch audio track', 4000);
+            });
+          }}
+          onSelectSubtitle={sub => {
+            remotePlaybackManager.setActiveSubtitleTrack(sub?.id).then(() => {
+              if (!sub) {
+                setSelectedTextTrackIndex(1000);
+                setSelectedTextTrack({type: SelectedTrackType.INDEX, value: '1000'});
+              }
+            }).catch((error: Error) => {
+              if (isRemotePlaybackCanceled(error)) return;
+              setToast(error.message || 'Unable to switch subtitle track', 4000);
+            });
+          }}
+          onSelectQuality={q => {
+            const sourceUrl = /^(https?:|content:|file:|\/)/i.test(q.id)
+              ? q.id
+              : undefined;
+            remotePlaybackManager.switchQuality(q, sourceUrl).catch((error: Error) => {
+              if (isRemotePlaybackCanceled(error)) return;
+              setToast(error.message || 'Unable to change remote quality', 4000);
+            });
+          }}
+          skipInterval={activeSkip}
+          onSkipPress={handleSkip}
         />
       ) : processedStreamUrl ? (
         <VideoPlayer {...videoPlayerProps} />
@@ -2260,18 +2712,33 @@ const Player = ({ route }: Props): React.JSX.Element => {
             </TouchableOpacity>
           )}
           {!isPlayerLocked && canCastStream && (
-            <View className="opacity-70 p-2 rounded-full">
-              <CastButton
+            <TouchableOpacity
+              onPress={() => setCastPickerVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Cast video"
+              className="opacity-70 p-2 rounded-full">
+              <MaterialCommunityIcons
+                name="cast"
                 accessibilityLabel="Cast video"
-                tintColor="hsl(0, 0%, 70%)"
-                style={{ width: 24, height: 24 }}
+                color="hsl(0, 0%, 70%)"
+                size={24}
               />
-            </View>
+            </TouchableOpacity>
           )}
         </Animated.View>
       )}
 
       {/* Episode Sidebar Toggle Button (Center Right) */}
+      {!isTV && !isRemoteActive && (
+        <DevicePickerModal
+          visible={castPickerVisible}
+          onClose={closeCastPicker}
+          onStopCasting={() => {
+            closeCastPicker();
+            remotePlaybackManager.stop().catch(() => {});
+          }}
+        />
+      )}
       {!isCasting &&
         !streamLoading &&
         !isPlayerLocked &&
@@ -2313,6 +2780,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       {/* Bottom controls */}
       {!isCasting && !isPlayerLocked && !showSettings && !showEpisodeSidebar && (
         <Animated.View
+          pointerEvents={showControls ? 'auto' : 'none'}
           style={[controlsStyle, { left: '10%', right: '10%', bottom: 15 }]}
           className="absolute flex-row items-center">
           {/* Audio controls */}
@@ -3156,6 +3624,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                           setActiveEpisode(ep);
                           hasSetInitialAudioRef.current = false;
                           hasSetInitialTextRef.current = false;
+                          setShowControls(true);
                         }
                         setShowEpisodeSidebar(false);
                       }}

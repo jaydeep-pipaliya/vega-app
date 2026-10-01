@@ -1,0 +1,2470 @@
+import {RemotePlaybackCanceledError, isRemotePlaybackCanceled} from './remotePlaybackErrors';
+import GoogleCast, {
+  MediaPlayerIdleReason,
+  MediaPlayerState,
+  MediaStatus,
+  RemoteMediaClient,
+} from 'react-native-google-cast';
+import * as Crypto from 'expo-crypto';
+import {remoteDeliveryService} from './remoteDeliveryService';
+import {dlnaService} from './dlnaService';
+import {useRemoteStore} from './remoteStore';
+import {
+  RemoteAudioTrack,
+  RemoteDevice,
+  RemotePlaybackStatus,
+  RemoteQuality,
+  RemoteSubtitleTrack,
+} from './types';
+import {isTV} from '../tv';
+import {getCookieHeader} from '../services/cookieManager';
+
+interface AmbiguousSessionState {
+  playUrl: string;
+  mimeType?: string;
+  timelineOffset: number;
+  sourceDuration: number;
+  engine: 'ffmpeg' | 'fmp4' | null;
+  byteRangeSeek: boolean;
+  subtitleTrackId?: string | null;
+  audioTrackId?: string;
+  status?: RemotePlaybackStatus;
+}
+
+interface AmbiguousSessionPair {
+  device: RemoteDevice;
+  previousSessionId: string;
+  nextSessionId: string;
+  previousState: AmbiguousSessionState;
+  nextState?: AmbiguousSessionState;
+}
+
+export interface RemoteMediaPayload {
+  sourceUrl: string;
+  sourceType?: string;
+  isLocal?: boolean;
+  title: string;
+  subtitle?: string;
+  artwork?: string;
+  headers?: Record<string, string>;
+  qualities?: RemoteQuality[];
+  audioTracks?: RemoteAudioTrack[];
+  subtitles?: RemoteSubtitleTrack[];
+  initialPosition?: number;
+  duration?: number;
+}
+
+function sanitizeUrlForLog(url?: string): string {
+  return url || '';
+}
+
+class RemotePlaybackManager {
+  private activePayload: RemoteMediaPayload | null = null;
+  private currentSessionId = '';
+  private castClient: RemoteMediaClient | null = null;
+  private activePlayUrl = '';
+  private activeMimeType: string | undefined;
+  private timelineOffset = 0;
+  private sourceDuration = 0;
+  private changingAudio = false;
+  // True when the active stream is packaged on the phone with one selected audio track.
+  private activeRemux = false;
+  // True when that packaged stream serves byte ranges, so the receiver seeks it itself.
+  private activeByteRangeSeek = false;
+  // Set by stop(); receiver events that follow a deliberate stop are not errors.
+  private ending = false;
+  // Remux engine to use when streams require on-demand remuxing ('ffmpeg' or fallback 'fmp4').
+  private remuxEngine: 'ffmpeg' | 'fmp4' = 'ffmpeg';
+  // Actual remux engine used by the active session ('ffmpeg' | 'fmp4' | null).
+  private activeRemuxEngine: 'ffmpeg' | 'fmp4' | null = null;
+  // Inspected container format (e.g. 'matroska', 'mov,mp4,m4a,3gp,3g2,mj2')
+  private activeContainer: string | undefined;
+  // Last requested media, kept even when the load failed so it can be retried.
+  private lastRequest: {
+    device: RemoteDevice;
+    payload: RemoteMediaPayload;
+  } | null = null;
+  private lastCastStreamPosition: number | null = null;
+  private lastCastStreamPositionTime = 0;
+  private ignoreCastReceiverSeekUntil = 0;
+  private lastSupportedMediaCommands: number | null = null;
+  private playbackGeneration = 0;
+  private loadGeneration = 0;
+
+  private operationSessions = new Map<number, Set<string>>();
+
+  private assertPlaybackOperation(token: number): void {
+    if (token !== this.loadGeneration || this.ending) {
+      throw new RemotePlaybackCanceledError();
+    }
+  }
+
+  private async preparePlaybackStream(
+    options: Parameters<typeof remoteDeliveryService.prepareStream>[0],
+    token: number,
+  ) {
+    const owned = this.operationSessions.get(token) || new Set<string>();
+    owned.add(options.sessionId);
+    this.operationSessions.set(token, owned);
+    return remoteDeliveryService.prepareStream(options);
+  }
+
+  private async cleanupCanceledOperation(token: number): Promise<void> {
+    if (token === this.loadGeneration && !this.ending) {
+      this.operationSessions.delete(token);
+      return;
+    }
+    const owned = this.operationSessions.get(token);
+    this.operationSessions.delete(token);
+    if (owned)
+      for (const id of owned)
+        await remoteDeliveryService.cleanupSession(id).catch(() => {});
+  }
+
+  private async awaitPlaybackOperation<T>(
+    work: Promise<T>,
+    token: number,
+  ): Promise<T> {
+    try {
+      return await work;
+    } finally {
+      this.assertPlaybackOperation(token);
+    }
+  }
+
+  private seekRequestId = 0;
+  private seekQueue: Promise<void> = Promise.resolve();
+  private seekTimer: ReturnType<typeof setTimeout> | null = null;
+  private resolutionQueue: Promise<void> = Promise.resolve();
+  private ambiguousSessions: AmbiguousSessionPair[] = [];
+  private ambiguousTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    remoteDeliveryService.onMediaAction(event => {
+      this.handleMediaAction(event);
+    });
+    dlnaService.setOnUriObserved(uri => {
+      this.resolveAmbiguousSessions(uri).catch(() => {});
+    });
+  }
+
+  private handleMediaAction(event: {action: string; value?: number}): void {
+    switch (event.action) {
+      case 'play':
+        this.play().catch(() => {});
+        break;
+      case 'pause':
+        this.pause().catch(() => {});
+        break;
+      case 'stop':
+        this.stop().catch(() => {});
+        break;
+      case 'seek':
+        if (typeof event.value === 'number') {
+          this.seekNow(event.value).catch(() => {});
+        }
+        break;
+      case 'skip':
+        // Native side already merged rapid taps, and JS timers are paused while
+        // the app is backgrounded, so seek right away instead of debouncing.
+        if (typeof event.value === 'number') {
+          const cur = useRemoteStore.getState().currentTime;
+          this.seekNow(Math.max(0, cur + event.value)).catch(() => {});
+        }
+        break;
+      case 'rewind': {
+        const cur = useRemoteStore.getState().currentTime;
+        this.seek(Math.max(0, cur - 10)).catch(() => {});
+        break;
+      }
+      case 'forward': {
+        const cur = useRemoteStore.getState().currentTime;
+        this.seek(cur + 10).catch(() => {});
+        break;
+      }
+    }
+  }
+
+  isEnding(): boolean {
+    return this.ending;
+  }
+
+
+  /** Called when the user starts over (opens a player or picks a device) after a stop. */
+  clearEnding(): void {
+    this.ending = false;
+  }
+
+  /**
+   * Connects a Cast device from the in-app list. The Player loads media once the
+   * session is up, so the store is not touched here.
+   */
+  async connectCast(deviceId: string): Promise<void> {
+    const current = useRemoteStore.getState().connectedDevice;
+    if (current?.type === 'dlna') {
+      await this.stop();
+    }
+    this.clearEnding();
+    useRemoteStore.getState().setErrorMessage(undefined);
+    const started = await GoogleCast.getSessionManager().startSession(deviceId);
+    if (!started) throw new Error('That Cast device is no longer available');
+  }
+
+  /** Switches to a DLNA renderer, ending any Cast session first. */
+  async connectDlna(device: RemoteDevice): Promise<void> {
+    const current = useRemoteStore.getState().connectedDevice;
+    if (current?.id === device.id) return;
+    const session = await GoogleCast.getSessionManager().getCurrentCastSession().catch(() => null);
+    if (current || session) await this.stop();
+    this.clearEnding();
+    useRemoteStore.getState().setErrorMessage(undefined);
+    useRemoteStore.getState().setConnectedDevice(device);
+  }
+
+  private detectAndHandleCastReceiverSeek(
+    streamPosition?: number,
+    playerState?: MediaPlayerState | null,
+  ): boolean {
+    if (
+      typeof streamPosition !== 'number' ||
+      !Number.isFinite(streamPosition) ||
+      streamPosition < 0
+    ) {
+      return false;
+    }
+    const device = useRemoteStore.getState().connectedDevice;
+    if (device?.type !== 'cast') return false;
+    if (
+      !this.activeRemux ||
+      (this.activeByteRangeSeek && this.activeRemuxEngine === 'fmp4')
+    ) {
+      return false;
+    }
+    if (
+      this.changingAudio ||
+      this.ending ||
+      useRemoteStore.getState().pendingSeek ||
+      Date.now() < this.ignoreCastReceiverSeekUntil
+    ) {
+      this.lastCastStreamPosition = streamPosition;
+      this.lastCastStreamPositionTime = Date.now();
+      return false;
+    }
+
+    if (this.lastCastStreamPosition !== null) {
+      const elapsedSec = (Date.now() - this.lastCastStreamPositionTime) / 1000;
+      const isPaused =
+        playerState === MediaPlayerState.PAUSED ||
+        useRemoteStore.getState().status === 'paused';
+      const expected = isPaused
+        ? this.lastCastStreamPosition
+        : this.lastCastStreamPosition + elapsedSec;
+      const delta = Math.abs(streamPosition - expected);
+
+      if (delta > 3.5) {
+        const targetMovieSeconds = Math.max(
+          0,
+          Math.min(
+            streamPosition + this.timelineOffset,
+            this.sourceDuration || Number.MAX_SAFE_INTEGER,
+          ),
+        );
+        console.info('[Cast] Receiver-initiated seek detected:', {
+          from: expected,
+          to: streamPosition,
+          targetMovieSeconds,
+        });
+        this.ignoreCastReceiverSeekUntil = Date.now() + 4000;
+        this.lastCastStreamPosition = streamPosition;
+        this.lastCastStreamPositionTime = Date.now();
+        this.seek(targetMovieSeconds).catch(err => {
+          console.warn('[Cast] Receiver seek reload failed:', err);
+        });
+        return true;
+      }
+    }
+
+    this.lastCastStreamPosition = streamPosition;
+    this.lastCastStreamPositionTime = Date.now();
+    return false;
+  }
+
+  /** Single mapping from Cast receiver state to the remote store. */
+  handleCastStatus(status: MediaStatus | null, sourceLabel?: string): void {
+    if (!status || this.ending) return;
+
+    const supportedCmds =
+      typeof status.supportedMediaCommands === 'number'
+        ? status.supportedMediaCommands
+        : undefined;
+    if (
+      supportedCmds !== undefined &&
+      this.lastSupportedMediaCommands !== supportedCmds
+    ) {
+      this.lastSupportedMediaCommands = supportedCmds;
+      console.info('[Cast] supportedMediaCommands updated:', {
+        supportedMediaCommands: supportedCmds,
+        canSeek: Boolean(supportedCmds & 2),
+        canPause: Boolean(supportedCmds & 1),
+      });
+    }
+
+    this.detectAndHandleCastReceiverSeek(
+      status.streamPosition,
+      status.playerState,
+    );
+    const store = useRemoteStore.getState();
+    if (
+      status.playerState === MediaPlayerState.IDLE &&
+      status.idleReason === MediaPlayerIdleReason.FINISHED
+    ) {
+      const duration = this.sourceDuration || store.duration;
+      if (duration > 0) store.setTimeline(duration, duration);
+    } else if (
+      !this.changingAudio &&
+      typeof status.streamPosition === 'number'
+    ) {
+      store.setTimeline(
+        status.streamPosition + this.timelineOffset,
+        this.sourceDuration || store.duration,
+      );
+    }
+    switch (status.playerState) {
+      case MediaPlayerState.PLAYING:
+        store.setStatus('playing');
+        store.setErrorMessage(undefined);
+        remoteDeliveryService
+          .updateMediaPlayback({isPlaying: true})
+          .catch(() => {});
+        return;
+      case MediaPlayerState.PAUSED:
+        store.setStatus('paused');
+        remoteDeliveryService
+          .updateMediaPlayback({isPlaying: false})
+          .catch(() => {});
+        return;
+      case MediaPlayerState.BUFFERING:
+      case MediaPlayerState.LOADING:
+        store.setStatus('buffering');
+        return;
+      case MediaPlayerState.IDLE:
+        break;
+      default:
+        return;
+    }
+    // A load we issued replaces the old media; its INTERRUPTED/ERROR idle is not ours to show.
+    if (
+      this.changingAudio ||
+      status.idleReason === MediaPlayerIdleReason.INTERRUPTED
+    )
+      return;
+    if (status.idleReason === MediaPlayerIdleReason.ERROR) {
+      console.warn('Chromecast receiver playback failed', {
+        contentType: status.mediaInfo?.contentType,
+      });
+      store.setStatus('error');
+      store.cancelSeek();
+      this.getLastDeliveryError().then(deliveryError => {
+        if (this.ending) return;
+        useRemoteStore
+          .getState()
+          .setErrorMessage(
+            deliveryError
+              ? `Couldn't deliver the video: ${deliveryError}`
+              : `The TV couldn't play this ${sourceLabel || 'stream'}. Try another server.`,
+          );
+      });
+      return;
+    }
+    store.setStatus(
+      status.idleReason === MediaPlayerIdleReason.FINISHED ? 'stopped' : 'idle',
+    );
+  }
+
+  /** Reloads the last requested media at the current position. */
+  async retry(): Promise<void> {
+    if (!this.lastRequest) return;
+    const {device, payload} = this.lastRequest;
+    const position = useRemoteStore.getState().currentTime;
+    await this.startRemotePlayback(device, {
+      ...payload,
+      initialPosition: position > 0 ? position : payload.initialPosition,
+    });
+  }
+
+  /**
+   * True while a load or reload swaps the stream. Receiver progress in this window
+   * may belong to either stream, so it cannot be mapped with the current offset.
+   */
+  isReloading(): boolean {
+    return this.changingAudio;
+  }
+
+  mapTimeline(position: number, duration: number) {
+    this.detectAndHandleCastReceiverSeek(position);
+    const pos = position + this.timelineOffset;
+    const dur = this.sourceDuration || duration;
+    remoteDeliveryService.updateMediaPlayback({position: pos, duration: dur}).catch(() => {});
+    return {position: pos, duration: dur};
+  }
+
+  initCastClient(client: RemoteMediaClient): void {
+    if (isTV) return;
+    this.castClient = client;
+  }
+
+  getCastClient(): RemoteMediaClient | null {
+    return this.castClient;
+  }
+
+  getLastDeliveryError(): Promise<string | undefined> {
+    return remoteDeliveryService.getSessionError(this.currentSessionId);
+  }
+
+  startRemotePlayback(
+    device: RemoteDevice,
+    payload: RemoteMediaPayload,
+  ): Promise<void> {
+    if (isTV) return Promise.resolve();
+    this.cancelQueuedSeek();
+    const operationToken = ++this.loadGeneration;
+    // Source changes supersede old work immediately, then wait for its cleanup.
+    return this.enqueueOperation(() =>
+      this.loadRemotePlayback(device, payload, operationToken),
+    );
+  }
+
+  private async loadRemotePlayback(
+    device: RemoteDevice,
+    payload: RemoteMediaPayload,
+    operationToken: number,
+  ): Promise<void> {
+    if (operationToken !== this.loadGeneration)
+      throw new RemotePlaybackCanceledError();
+    this.ending = false;
+    if (this.seekTimer) clearTimeout(this.seekTimer);
+    this.seekRequestId++;
+    useRemoteStore.getState().cancelSeek();
+    this.changingAudio = true;
+    this.ending = false;
+    this.playbackGeneration++;
+    this.lastRequest = {device, payload};
+
+    const previousPayload = this.activePayload;
+    const previousSessionId = this.currentSessionId;
+    this.activePayload = payload;
+    const operationSessionId = `session_${Crypto.randomUUID()}`;
+    useRemoteStore.getState().setConnectedDevice(device);
+    useRemoteStore.getState().setStatus('loading');
+    useRemoteStore.getState().setErrorMessage(undefined);
+
+    try {
+      const isLocalFile = Boolean(
+        payload.isLocal ||
+        payload.sourceUrl.startsWith('file://') ||
+        payload.sourceUrl.startsWith('content://') ||
+        payload.sourceUrl.startsWith('/'),
+      );
+      let resolvedHeaders: Record<string, string> = {};
+      if (payload.headers) {
+        if (Array.isArray(payload.headers)) {
+          for (const item of payload.headers) {
+            if (Array.isArray(item) && item.length >= 2) {
+              resolvedHeaders[String(item[0])] = String(item[1]);
+            }
+          }
+        } else if (typeof payload.headers === 'object') {
+          for (const [k, v] of Object.entries(payload.headers)) {
+            if (v != null) {
+              resolvedHeaders[k] = String(v);
+            }
+          }
+        }
+      }
+      if (
+        !isLocalFile &&
+        !Object.keys(resolvedHeaders).some(k => k.toLowerCase() === 'cookie')
+      ) {
+        try {
+          const cookieHeader = await this.awaitPlaybackOperation(
+            getCookieHeader(payload.sourceUrl),
+            operationToken,
+          );
+          if (cookieHeader) {
+            resolvedHeaders['Cookie'] = cookieHeader;
+          }
+        } catch {
+          this.assertPlaybackOperation(operationToken);
+        }
+      }
+      console.log(
+        '[RemotePlayback] Forwarding stream headers:',
+        Object.keys(resolvedHeaders),
+      );
+      this.activePayload = {...payload, headers: resolvedHeaders};
+
+      // 1. Inspect tracks if MKV or local file
+      const sourceType = payload.sourceType?.toLowerCase();
+      const inspected = await this.awaitPlaybackOperation(
+        remoteDeliveryService.inspectTracks(
+          payload.sourceUrl,
+          payload.isLocal,
+          resolvedHeaders,
+          payload.sourceType,
+        ),
+        operationToken,
+      );
+      this.activeContainer = inspected.container;
+      const isMkv =
+        sourceType === 'mkv' ||
+        inspected.container === 'matroska' ||
+        inspected.container === 'mkv' ||
+        /\.mkv(?:[?#]|$)/i.test(payload.sourceUrl);
+
+      const audioTracks: RemoteAudioTrack[] =
+        inspected.audioTracks.length > 0
+          ? inspected.audioTracks
+          : payload.audioTracks && payload.audioTracks.length > 0
+            ? payload.audioTracks
+            : [];
+
+      const selectedAudio =
+        audioTracks.find(track => track.isSelected) || audioTracks[0];
+      useRemoteStore.getState().setAudioTracks(audioTracks, selectedAudio?.id);
+
+      // Populate subtitles (embedded + external, deduplicated)
+      const allSubs: RemoteSubtitleTrack[] = [];
+      const seenSubIds = new Set<string>();
+      for (const s of [
+        ...inspected.subtitleTracks,
+        ...(payload.subtitles || []),
+      ]) {
+        if (!seenSubIds.has(s.id)) {
+          seenSubIds.add(s.id);
+          allSubs.push(s);
+        }
+      }
+      useRemoteStore.getState().setSubtitleTracks(allSubs);
+
+      // Quality = video variants of this server's stream. Servers are listed separately.
+      const qualities: RemoteQuality[] = inspected.videoQualities?.length
+        ? inspected.videoQualities
+        : payload.qualities || [];
+      useRemoteStore.getState().setQualities(qualities, qualities[0]?.id);
+
+      // 2. Prepare media URL depending on target device
+      let playUrl = payload.sourceUrl;
+      const hasCustomHeaders = Boolean(
+        resolvedHeaders && Object.keys(resolvedHeaders).length > 0,
+      );
+
+      const isManifest =
+        sourceType === 'm3u8' ||
+        sourceType === 'hls' ||
+        sourceType === 'mpd' ||
+        sourceType === 'dash' ||
+        payload.sourceUrl.toLowerCase().includes('.m3u8') ||
+        payload.sourceUrl.toLowerCase().includes('.mpd') ||
+        payload.sourceUrl.toLowerCase().includes('/hls/') ||
+        payload.sourceUrl.toLowerCase().includes('/dash/') ||
+        /\.(?:m3u8|mpd)(?:[?#]|$)/i.test(payload.sourceUrl);
+      const isDlna = device.type === 'dlna';
+      const isWebm =
+        sourceType === 'webm' || /\.webm(?:[?#]|$)/i.test(payload.sourceUrl);
+      // A raw manifest proxy breaks relative segments and drops the source headers
+      // on segment fetches, so header-dependent manifests are remuxed on Cast too.
+      const needsRemux =
+        isMkv ||
+        (isDlna && (isManifest || isWebm)) ||
+        (device.type === 'cast' && isManifest && hasCustomHeaders) ||
+        audioTracks.length > 1 ||
+        Boolean(selectedAudio && selectedAudio.index > 0);
+      console.info('Remote delivery route', {
+        device: device.type,
+        sourceType: sourceType || 'unknown',
+        container: inspected.container || 'unknown',
+        audioTrackCount: audioTracks.length,
+        delivery: needsRemux ? 'on-demand-fragmented-mp4' : 'direct-or-proxy',
+      });
+      let subtitleDeliveryUrl: string | undefined;
+      let preparedMimeType: string | undefined;
+      let timelineOffset = 0;
+      let sourceDuration = 0;
+      let byteRangeSeek = false;
+      let activeEngine: 'ffmpeg' | 'fmp4' | null = null;
+      const mediaDuration = inspected.durationSeconds || payload.duration || 0;
+      if (device.type === 'cast') {
+        let usedEngine: 'fmp4' | 'ffmpeg' | null = null;
+        if (needsRemux || isLocalFile || hasCustomHeaders) {
+          const isAacAudio =
+            selectedAudio?.codec?.toLowerCase().includes('aac') ||
+            selectedAudio?.codec?.toLowerCase() === 'mp4a' ||
+            (!selectedAudio?.codec &&
+              !audioTracks.some(
+                t => t.codec && !t.codec.toLowerCase().includes('aac'),
+              ));
+          const preferredMode: 'fmp4' | 'ffmpeg' =
+            this.remuxEngine === 'fmp4' && isAacAudio && !isManifest ? 'fmp4' : 'ffmpeg';
+
+          let prep: any;
+          if (needsRemux && preferredMode === 'fmp4') {
+            try {
+              prep = await this.awaitPlaybackOperation(
+                this.preparePlaybackStream(
+                  {
+                    sessionId: operationSessionId,
+                    sourceUrl: payload.sourceUrl,
+                    isLocal: isLocalFile,
+                    headers: resolvedHeaders,
+                    audioTrackIndex: selectedAudio?.index ?? 0,
+                    mode: 'fmp4',
+                    startPositionSeconds: payload.initialPosition,
+                    audioCodec: selectedAudio?.codec,
+                    durationSeconds: mediaDuration,
+                    mimeType: 'video/mp4',
+                  },
+                  operationToken,
+                ),
+                operationToken,
+              );
+              if (!prep.byteRangeSeek) {
+                console.info(
+                  '[Cast] fmp4 does not support byte-range seeking, falling back to ffmpeg',
+                );
+                await this.awaitPlaybackOperation(
+                  remoteDeliveryService
+                    .cleanupSession(operationSessionId)
+                    .catch(() => {}),
+                  operationToken,
+                );
+                prep = await this.awaitPlaybackOperation(
+                  this.preparePlaybackStream(
+                    {
+                      sessionId: operationSessionId,
+                      sourceUrl: payload.sourceUrl,
+                      isLocal: isLocalFile,
+                      headers: resolvedHeaders,
+                      audioTrackIndex: selectedAudio?.index ?? 0,
+                      mode: 'ffmpeg',
+                      startPositionSeconds: payload.initialPosition,
+                      audioCodec: selectedAudio?.codec,
+                      durationSeconds: mediaDuration,
+                      mimeType: 'video/mp4',
+                    },
+                    operationToken,
+                  ),
+                  operationToken,
+                );
+                usedEngine = 'ffmpeg';
+              } else {
+                usedEngine = 'fmp4';
+              }
+            } catch (err) {
+              this.assertPlaybackOperation(operationToken);
+              console.warn(
+                '[Cast] fmp4 remux failed, falling back to ffmpeg:',
+                err,
+              );
+              await this.awaitPlaybackOperation(
+                remoteDeliveryService
+                  .cleanupSession(operationSessionId)
+                  .catch(() => {}),
+                operationToken,
+              );
+              prep = await this.awaitPlaybackOperation(
+                this.preparePlaybackStream(
+                  {
+                    sessionId: operationSessionId,
+                    sourceUrl: payload.sourceUrl,
+                    isLocal: isLocalFile,
+                    headers: resolvedHeaders,
+                    audioTrackIndex: selectedAudio?.index ?? 0,
+                    mode: 'ffmpeg',
+                    startPositionSeconds: payload.initialPosition,
+                    audioCodec: selectedAudio?.codec,
+                    durationSeconds: mediaDuration,
+                    mimeType: 'video/mp4',
+                  },
+                  operationToken,
+                ),
+                operationToken,
+              );
+              usedEngine = 'ffmpeg';
+            }
+          } else {
+            prep = await this.awaitPlaybackOperation(
+              this.preparePlaybackStream(
+                {
+                  sessionId: operationSessionId,
+                  sourceUrl: payload.sourceUrl,
+                  isLocal: isLocalFile,
+                  headers: resolvedHeaders,
+                  audioTrackIndex: selectedAudio?.index ?? 0,
+                  mode: needsRemux ? preferredMode : 'proxy',
+                  startPositionSeconds: payload.initialPosition,
+                  audioCodec: selectedAudio?.codec,
+                  durationSeconds: mediaDuration,
+                  mimeType:
+                    sourceType === 'webm' ||
+                    /\.webm(?:[?#]|$)/i.test(payload.sourceUrl)
+                      ? 'video/webm'
+                      : sourceType === 'm3u8' ||
+                          sourceType === 'hls' ||
+                          /\.m3u8(?:[?#]|$)/i.test(payload.sourceUrl)
+                        ? 'application/vnd.apple.mpegurl'
+                        : sourceType === 'mpd' ||
+                            sourceType === 'dash' ||
+                            /\.mpd(?:[?#]|$)/i.test(payload.sourceUrl)
+                          ? 'application/dash+xml'
+                          : 'video/mp4',
+                },
+                operationToken,
+              ),
+              operationToken,
+            );
+            usedEngine = needsRemux ? preferredMode : null;
+          }
+          playUrl = prep.streamUrl;
+          preparedMimeType = prep.mimeType;
+          timelineOffset = prep.timelineOffsetSeconds || 0;
+          sourceDuration = prep.durationSeconds || mediaDuration;
+          byteRangeSeek = Boolean(prep.byteRangeSeek);
+        }
+
+        // Direct video still needs a registered phone session for external subtitles.
+        if (playUrl === payload.sourceUrl && allSubs.some(sub => !sub.isEmbedded && sub.uri && /^https?:\/\//i.test(sub.uri))) {
+          const subtitleSession = await this.awaitPlaybackOperation(
+            this.preparePlaybackStream({
+              sessionId: operationSessionId,
+              sourceUrl: payload.sourceUrl,
+              headers: resolvedHeaders,
+              mode: 'proxy',
+              durationSeconds: mediaDuration,
+            }, operationToken), operationToken,
+          );
+          subtitleDeliveryUrl = subtitleSession.streamUrl;
+        }
+
+        await this.awaitPlaybackOperation(
+          this.loadOnCast(
+            playUrl,
+            payload,
+            preparedMimeType,
+            timelineOffset,
+            sourceDuration,
+            subtitleDeliveryUrl,
+          ),
+          operationToken,
+        );
+        activeEngine = needsRemux ? usedEngine : null;
+      } else {
+        if (needsRemux) {
+          const prep = await this.awaitPlaybackOperation(
+            this.preparePlaybackStream(
+              {
+                sessionId: operationSessionId,
+                sourceUrl: payload.sourceUrl,
+                isLocal: isLocalFile,
+                headers: resolvedHeaders,
+                audioTrackIndex: selectedAudio?.index ?? 0,
+                mode: this.remuxEngine,
+                startPositionSeconds: payload.initialPosition,
+                audioCodec: selectedAudio?.codec,
+                durationSeconds: mediaDuration,
+              },
+              operationToken,
+            ),
+            operationToken,
+          );
+          playUrl = prep.streamUrl;
+          preparedMimeType = prep.mimeType;
+          timelineOffset = prep.timelineOffsetSeconds || 0;
+          sourceDuration = prep.durationSeconds || mediaDuration;
+          byteRangeSeek = Boolean(prep.byteRangeSeek);
+          const dlnaSubUrl = this.resolveActiveSubtitleUrl(playUrl);
+          await this.awaitPlaybackOperation(
+            dlnaService.loadMedia(
+              device,
+              playUrl,
+              payload.title,
+              dlnaSubUrl,
+              timelineOffset,
+              sourceDuration,
+              () => operationToken === this.loadGeneration && !this.ending,
+            ),
+            operationToken,
+          );
+          // Only send renderer seek if stream URL wasn't already seek-offset
+          if (
+            !timelineOffset &&
+            payload.initialPosition &&
+            payload.initialPosition > 0
+          ) {
+            await this.awaitPlaybackOperation(
+              dlnaService.seek(device, payload.initialPosition).catch(() => {}),
+              operationToken,
+            );
+          }
+          activeEngine = this.remuxEngine;
+        } else {
+          const prep = await this.awaitPlaybackOperation(
+            this.preparePlaybackStream(
+              {
+                sessionId: operationSessionId,
+                sourceUrl: payload.sourceUrl,
+                isLocal: isLocalFile,
+                headers: resolvedHeaders,
+                audioTrackIndex: 0,
+                mode: 'progressive',
+                durationSeconds: mediaDuration,
+              },
+              operationToken,
+            ),
+            operationToken,
+          );
+          playUrl = prep.streamUrl;
+          preparedMimeType = prep.mimeType;
+          timelineOffset = prep.timelineOffsetSeconds || 0;
+          sourceDuration = prep.durationSeconds || mediaDuration;
+          byteRangeSeek = Boolean(prep.byteRangeSeek);
+          const dlnaSubUrl = this.resolveActiveSubtitleUrl(playUrl);
+          await this.awaitPlaybackOperation(
+            dlnaService.loadMedia(
+              device,
+              playUrl,
+              payload.title,
+              dlnaSubUrl,
+              0,
+              sourceDuration,
+              () => operationToken === this.loadGeneration && !this.ending,
+            ),
+            operationToken,
+          );
+          if (payload.initialPosition && payload.initialPosition > 0) {
+            await this.awaitPlaybackOperation(
+              dlnaService.seek(device, payload.initialPosition),
+              operationToken,
+            );
+          }
+          activeEngine = null;
+        }
+      }
+
+      const targetSubtitle =
+        payload.subtitle ||
+        (device.type === 'cast'
+          ? `Casting to ${device.name || 'Chromecast'}`
+          : `Streaming to ${device.name || 'DLNA'}`);
+      await this.awaitPlaybackOperation(
+        remoteDeliveryService
+          .startForegroundService({
+            title: payload.title || 'Vega Media',
+            subtitle: targetSubtitle,
+            artwork: payload.artwork,
+            isPlaying: true,
+            position: payload.initialPosition || 0,
+            duration: sourceDuration || 0,
+          })
+          .catch(() => {}),
+        operationToken,
+      );
+
+      this.assertPlaybackOperation(operationToken);
+      this.currentSessionId = operationSessionId;
+      this.operationSessions.delete(operationToken);
+      this.activeRemuxEngine = activeEngine;
+      this.activePlayUrl = playUrl;
+      this.activeMimeType = preparedMimeType;
+      this.activeRemux = needsRemux;
+      this.activeByteRangeSeek = byteRangeSeek;
+      this.timelineOffset = timelineOffset;
+      this.sourceDuration = sourceDuration;
+
+      useRemoteStore.getState().setErrorMessage(undefined);
+      if (device.type === 'dlna')
+        useRemoteStore.getState().setStatus('playing');
+      else if (useRemoteStore.getState().status === 'loading')
+        useRemoteStore.getState().setStatus('buffering');
+      if (previousSessionId && previousSessionId !== this.currentSessionId) {
+        await this.awaitPlaybackOperation(
+          remoteDeliveryService.cleanupSession(previousSessionId),
+          operationToken,
+        );
+      }
+      this.stopAmbiguousSessionPolling();
+      for (const pair of this.ambiguousSessions) {
+        if (
+          pair.previousSessionId &&
+          pair.previousSessionId !== this.currentSessionId
+        ) {
+          await this.awaitPlaybackOperation(
+            remoteDeliveryService
+              .cleanupSession(pair.previousSessionId)
+              .catch(() => {}),
+            operationToken,
+          );
+        }
+        if (
+          pair.nextSessionId &&
+          pair.nextSessionId !== this.currentSessionId
+        ) {
+          await this.awaitPlaybackOperation(
+            remoteDeliveryService
+              .cleanupSession(pair.nextSessionId)
+              .catch(() => {}),
+            operationToken,
+          );
+        }
+      }
+      this.ambiguousSessions = [];
+    } catch (e: any) {
+      this.assertPlaybackOperation(operationToken);
+      console.error('Remote playback initiation failed:', e);
+      await this.awaitPlaybackOperation(
+        remoteDeliveryService.cleanupSession(operationSessionId),
+        operationToken,
+      );
+      this.currentSessionId = previousSessionId;
+      this.activePayload = previousPayload;
+      if (!this.ending && !isRemotePlaybackCanceled(e)) {
+        useRemoteStore.getState().setStatus('error');
+        useRemoteStore
+          .getState()
+          .setErrorMessage(e.message || 'Failed to start remote playback');
+      }
+      throw e;
+    } finally {
+      await this.cleanupCanceledOperation(operationToken);
+      if (operationToken !== this.loadGeneration && this.currentSessionId === previousSessionId) {
+        this.activePayload = previousPayload;
+      }
+      if (operationToken === this.loadGeneration) this.changingAudio = false;
+    }
+  }
+
+  private resolveActiveSubtitleUrl(
+    mediaUrl: string,
+    explicitTrackId?: string | null,
+  ): string | undefined {
+    const activeSubId =
+      explicitTrackId !== undefined
+        ? explicitTrackId
+        : useRemoteStore.getState().activeSubtitleTrackId;
+    if (!activeSubId || activeSubId === 'off') return undefined;
+
+    const subs = useRemoteStore.getState().subtitleTracks;
+    const sub = subs.find(s => s.id === activeSubId);
+    if (!sub) return undefined;
+
+    let resolvedUrl: string | undefined;
+    if (sub.isEmbedded && sub.index !== undefined) {
+      try {
+        const parsed = new URL(mediaUrl);
+        const parts = parsed.pathname.split('/');
+        const sessionId = parts[2];
+        if (sessionId) {
+          resolvedUrl = `${parsed.origin}/subtitle/${sessionId}/${sub.index}.vtt`;
+        }
+      } catch {}
+    } else if (sub.uri && /^https?:\/\//i.test(sub.uri)) {
+      // A stream started past 0:00 has its own 0 there; route the file through
+      // the server so it is shifted by the same amount as embedded tracks.
+      try {
+        const parsed = new URL(mediaUrl);
+        const sessionId = parsed.pathname.split('/')[2];
+        if (
+          sessionId &&
+          /^\/(ffmpeg|fmp4|dlna|proxy)\//.test(parsed.pathname)
+        ) {
+          const ordinal = Math.max(0, subs.indexOf(sub));
+          resolvedUrl = `${parsed.origin}/extsub/${sessionId}/${ordinal}.vtt?u=${encodeURIComponent(sub.uri)}`;
+        }
+      } catch {}
+      if (!resolvedUrl) resolvedUrl = sub.uri;
+    }
+
+    if (resolvedUrl) {
+      console.info(
+        '[Remote] Resolved subtitle URL:',
+        resolvedUrl,
+        `(track: ${sub.title || sub.language || sub.id})`,
+      );
+    }
+    return resolvedUrl;
+  }
+
+  private registeredCastTrackIds = new Map<string, number>();
+  private registeredSubtitleUrls = new Map<string, string>();
+
+  private async loadOnCast(
+    mediaUrl: string,
+    payload: RemoteMediaPayload,
+    preparedMimeType?: string,
+    timelineOffset = 0,
+    sourceDuration = 0,
+    subtitleDeliveryUrl?: string,
+  ): Promise<void> {
+    const operationToken = this.loadGeneration;
+    const session =
+      await GoogleCast.getSessionManager().getCurrentCastSession();
+    this.assertPlaybackOperation(operationToken);
+    const client = session?.client;
+    if (!client) {
+      this.castClient = null;
+      useRemoteStore.getState().setConnectedDevice(null);
+      throw new Error('Chromecast disconnected. Select the device again.');
+    }
+
+    this.castClient = client;
+    const castDevice = await this.awaitPlaybackOperation(
+      session.getCastDevice(),
+      operationToken,
+    );
+    const subtitles = useRemoteStore.getState().subtitleTracks;
+    let deliveryUrl = subtitleDeliveryUrl || mediaUrl;
+    // Restoring a direct video uses its existing subtitle-only session.
+    if (!/^\/(ffmpeg|fmp4|dlna|proxy|hls)\//.test(new URL(deliveryUrl).pathname) &&
+        subtitles.some(sub => !sub.isEmbedded && sub.uri) && this.currentSessionId) {
+      const server = await this.awaitPlaybackOperation(
+        remoteDeliveryService.ensureServerStarted(), operationToken,
+      );
+      deliveryUrl = `${server.baseUrl}/proxy/${this.currentSessionId}/stream`;
+    }
+    const parsedDelivery = new URL(deliveryUrl);
+    const sessionId = /^\/(ffmpeg|fmp4|dlna|proxy|hls)\//.test(parsedDelivery.pathname)
+      ? parsedDelivery.pathname.split('/')[2] : undefined;
+    const validSubs = subtitles.map((sub, ordinal) => {
+      if (!sessionId) return undefined;
+      if (sub.isEmbedded && sub.index !== undefined) {
+        return {...sub, uri: `${parsedDelivery.origin}/subtitle/${sessionId}/${sub.index}.vtt`, contentType: 'text/vtt'};
+      }
+      if (!sub.isEmbedded && sub.uri && /^https?:\/\//i.test(sub.uri)) {
+        const isTtml = /\.(?:ttml|dfxp)(?:[?#]|$)/i.test(sub.uri);
+        return {...sub,
+          uri: `${parsedDelivery.origin}/extsub/${sessionId}/${ordinal}.${isTtml ? 'ttml' : 'vtt'}?u=${encodeURIComponent(sub.uri)}`,
+          contentType: isTtml ? 'application/ttml+xml' : 'text/vtt',
+        };
+      }
+      return undefined;
+    }).filter((sub): sub is NonNullable<typeof sub> => Boolean(sub));
+
+    const mediaTracks = validSubs.map((sub, idx) => ({
+      id: idx + 1,
+      type: 'text' as const,
+      subtype: 'subtitles' as const,
+      contentId: sub.uri,
+      contentType: sub.contentType,
+      language: sub.language || 'und',
+      name: sub.title || sub.language || `Subtitle ${idx + 1}`,
+    }));
+
+    this.registeredCastTrackIds = new Map(
+      validSubs.map((sub, idx) => [sub.id, idx + 1]),
+    );
+    this.registeredSubtitleUrls = new Map(
+      validSubs.map(sub => [sub.id, sub.uri!]),
+    );
+
+    const isMkv =
+      mediaUrl.toLowerCase().includes('.mkv') ||
+      mediaUrl.toLowerCase().includes('matroska');
+    const sourceType = payload.sourceType?.toLowerCase();
+    const isHls =
+      sourceType === 'm3u8' ||
+      sourceType === 'hls' ||
+      mediaUrl.includes('.m3u8');
+    const isDash =
+      sourceType === 'mpd' ||
+      sourceType === 'dash' ||
+      mediaUrl.includes('.mpd');
+    const isWebm =
+      sourceType === 'webm' || mediaUrl.toLowerCase().includes('.webm');
+    const contentType =
+      preparedMimeType === 'application/vnd.apple.mpegurl'
+        ? 'application/x-mpegurl'
+        : preparedMimeType ||
+          (isHls
+            ? 'application/vnd.apple.mpegurl'
+            : isDash
+              ? 'application/dash+xml'
+              : isWebm
+                ? 'video/webm'
+                : isMkv
+                  ? 'video/x-matroska'
+                  : 'video/mp4');
+
+    const safeStartTime =
+      typeof payload.initialPosition === 'number' &&
+      Number.isFinite(payload.initialPosition) &&
+      payload.initialPosition > 0
+        ? Math.max(0, payload.initialPosition - timelineOffset)
+        : 0;
+
+    const hasValidArtwork = Boolean(
+      payload.artwork && /^https?:\/\//i.test(payload.artwork),
+    );
+
+    const loadRequest: any = {
+      autoplay: true,
+      playbackRate: 1,
+      mediaInfo: {
+        contentUrl: mediaUrl,
+        contentType,
+        streamType: 'buffered',
+        ...(sourceDuration > timelineOffset
+          ? {streamDuration: sourceDuration - timelineOffset}
+          : {}),
+        mediaTracks: mediaTracks.length > 0 ? mediaTracks : undefined,
+        metadata: {
+          title: payload.title || 'Vega Media',
+          subtitle: payload.subtitle || undefined,
+          images: hasValidArtwork ? [{url: payload.artwork!}] : undefined,
+          type: 'generic',
+        },
+      },
+    };
+
+    if (safeStartTime > 0) {
+      loadRequest.startTime = safeStartTime;
+    }
+
+    // Full request for manual testing: open contentUrl in VLC/ffplay/a browser on the same Wi-Fi.
+    console.info('[CastLoad] request', {
+      receiverIp: castDevice?.ipAddress || 'unknown',
+      contentUrl: sanitizeUrlForLog(mediaUrl),
+      contentType,
+      startTime: loadRequest.startTime ?? 0,
+      streamDuration: loadRequest.mediaInfo.streamDuration,
+      subtitleUrls: mediaTracks.map(track =>
+        sanitizeUrlForLog(track.contentId),
+      ),
+      source: sanitizeUrlForLog(payload.sourceUrl),
+    });
+
+    try {
+      await this.awaitPlaybackOperation(
+        client.loadMedia(loadRequest),
+        operationToken,
+      );
+      this.lastCastStreamPosition = null;
+      this.ignoreCastReceiverSeekUntil = Date.now() + 3500;
+      console.info('[CastLoad] accepted by receiver', {
+        contentUrl: sanitizeUrlForLog(mediaUrl),
+      });
+      const selectedSubtitleId =
+        useRemoteStore.getState().activeSubtitleTrackId;
+      const selectedCastTrackId = selectedSubtitleId
+        ? this.registeredCastTrackIds.get(selectedSubtitleId)
+        : undefined;
+      if (selectedCastTrackId !== undefined) {
+        await this.awaitPlaybackOperation(
+          client.setActiveTrackIds([selectedCastTrackId]),
+          operationToken,
+        );
+      }
+    } catch (err: any) {
+      console.warn('Cast loadMedia rejected:', err);
+      throw err;
+    }
+  }
+
+  async setActiveSubtitleTrack(trackId?: string): Promise<void> {
+    if (this.changingAudio)
+      throw new Error('A remote track change or seek is already in progress');
+    const operationToken = this.loadGeneration;
+    const entryGen = this.playbackGeneration;
+
+    return this.enqueueOperation(async () => {
+      if (entryGen !== this.playbackGeneration || this.ending) return;
+
+      const device = useRemoteStore.getState().connectedDevice;
+      if (!device) return;
+
+      this.playbackGeneration++;
+      this.changingAudio = true;
+      const previousTrackId = useRemoteStore.getState().activeSubtitleTrackId;
+
+      try {
+        if (device.type === 'dlna') {
+          const previousSessionId = this.currentSessionId;
+          const previousPlayUrl = this.activePlayUrl;
+          const previousMimeType = this.activeMimeType;
+          const previousOffset = this.timelineOffset;
+          const previousDuration = this.sourceDuration;
+          const currentPos = useRemoteStore.getState().currentTime;
+          const wasPaused = useRemoteStore.getState().status === 'paused';
+          const previousStatus = useRemoteStore.getState().status;
+          let nextSessionId: string | null = null;
+          let nextSessionLoadedOnDevice = false;
+          let prep: any = null;
+
+          try {
+            useRemoteStore.getState().setActiveSubtitleTrackId(trackId);
+            if (this.activePlayUrl && device.controlUrl) {
+              if (this.activeRemux && this.activePayload) {
+                const audioTrack =
+                  useRemoteStore
+                    .getState()
+                    .audioTracks.find(
+                      t =>
+                        t.id === useRemoteStore.getState().activeAudioTrackId,
+                    ) || useRemoteStore.getState().audioTracks[0];
+                nextSessionId = `session_${Crypto.randomUUID()}`;
+                prep = await this.awaitPlaybackOperation(
+                  this.preparePlaybackStream(
+                    {
+                      sessionId: nextSessionId,
+                      sourceUrl: this.activePayload.sourceUrl,
+                      isLocal: this.activePayload.isLocal,
+                      headers: this.activePayload.headers,
+                      audioTrackIndex: audioTrack?.index ?? 0,
+                      mode: 'ffmpeg',
+                      startPositionSeconds: currentPos,
+                      audioCodec: audioTrack?.codec,
+                      durationSeconds:
+                        this.sourceDuration ||
+                        useRemoteStore.getState().duration ||
+                        0,
+                    },
+                    operationToken,
+                  ),
+                  operationToken,
+                );
+                const newSubUrl = this.resolveActiveSubtitleUrl(
+                  prep.streamUrl,
+                  trackId ?? null,
+                );
+                nextSessionLoadedOnDevice = true;
+                await this.awaitPlaybackOperation(
+                  dlnaService.loadMedia(
+                    device,
+                    prep.streamUrl,
+                    this.activePayload.title || 'Vega Playback',
+                    newSubUrl,
+                    prep.timelineOffsetSeconds || 0,
+                    prep.durationSeconds || this.sourceDuration,
+                    () =>
+                      operationToken === this.loadGeneration && !this.ending,
+                  ),
+                  operationToken,
+                );
+                if (wasPaused) {
+                  await this.awaitPlaybackOperation(
+                    dlnaService.pause(device).catch(() => {}),
+                    operationToken,
+                  );
+                  useRemoteStore.getState().setStatus('paused');
+                }
+
+                this.currentSessionId = nextSessionId;
+                this.operationSessions.delete(operationToken);
+                this.activePlayUrl = prep.streamUrl;
+                this.activeMimeType = prep.mimeType;
+                this.timelineOffset = prep.timelineOffsetSeconds || 0;
+                this.sourceDuration =
+                  prep.durationSeconds || this.sourceDuration;
+
+                if (previousSessionId && previousSessionId !== nextSessionId) {
+                  this.releaseSessionLater(previousSessionId);
+                }
+              } else {
+                const newSubUrl = this.resolveActiveSubtitleUrl(
+                  this.activePlayUrl,
+                  trackId ?? null,
+                );
+                await this.awaitPlaybackOperation(
+                  dlnaService.loadMedia(
+                    device,
+                    this.activePlayUrl,
+                    this.activePayload?.title || 'Vega Playback',
+                    newSubUrl,
+                    previousOffset,
+                    this.sourceDuration,
+                    () =>
+                      operationToken === this.loadGeneration && !this.ending,
+                  ),
+                  operationToken,
+                );
+                if (currentPos > previousOffset) {
+                  await this.awaitPlaybackOperation(
+                    dlnaService.seek(device, currentPos).catch(() => {}),
+                    operationToken,
+                  );
+                }
+                if (wasPaused) {
+                  await this.awaitPlaybackOperation(
+                    dlnaService.pause(device).catch(() => {}),
+                    operationToken,
+                  );
+                  useRemoteStore.getState().setStatus('paused');
+                }
+              }
+            }
+            return;
+          } catch (err: any) {
+            this.assertPlaybackOperation(operationToken);
+            console.warn('DLNA subtitle selection failed:', err);
+            let restored = false;
+            if (
+              nextSessionLoadedOnDevice &&
+              previousPlayUrl &&
+              device.controlUrl
+            ) {
+              try {
+                const restoredSubUrl = this.resolveActiveSubtitleUrl(
+                  previousPlayUrl,
+                  previousTrackId ?? null,
+                );
+                await this.awaitPlaybackOperation(
+                  dlnaService.loadMedia(
+                    device,
+                    previousPlayUrl,
+                    this.activePayload?.title || 'Vega Playback',
+                    restoredSubUrl,
+                    previousOffset,
+                    previousDuration,
+                    () =>
+                      operationToken === this.loadGeneration && !this.ending,
+                  ),
+                  operationToken,
+                );
+                if (currentPos > previousOffset) {
+                  await this.awaitPlaybackOperation(
+                    dlnaService.seek(device, currentPos).catch(() => {}),
+                    operationToken,
+                  );
+                }
+                if (wasPaused) {
+                  await this.awaitPlaybackOperation(
+                    dlnaService.pause(device).catch(() => {}),
+                    operationToken,
+                  );
+                  useRemoteStore.getState().setStatus('paused');
+                } else {
+                  useRemoteStore.getState().setStatus('playing');
+                }
+                restored = true;
+              } catch (restoreError) {
+                this.assertPlaybackOperation(operationToken);
+                console.warn(
+                  'Failed to restore previous DLNA stream on subtitle change failure:',
+                  restoreError,
+                );
+              }
+            }
+
+            if (!nextSessionLoadedOnDevice || restored) {
+              this.currentSessionId = previousSessionId;
+              this.activePlayUrl = previousPlayUrl;
+              this.activeMimeType = previousMimeType;
+              this.timelineOffset = previousOffset;
+              this.sourceDuration = previousDuration;
+              dlnaService.setTimelineContext(previousOffset, previousDuration);
+              useRemoteStore
+                .getState()
+                .setActiveSubtitleTrackId(previousTrackId);
+              useRemoteStore
+                .getState()
+                .setStatus(wasPaused ? 'paused' : previousStatus);
+
+              if (nextSessionId) {
+                await this.awaitPlaybackOperation(
+                  remoteDeliveryService
+                    .cleanupSession(nextSessionId)
+                    .catch(() => {}),
+                  operationToken,
+                );
+              }
+            } else {
+              await this.awaitPlaybackOperation(
+                this.handleFailedRestoration({
+                  device,
+                  previousSessionId,
+                  nextSessionId,
+                  previousState: {
+                    playUrl: previousPlayUrl,
+                    mimeType: previousMimeType,
+                    timelineOffset: previousOffset,
+                    sourceDuration: previousDuration,
+                    engine: this.activeRemuxEngine,
+                    byteRangeSeek: this.activeByteRangeSeek,
+                    subtitleTrackId: previousTrackId ?? null,
+                    status: wasPaused ? 'paused' : previousStatus,
+                  },
+                  nextState:
+                    prep && nextSessionId
+                      ? {
+                          playUrl: prep.streamUrl,
+                          mimeType: prep.mimeType,
+                          timelineOffset: prep.timelineOffsetSeconds || 0,
+                          sourceDuration:
+                            prep.durationSeconds || this.sourceDuration,
+                          engine: 'ffmpeg',
+                          byteRangeSeek: false,
+                          subtitleTrackId: trackId ?? null,
+                        }
+                      : undefined,
+                }),
+                operationToken,
+              );
+            }
+
+            if (!isRemotePlaybackCanceled(err))
+
+              useRemoteStore.getState().setErrorMessage(err?.message || 'Unable to change subtitles');
+            throw err;
+          }
+        }
+
+        const client = this.getCastClient();
+        if (!client)
+          throw new Error('Subtitle switching is unavailable on this device');
+
+        try {
+          if (!trackId) {
+            if (this.registeredCastTrackIds.size > 0) {
+              await this.awaitPlaybackOperation(
+                client.setActiveTrackIds([]),
+                operationToken,
+              );
+            }
+          } else {
+            const subs = useRemoteStore.getState().subtitleTracks;
+            const sub = subs.find(s => s.id === trackId);
+            const castTrackId = this.registeredCastTrackIds.get(trackId);
+            if (!sub || castTrackId === undefined) {
+              throw new Error(
+                'This subtitle track is not available on Chromecast',
+              );
+            }
+            {
+              const subtitleUrl = this.registeredSubtitleUrls.get(trackId);
+              if (!subtitleUrl)
+                throw new Error('Subtitle URL is unavailable');
+              const ready = await this.awaitPlaybackOperation(
+                fetch(subtitleUrl, {method: 'HEAD'}),
+                operationToken,
+              );
+              if (!ready.ok) {
+                const message = await this.awaitPlaybackOperation(
+                  remoteDeliveryService.getSessionError(this.currentSessionId),
+                  operationToken,
+                );
+                throw new Error(
+                  message ||
+                    `Subtitle preparation failed (HTTP ${ready.status})`,
+                );
+              }
+            }
+            await this.awaitPlaybackOperation(
+              client.setActiveTrackIds([castTrackId]),
+              operationToken,
+            );
+          }
+          useRemoteStore.getState().setActiveSubtitleTrackId(trackId);
+        } catch (e: any) {
+          this.assertPlaybackOperation(operationToken);
+          console.warn('Cast subtitle selection failed:', e);
+          useRemoteStore.getState().setActiveSubtitleTrackId(previousTrackId);
+          if (!isRemotePlaybackCanceled(e))
+            useRemoteStore.getState().setErrorMessage(e?.message || 'Unable to change subtitles');
+          throw e;
+        }
+      } finally {
+        await this.cleanupCanceledOperation(operationToken);
+        if (operationToken === this.loadGeneration) this.changingAudio = false;
+      }
+    });
+  }
+
+  async switchAudioTrack(
+    track: RemoteAudioTrack,
+    seekPosition?: number,
+  ): Promise<void> {
+    return this.reloadRemuxedStream(track, seekPosition);
+  }
+
+  private async reloadRemuxedStream(
+    track: RemoteAudioTrack | undefined,
+    seekPosition?: number,
+  ): Promise<void> {
+    if (isTV || !this.activePayload) return;
+    if (this.changingAudio)
+      throw new Error('A remote track change or seek is already in progress');
+
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+
+    const previous = useRemoteStore.getState();
+    if (seekPosition === undefined && track?.id === previous.activeAudioTrackId)
+      return;
+
+    const operationToken = this.loadGeneration;
+    const entryGen = this.playbackGeneration;
+
+    return this.enqueueOperation(async () => {
+      if (
+        entryGen !== this.playbackGeneration ||
+        this.ending ||
+        !this.activePayload
+      )
+        return;
+
+      const currentDevice = useRemoteStore.getState().connectedDevice;
+      if (!currentDevice) return;
+
+      const currentState = useRemoteStore.getState();
+      if (
+        seekPosition === undefined &&
+        track?.id === currentState.activeAudioTrackId
+      )
+        return;
+
+      this.playbackGeneration++;
+      this.changingAudio = true;
+
+      const device = currentDevice;
+      const currentPosition = seekPosition ?? currentState.currentTime;
+      const previousOffset = this.timelineOffset;
+      const previousSessionId = this.currentSessionId;
+      const previousPlayUrl = this.activePlayUrl;
+      const previousMimeType = this.activeMimeType;
+      const previousEngine = this.activeRemuxEngine;
+      const previousByteRangeSeek = this.activeByteRangeSeek;
+      const previousDuration = this.sourceDuration;
+      const mediaDuration = this.sourceDuration || currentState.duration || 0;
+      const nextSessionId = `session_${Crypto.randomUUID()}`;
+      let nextSessionLoadedOnDevice = false;
+      let prep: any = null;
+      let usedEngine: 'fmp4' | 'ffmpeg' = 'ffmpeg';
+      useRemoteStore.getState().setErrorMessage(undefined);
+      useRemoteStore.getState().setStatus('buffering');
+
+      try {
+        const sourceUrl = this.activePayload.sourceUrl;
+        if (
+          device.type === 'dlna' &&
+          (this.activeRemuxEngine || this.remuxEngine) !== 'ffmpeg'
+        ) {
+          throw new Error('On-demand audio packaging for DLNA requires FFmpeg');
+        }
+        if (!this.activeRemux) {
+          throw new Error(
+            'This stream has a single audio track on the receiver',
+          );
+        }
+
+        const isMkv =
+          this.activeContainer?.toLowerCase() === 'matroska' ||
+          this.activeContainer?.toLowerCase() === 'mkv' ||
+          this.activePayload.sourceType?.toLowerCase() === 'mkv' ||
+          sourceUrl.toLowerCase().includes('.mkv') ||
+          sourceUrl.toLowerCase().includes('matroska');
+        const isAacAudio =
+          track?.codec?.toLowerCase().includes('aac') ||
+          track?.codec?.toLowerCase() === 'mp4a' ||
+          (!track?.codec && this.activeRemuxEngine === 'fmp4');
+
+        let targetMode: 'fmp4' | 'ffmpeg' =
+          this.remuxEngine === 'fmp4' && isAacAudio ? 'fmp4' : 'ffmpeg';
+
+        usedEngine = targetMode;
+
+        if (targetMode === 'fmp4') {
+          try {
+            prep = await this.awaitPlaybackOperation(
+              this.preparePlaybackStream(
+                {
+                  sessionId: nextSessionId,
+                  sourceUrl,
+                  isLocal: this.activePayload.isLocal,
+                  headers: this.activePayload.headers,
+                  audioTrackIndex: track?.index ?? 0,
+                  mode: 'fmp4',
+                  startPositionSeconds: currentPosition,
+                  audioCodec: track?.codec,
+                  durationSeconds: mediaDuration,
+                  mimeType: 'video/mp4',
+                },
+                operationToken,
+              ),
+              operationToken,
+            );
+            if (!prep.byteRangeSeek) {
+              console.info(
+                '[Cast] fmp4 audio switch missing byte-range seeking, falling back to ffmpeg',
+              );
+              await this.awaitPlaybackOperation(
+                remoteDeliveryService
+                  .cleanupSession(nextSessionId)
+                  .catch(() => {}),
+                operationToken,
+              );
+              prep = await this.awaitPlaybackOperation(
+                this.preparePlaybackStream(
+                  {
+                    sessionId: nextSessionId,
+                    sourceUrl,
+                    isLocal: this.activePayload.isLocal,
+                    headers: this.activePayload.headers,
+                    audioTrackIndex: track?.index ?? 0,
+                    mode: 'ffmpeg',
+                    startPositionSeconds: currentPosition,
+                    audioCodec: track?.codec,
+                    durationSeconds: mediaDuration,
+                    mimeType: 'video/mp4',
+                  },
+                  operationToken,
+                ),
+                operationToken,
+              );
+              usedEngine = 'ffmpeg';
+            }
+          } catch (err) {
+            this.assertPlaybackOperation(operationToken);
+            console.warn(
+              '[Cast] fmp4 audio switch failed, falling back to ffmpeg:',
+              err,
+            );
+            await this.awaitPlaybackOperation(
+              remoteDeliveryService
+                .cleanupSession(nextSessionId)
+                .catch(() => {}),
+              operationToken,
+            );
+            prep = await this.awaitPlaybackOperation(
+              this.preparePlaybackStream(
+                {
+                  sessionId: nextSessionId,
+                  sourceUrl,
+                  isLocal: this.activePayload.isLocal,
+                  headers: this.activePayload.headers,
+                  audioTrackIndex: track?.index ?? 0,
+                  mode: 'ffmpeg',
+                  startPositionSeconds: currentPosition,
+                  audioCodec: track?.codec,
+                  durationSeconds: mediaDuration,
+                  mimeType: 'video/mp4',
+                },
+                operationToken,
+              ),
+              operationToken,
+            );
+            usedEngine = 'ffmpeg';
+          }
+        } else {
+          prep = await this.awaitPlaybackOperation(
+            this.preparePlaybackStream(
+              {
+                sessionId: nextSessionId,
+                sourceUrl,
+                isLocal: this.activePayload.isLocal,
+                headers: this.activePayload.headers,
+                audioTrackIndex: track?.index ?? 0,
+                mode: 'ffmpeg',
+                startPositionSeconds: currentPosition,
+                audioCodec: track?.codec,
+                durationSeconds: mediaDuration,
+                mimeType: 'video/mp4',
+              },
+              operationToken,
+            ),
+            operationToken,
+          );
+          usedEngine = 'ffmpeg';
+        }
+
+        nextSessionLoadedOnDevice = true;
+        if (device.type === 'cast') {
+          await this.awaitPlaybackOperation(
+            this.loadOnCast(
+              prep.streamUrl,
+              {
+                ...this.activePayload,
+                initialPosition: currentPosition,
+              },
+              prep.mimeType,
+              prep.timelineOffsetSeconds,
+              prep.durationSeconds,
+            ),
+            operationToken,
+          );
+        } else {
+          const dlnaSubUrl = this.resolveActiveSubtitleUrl(prep.streamUrl);
+          await this.awaitPlaybackOperation(
+            dlnaService.loadMedia(
+              device,
+              prep.streamUrl,
+              this.activePayload.title,
+              dlnaSubUrl,
+              prep.timelineOffsetSeconds || 0,
+              prep.durationSeconds || mediaDuration,
+              () => operationToken === this.loadGeneration && !this.ending,
+            ),
+            operationToken,
+          );
+          // Only send renderer seek if the stream was NOT already offset via timelineOffsetSeconds
+          if (!prep.timelineOffsetSeconds && currentPosition > 0) {
+            await this.awaitPlaybackOperation(
+              dlnaService.seek(device, currentPosition).catch(() => {}),
+              operationToken,
+            );
+          }
+        }
+        if (currentState.status === 'paused') {
+          if (device.type === 'cast') {
+            await this.awaitPlaybackOperation(
+              this.castClient?.pause() ?? Promise.resolve(),
+              operationToken,
+            );
+          } else {
+            await this.awaitPlaybackOperation(
+              dlnaService.pause(device),
+              operationToken,
+            );
+          }
+        }
+
+        this.currentSessionId = nextSessionId;
+                this.operationSessions.delete(operationToken);
+        this.activePlayUrl = prep.streamUrl;
+        this.activeMimeType = prep.mimeType;
+        this.timelineOffset = prep.timelineOffsetSeconds || 0;
+        this.activeByteRangeSeek = Boolean(prep.byteRangeSeek);
+        this.sourceDuration = prep.durationSeconds || mediaDuration;
+        this.activeRemuxEngine = usedEngine;
+        useRemoteStore.getState().setActiveAudioTrackId(track?.id ?? currentState.activeAudioTrackId);
+        if (currentState.status === 'paused')
+          useRemoteStore.getState().setStatus('paused');
+        if (previousSessionId && previousSessionId !== nextSessionId) {
+          this.releaseSessionLater(previousSessionId);
+        }
+      } catch (e: any) {
+        this.assertPlaybackOperation(operationToken);
+        console.warn('Audio track switch failed:', e);
+        let restored = false;
+        if (nextSessionLoadedOnDevice && previousPlayUrl) {
+          try {
+            if (device.type === 'cast') {
+              await this.awaitPlaybackOperation(
+                this.loadOnCast(
+                  previousPlayUrl,
+                  {
+                    ...this.activePayload,
+                    initialPosition: currentState.currentTime,
+                  },
+                  previousMimeType,
+                  previousOffset,
+                  previousDuration,
+                ),
+                operationToken,
+              );
+            } else {
+              const restoredSubUrl =
+                this.resolveActiveSubtitleUrl(previousPlayUrl);
+              await this.awaitPlaybackOperation(
+                dlnaService.loadMedia(
+                  device,
+                  previousPlayUrl,
+                  this.activePayload.title,
+                  restoredSubUrl,
+                  previousOffset,
+                  previousDuration,
+                  () => operationToken === this.loadGeneration && !this.ending,
+                ),
+                operationToken,
+              );
+              if (currentPosition > previousOffset)
+                await this.awaitPlaybackOperation(
+                  dlnaService.seek(device, currentPosition).catch(() => {}),
+                  operationToken,
+                );
+            }
+            if (currentState.status === 'paused') {
+              if (device.type === 'cast')
+                await this.awaitPlaybackOperation(
+                  this.castClient?.pause() ?? Promise.resolve(),
+                  operationToken,
+                );
+              else
+                await this.awaitPlaybackOperation(
+                  dlnaService.pause(device),
+                  operationToken,
+                );
+            }
+            restored = true;
+          } catch (restoreError) {
+            this.assertPlaybackOperation(operationToken);
+            console.warn(
+              'Previous remote stream could not be restored on audio switch failure:',
+              restoreError,
+            );
+          }
+        }
+
+        if (!nextSessionLoadedOnDevice || restored) {
+          this.currentSessionId = previousSessionId;
+          this.activePlayUrl = previousPlayUrl;
+          this.activeMimeType = previousMimeType;
+          this.timelineOffset = previousOffset;
+          this.sourceDuration = previousDuration;
+          this.activeRemuxEngine = previousEngine;
+          this.activeByteRangeSeek = previousByteRangeSeek;
+          if (device.type === 'dlna') {
+            dlnaService.setTimelineContext(previousOffset, previousDuration);
+          }
+          useRemoteStore
+            .getState()
+            .setActiveAudioTrackId(currentState.activeAudioTrackId);
+          useRemoteStore.getState().setStatus(currentState.status);
+
+          if (nextSessionId) {
+            await this.awaitPlaybackOperation(
+              remoteDeliveryService
+                .cleanupSession(nextSessionId)
+                .catch(() => {}),
+              operationToken,
+            );
+          }
+        } else {
+          await this.awaitPlaybackOperation(
+            this.handleFailedRestoration({
+              device,
+              previousSessionId,
+              nextSessionId,
+              previousState: {
+                playUrl: previousPlayUrl,
+                mimeType: previousMimeType,
+                timelineOffset: previousOffset,
+                sourceDuration: previousDuration,
+                engine: previousEngine,
+                byteRangeSeek: previousByteRangeSeek,
+                audioTrackId: currentState.activeAudioTrackId,
+                status: currentState.status,
+              },
+              nextState:
+                prep && nextSessionId
+                  ? {
+                      playUrl: prep.streamUrl,
+                      mimeType: prep.mimeType,
+                      timelineOffset: prep.timelineOffsetSeconds || 0,
+                      sourceDuration: prep.durationSeconds || mediaDuration,
+                      engine: usedEngine,
+                      byteRangeSeek: Boolean(prep.byteRangeSeek),
+                      audioTrackId: track?.id ?? currentState.activeAudioTrackId,
+                    }
+                  : undefined,
+            }),
+            operationToken,
+          );
+        }
+
+        if (!isRemotePlaybackCanceled(e))
+
+          useRemoteStore.getState().setErrorMessage(e?.message || 'Unable to switch audio track');
+        throw e;
+      } finally {
+        await this.cleanupCanceledOperation(operationToken);
+        if (operationToken === this.loadGeneration) this.changingAudio = false;
+      }
+    });
+  }
+
+  async switchQuality(
+    quality: RemoteQuality,
+    newSourceUrl?: string,
+  ): Promise<void> {
+    if (isTV || !this.activePayload) return;
+
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+
+    const currentPosition = useRemoteStore.getState().currentTime;
+    const previousPayload = this.activePayload;
+    const previousQualityId = useRemoteStore.getState().activeQualityId;
+    if (!newSourceUrl) {
+      const message = 'This quality cannot be selected on the remote receiver';
+      useRemoteStore.getState().setErrorMessage(message);
+      throw new Error(message);
+    }
+    useRemoteStore.getState().setStatus('buffering');
+
+    const operationToken = this.loadGeneration + 1;
+    try {
+      await this.startRemotePlayback(device, {
+        ...previousPayload,
+        sourceUrl: newSourceUrl,
+        initialPosition: currentPosition,
+      });
+      this.assertPlaybackOperation(operationToken);
+      useRemoteStore.getState().setActiveQualityId(quality.id);
+    } catch (e: any) {
+      this.assertPlaybackOperation(operationToken);
+      console.warn('Quality switch failed:', e);
+      this.activePayload = previousPayload;
+      useRemoteStore.getState().setActiveQualityId(previousQualityId);
+      if (!isRemotePlaybackCanceled(e))
+        useRemoteStore.getState().setErrorMessage(e?.message || 'Unable to change quality');
+      throw e;
+    }
+  }
+
+  async play(): Promise<void> {
+    const status = useRemoteStore.getState().status;
+    if (status === 'loading' || status === 'buffering' || status === 'error' || status === 'idle') return;
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+
+    try {
+      if (device.type === 'cast' && this.castClient) {
+        await this.castClient.play();
+      } else if (device.type === 'dlna') {
+        await dlnaService.play(device);
+      }
+      useRemoteStore.getState().setStatus('playing');
+      remoteDeliveryService.updateMediaPlayback({isPlaying: true}).catch(() => {});
+    } catch (e) {
+      console.warn('Remote play failed:', e);
+    }
+  }
+
+  async pause(): Promise<void> {
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+
+    try {
+      if (device.type === 'cast' && this.castClient) {
+        await this.castClient.pause();
+      } else if (device.type === 'dlna') {
+        await dlnaService.pause(device);
+      }
+      useRemoteStore.getState().setStatus('paused');
+      remoteDeliveryService.updateMediaPlayback({isPlaying: false}).catch(() => {});
+    } catch (e) {
+      console.warn('Remote pause failed:', e);
+    }
+  }
+
+  private pendingSeekResolve: (() => void) | null = null;
+
+  private cancelQueuedSeek(): void {
+    if (this.pendingSeekTimer) clearTimeout(this.pendingSeekTimer);
+    this.pendingSeekTimer = null;
+    this.pendingSeekResolve?.();
+    this.pendingSeekResolve = null;
+    if (this.seekTimer) clearTimeout(this.seekTimer);
+    this.seekRequestId++;
+    useRemoteStore.getState().cancelSeek();
+  }
+
+  private pendingSeekTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * A switched-away session stays served for a while: a receiver may still be
+   * opening its URL, and a 404 there makes Kodi stop the new one as well.
+   */
+  private releaseSessionLater(sessionId: string): void {
+    setTimeout(() => {
+      if (sessionId !== this.currentSessionId) {
+        remoteDeliveryService.cleanupSession(sessionId).catch(() => {});
+      }
+    }, 20_000);
+  }
+
+  /**
+   * Remuxed streams seek by reloading, so rapid taps (+10s, +10s) are merged
+   * into one reload at the last target instead of several racing loads.
+   */
+  seek(seconds: number): Promise<void> {
+    if (!Number.isFinite(seconds)) return Promise.resolve();
+    if (!this.activeRemux) return this.seekNow(seconds);
+    useRemoteStore
+      .getState()
+      .setTimeline(
+        Math.max(0, seconds),
+        this.sourceDuration || useRemoteStore.getState().duration,
+      );
+    if (this.pendingSeekTimer) clearTimeout(this.pendingSeekTimer);
+    this.pendingSeekResolve?.();
+    return new Promise(resolve => {
+      this.pendingSeekResolve = resolve;
+      this.pendingSeekTimer = setTimeout(() => {
+        this.pendingSeekTimer = null;
+        this.pendingSeekResolve = null;
+        this.seekNow(seconds).finally(resolve);
+      }, 700);
+    });
+  }
+
+  private async seekNow(seconds: number): Promise<void> {
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+    if (!Number.isFinite(seconds)) return;
+    seconds = Math.max(
+      0,
+      Math.min(
+        seconds,
+        this.sourceDuration ||
+          useRemoteStore.getState().duration ||
+          Number.MAX_SAFE_INTEGER,
+      ),
+    );
+    const requestId = ++this.seekRequestId;
+    if (this.seekTimer) clearTimeout(this.seekTimer);
+    useRemoteStore.getState().setErrorMessage(undefined);
+    useRemoteStore.getState().beginSeek(requestId, seconds);
+    this.seekTimer = setTimeout(() => {
+      if (useRemoteStore.getState().pendingSeek?.id !== requestId) return;
+      useRemoteStore.getState().cancelSeek(requestId);
+      useRemoteStore
+        .getState()
+        .setErrorMessage('The TV did not confirm the seek. Try again.');
+    }, 30000);
+
+    // Update the UI immediately, but finish an in-flight reload before issuing
+    // the next one. Only the latest queued target needs to reach the receiver.
+    const previousSeek = this.seekQueue;
+    let finishSeek!: () => void;
+    this.seekQueue = new Promise<void>(resolve => {
+      finishSeek = resolve;
+    });
+    await previousSeek;
+    if (
+      requestId !== this.seekRequestId ||
+      this.ending ||
+      useRemoteStore.getState().connectedDevice?.id !== device.id
+    ) {
+      finishSeek();
+      return;
+    }
+
+    try {
+      if (device.type === 'cast' && this.castClient) {
+        if (
+          this.activeRemux &&
+          (!this.activeByteRangeSeek || this.activeRemuxEngine === 'ffmpeg')
+        ) {
+          // Rebuild the stream starting at the new position via -ss
+          const state = useRemoteStore.getState();
+          const track =
+            state.audioTracks.find(t => t.id === state.activeAudioTrackId) ||
+            state.audioTracks[0];
+          await this.reloadRemuxedStream(track, seconds);
+        } else {
+          await this.castClient.seek({
+            position: Math.max(0, seconds - this.timelineOffset),
+          });
+        }
+      } else if (device.type === 'dlna') {
+        if (this.activeRemux && this.activeRemuxEngine === 'ffmpeg') {
+          const state = useRemoteStore.getState();
+          const track =
+            state.audioTracks.find(t => t.id === state.activeAudioTrackId) ||
+            state.audioTracks[0];
+          await this.reloadRemuxedStream(track, seconds);
+        } else {
+          await dlnaService.seek(device, seconds);
+        }
+      }
+      // A remux reload starts at the keyframe before the target, not the target itself.
+      useRemoteStore
+        .getState()
+        .acknowledgeSeek(
+          requestId,
+          this.activeRemux && this.activeRemuxEngine === 'ffmpeg'
+            ? this.timelineOffset
+            : undefined,
+        );
+      remoteDeliveryService
+        .updateMediaPlayback({position: seconds})
+        .catch(() => {});
+    } catch (e) {
+      if (requestId !== this.seekRequestId) return;
+      useRemoteStore.getState().cancelSeek(requestId);
+      if (isRemotePlaybackCanceled(e)) return;
+      console.warn('Remote seek failed:', e);
+      useRemoteStore
+        .getState()
+        .setErrorMessage(e instanceof Error ? e.message : 'Remote seek failed');
+    } finally {
+      finishSeek();
+    }
+  }
+
+  async setVolume(volume: number): Promise<void> {
+    const device = useRemoteStore.getState().connectedDevice;
+    if (!device) return;
+
+    try {
+      if (device.type === 'cast' && this.castClient) {
+        await this.castClient.setStreamVolume(volume);
+      } else if (device.type === 'dlna') {
+        await dlnaService.setVolume(device, Math.round(volume * 100));
+      }
+      useRemoteStore.getState().setVolume(volume);
+    } catch (e) {
+      console.warn('Remote setVolume failed:', e);
+    }
+  }
+
+  private uriMatchesSessionOrUrl(
+    uri: string,
+    sessionId?: string | null,
+    fullUrl?: string | null,
+  ): boolean {
+    if (!uri) return false;
+    if (sessionId && uri.includes(sessionId)) return true;
+    if (fullUrl) {
+      if (uri === fullUrl) return true;
+      try {
+        const u1 = new URL(uri);
+        const u2 = new URL(fullUrl);
+        if (u1.pathname === u2.pathname) return true;
+      } catch {}
+    }
+    return false;
+  }
+
+  private applySessionState(
+    sessionId: string,
+    state: AmbiguousSessionState,
+    device: RemoteDevice,
+  ): void {
+    this.currentSessionId = sessionId;
+    this.activePlayUrl = state.playUrl;
+    this.activeMimeType = state.mimeType;
+    this.timelineOffset = state.timelineOffset;
+    this.sourceDuration = state.sourceDuration;
+    this.activeRemuxEngine = state.engine;
+    this.activeByteRangeSeek = state.byteRangeSeek;
+    if (device.type === 'dlna') {
+      dlnaService.setTimelineContext(
+        state.timelineOffset,
+        state.sourceDuration,
+      );
+    }
+    if (state.subtitleTrackId !== undefined) {
+      useRemoteStore
+        .getState()
+        .setActiveSubtitleTrackId(
+          state.subtitleTrackId === null || state.subtitleTrackId === 'off'
+            ? undefined
+            : state.subtitleTrackId,
+        );
+    }
+    if (state.audioTrackId !== undefined) {
+      useRemoteStore.getState().setActiveAudioTrackId(state.audioTrackId);
+    }
+  }
+
+  private async handleFailedRestoration(context: {
+    device: RemoteDevice;
+    previousSessionId?: string | null;
+    nextSessionId?: string | null;
+    previousState: AmbiguousSessionState;
+    nextState?: AmbiguousSessionState;
+  }): Promise<void> {
+    const initialGeneration = this.playbackGeneration;
+    const {device, previousSessionId, nextSessionId, previousState, nextState} =
+      context;
+
+    let activeUri: string | null = null;
+    if (device.type === 'dlna') {
+      activeUri = await dlnaService.getActiveUri(device).catch(() => null);
+    }
+    if (initialGeneration !== this.playbackGeneration || this.ending) {
+      return;
+    }
+
+    if (activeUri) {
+      if (
+        previousSessionId &&
+        this.uriMatchesSessionOrUrl(
+          activeUri,
+          previousSessionId,
+          previousState.playUrl,
+        )
+      ) {
+        console.info(
+          '[Remote] Active URI confirmed on previous session after restoration error:',
+          previousSessionId,
+        );
+        if (nextSessionId) {
+          await remoteDeliveryService
+            .cleanupSession(nextSessionId)
+            .catch(() => {});
+        }
+        if (initialGeneration !== this.playbackGeneration || this.ending) {
+          return;
+        }
+        this.applySessionState(previousSessionId, previousState, device);
+        useRemoteStore.getState().setStatus('error');
+        return;
+      }
+      if (
+        nextSessionId &&
+        nextState &&
+        this.uriMatchesSessionOrUrl(activeUri, nextSessionId, nextState.playUrl)
+      ) {
+        console.info(
+          '[Remote] Active URI confirmed on next session after restoration error:',
+          nextSessionId,
+        );
+        if (previousSessionId && previousSessionId !== nextSessionId) {
+          this.releaseSessionLater(previousSessionId);
+        }
+        if (initialGeneration !== this.playbackGeneration || this.ending) {
+          return;
+        }
+        this.applySessionState(nextSessionId, nextState, device);
+        useRemoteStore.getState().setStatus('error');
+        return;
+      }
+    }
+
+    console.warn(
+      '[Remote] Renderer URI unconfirmed after failed restoration. Keeping both sessions active:',
+      {
+        previousSessionId,
+        nextSessionId,
+      },
+    );
+
+    if (
+      previousSessionId &&
+      nextSessionId &&
+      previousSessionId !== nextSessionId
+    ) {
+      this.ambiguousSessions.push({
+        device,
+        previousSessionId,
+        nextSessionId,
+        previousState,
+        nextState,
+      });
+      this.startAmbiguousSessionPolling();
+    }
+
+    if (nextSessionId && nextState) {
+      this.applySessionState(nextSessionId, nextState, device);
+    } else if (previousSessionId) {
+      this.applySessionState(previousSessionId, previousState, device);
+    }
+    useRemoteStore.getState().setStatus('error');
+  }
+
+  private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.resolutionQueue.then(
+      () => operation(),
+      () => operation(),
+    );
+    this.resolutionQueue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  }
+
+  private resolveAmbiguousSessions(activeUri: string): Promise<void> {
+    const queuedGeneration = this.playbackGeneration;
+    return this.enqueueOperation(async () => {
+      await this.processAmbiguousResolution(activeUri, queuedGeneration);
+    });
+  }
+
+  private async processAmbiguousResolution(
+    activeUri: string,
+    queuedGeneration: number,
+  ): Promise<void> {
+    if (!activeUri || this.ambiguousSessions.length === 0) return;
+    if (
+      queuedGeneration !== this.playbackGeneration ||
+      this.ending ||
+      this.changingAudio
+    ) {
+      return;
+    }
+
+    const remaining: AmbiguousSessionPair[] = [];
+
+    for (const pair of this.ambiguousSessions) {
+      if (
+        queuedGeneration !== this.playbackGeneration ||
+        this.ending ||
+        this.changingAudio
+      ) {
+        return;
+      }
+
+      if (
+        this.uriMatchesSessionOrUrl(
+          activeUri,
+          pair.previousSessionId,
+          pair.previousState.playUrl,
+        )
+      ) {
+        console.info(
+          '[Remote] TV confirmed active on previous session:',
+          pair.previousSessionId,
+        );
+        if (pair.nextSessionId) {
+          await remoteDeliveryService
+            .cleanupSession(pair.nextSessionId)
+            .catch(() => {});
+        }
+        if (
+          queuedGeneration !== this.playbackGeneration ||
+          this.ending ||
+          this.changingAudio
+        ) {
+          return;
+        }
+        this.applySessionState(
+          pair.previousSessionId,
+          pair.previousState,
+          pair.device,
+        );
+        if (pair.previousState.status) {
+          useRemoteStore.getState().setStatus(pair.previousState.status);
+        }
+      } else if (
+        pair.nextSessionId &&
+        pair.nextState &&
+        this.uriMatchesSessionOrUrl(
+          activeUri,
+          pair.nextSessionId,
+          pair.nextState.playUrl,
+        )
+      ) {
+        console.info(
+          '[Remote] TV confirmed active on next session:',
+          pair.nextSessionId,
+        );
+        if (
+          pair.previousSessionId &&
+          pair.previousSessionId !== pair.nextSessionId
+        ) {
+          this.releaseSessionLater(pair.previousSessionId);
+        }
+        if (
+          queuedGeneration !== this.playbackGeneration ||
+          this.ending ||
+          this.changingAudio
+        ) {
+          return;
+        }
+        this.applySessionState(pair.nextSessionId, pair.nextState, pair.device);
+      } else {
+        remaining.push(pair);
+      }
+    }
+
+    if (
+      queuedGeneration !== this.playbackGeneration ||
+      this.ending ||
+      this.changingAudio
+    ) {
+      return;
+    }
+
+    this.ambiguousSessions = remaining;
+    if (this.ambiguousSessions.length === 0) {
+      this.stopAmbiguousSessionPolling();
+    }
+  }
+
+  private startAmbiguousSessionPolling(): void {
+    if (this.ambiguousTimer || this.ambiguousSessions.length === 0) return;
+    this.ambiguousTimer = setInterval(async () => {
+      const currentGen = this.playbackGeneration;
+      if (this.ambiguousSessions.length === 0 || this.ending || this.changingAudio) {
+        if (this.ambiguousSessions.length === 0 || this.ending) {
+          this.stopAmbiguousSessionPolling();
+        }
+        return;
+      }
+      for (const pair of [...this.ambiguousSessions]) {
+        try {
+          if (pair.device.type === 'dlna') {
+            const uri = await dlnaService.getActiveUri(pair.device);
+            if (currentGen !== this.playbackGeneration || this.ending || this.changingAudio) return;
+            if (uri) {
+              await this.resolveAmbiguousSessions(uri);
+              if (currentGen !== this.playbackGeneration || this.ending || this.changingAudio) return;
+            }
+          }
+        } catch {}
+      }
+    }, 1500);
+  }
+
+  private stopAmbiguousSessionPolling(): void {
+    if (this.ambiguousTimer) {
+      clearInterval(this.ambiguousTimer);
+      this.ambiguousTimer = null;
+    }
+  }
+
+  /** Ends remote playback: stops the receiver, the phone server, and clears state. */
+  stop(): Promise<void> {
+    this.cancelQueuedSeek();
+    this.ending = true;
+    this.loadGeneration++;
+    this.playbackGeneration++;
+    return this.enqueueOperation(() => this.stopPlayback());
+  }
+
+  private async stopPlayback(): Promise<void> {
+    if (this.seekTimer) clearTimeout(this.seekTimer);
+    this.seekRequestId++;
+    useRemoteStore.getState().cancelSeek();
+    // Set first: the receiver reports IDLE/ERROR while the session closes.
+    this.ending = true;
+    this.playbackGeneration++;
+    this.changingAudio = false;
+    this.lastRequest = null;
+    this.stopAmbiguousSessionPolling();
+    const device = useRemoteStore.getState().connectedDevice;
+    // Each step is best effort: the receiver or session may already be gone.
+    if (device?.type === 'dlna') {
+      await dlnaService.stop(device).catch(() => {});
+    }
+    try {
+      // Also covers a session opened from the Cast button before any media loaded.
+      const session =
+        await GoogleCast.getSessionManager().getCurrentCastSession();
+      if (session) await GoogleCast.getSessionManager().endCurrentSession(true);
+    } catch {}
+
+    dlnaService.stopPolling();
+    for (const pair of this.ambiguousSessions) {
+      if (pair.previousSessionId) {
+        await remoteDeliveryService
+          .cleanupSession(pair.previousSessionId)
+          .catch(() => {});
+      }
+      if (pair.nextSessionId) {
+        await remoteDeliveryService
+          .cleanupSession(pair.nextSessionId)
+          .catch(() => {});
+      }
+    }
+    this.ambiguousSessions = [];
+
+    await remoteDeliveryService.stopForegroundService().catch(() => {});
+    await remoteDeliveryService.stopServer().catch(() => {});
+    useRemoteStore.getState().resetSession();
+    this.activePayload = null;
+    this.castClient = null;
+    this.activePlayUrl = '';
+    this.activeMimeType = undefined;
+    this.activeRemux = false;
+    this.activeByteRangeSeek = false;
+    this.activeRemuxEngine = null;
+    this.activeContainer = undefined;
+    this.timelineOffset = 0;
+    this.sourceDuration = 0;
+  }
+}
+
+export const remotePlaybackManager = new RemotePlaybackManager();

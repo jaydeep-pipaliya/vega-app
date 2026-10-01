@@ -1,0 +1,44 @@
+diff --git a/node_modules/expo-modules-core/android/cmake/main.cmake b/node_modules/expo-modules-core/android/cmake/main.cmake
+index d043b81..537e4da 100644
+--- a/node_modules/expo-modules-core/android/cmake/main.cmake
++++ b/node_modules/expo-modules-core/android/cmake/main.cmake
+@@ -82,14 +82,38 @@ if (REACT_NATIVE_WORKLETS_DIR)
+     if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+       set(BUILD_TYPE "debug")
++      set(BUILD_TYPE_CAP "Debug")
+     else ()
+       set(BUILD_TYPE "release")
++      set(BUILD_TYPE_CAP "Release")
+     endif ()
+ 
++    set(WORKLETS_LIB_PATH "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/merged_native_libs/${BUILD_TYPE}/merge${BUILD_TYPE_CAP}NativeLibs/out/lib/${ANDROID_ABI}/libworklets.so")
++    if (NOT EXISTS "${WORKLETS_LIB_PATH}")
++      set(WORKLETS_LIB_PATH "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/prefab_package/${BUILD_TYPE}/prefab/modules/worklets/libs/android.${ANDROID_ABI}/libworklets.so")
++    endif ()
++    if (NOT EXISTS "${WORKLETS_LIB_PATH}")
++      set(WORKLETS_LIB_PATH "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/library_jni/${BUILD_TYPE}/copy${BUILD_TYPE_CAP}JniLibsProjectOnly/jni/${ANDROID_ABI}/libworklets.so")
++    endif ()
++    if (NOT EXISTS "${WORKLETS_LIB_PATH}")
++      file(GLOB_RECURSE WORKLETS_LIB_SEARCH "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/**/libworklets.so")
++      foreach(CANDIDATE ${WORKLETS_LIB_SEARCH})
++        if (CANDIDATE MATCHES "${ANDROID_ABI}")
++          set(WORKLETS_LIB_PATH "${CANDIDATE}")
++          break()
++        endif()
++      endforeach()
++    endif ()
++    if (NOT EXISTS "${WORKLETS_LIB_PATH}")
++      set(WORKLETS_LIB_PATH "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/cmake/${BUILD_TYPE}/obj/${ANDROID_ABI}/libworklets.so")
++    endif ()
++
++    message(STATUS "expo-modules-core: Using libworklets.so at ${WORKLETS_LIB_PATH}")
++
+     set_target_properties(
+       worklets
+       PROPERTIES
+       IMPORTED_LOCATION
+-      "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/cmake/${BUILD_TYPE}/obj/${ANDROID_ABI}/libworklets.so"
++      "${WORKLETS_LIB_PATH}"
+     )
+ 
+     target_link_libraries(

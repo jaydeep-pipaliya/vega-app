@@ -115,7 +115,9 @@ const AnimatedVideoPlayer = (
   const [volumeTrackWidth, setVolumeTrackWidth] = useState<number>(0);
   const [volumeFillWidth, setVolumeFillWidth] = useState<number>(0);
   const [seekerFillWidth, setSeekerFillWidth] = useState<number>(0);
-  const [showControls, setShowControls] = useState(showOnStart);
+  const [showControls, setShowControls] = useState(
+    props.showControls ?? showOnStart,
+  );
   const [volumePosition, setVolumePositionState] = useState(0);
   const [seekerPosition, setSeekerPositionState] = useState(0);
   const [volumeOffset, setVolumeOffset] = useState(0);
@@ -623,18 +625,31 @@ const AnimatedVideoPlayer = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seeking, seekerPosition]);
 
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
+  useEffect(() => {
+    if (
+      typeof props.showControls === 'boolean' &&
+      props.showControls !== showControls
+    ) {
+      setShowControls(props.showControls);
+    }
+  }, [props.showControls, showControls]);
+
   useEffect(() => {
     if (showControls) {
       animations.showControlAnimation();
       setControlTimeout();
-      typeof events.onShowControls === 'function' && events.onShowControls();
+      typeof eventsRef.current.onShowControls === 'function' &&
+        eventsRef.current.onShowControls();
     } else {
       animations.hideControlAnimation();
       clearControlTimeout();
-      typeof events.onHideControls === 'function' && events.onHideControls();
+      typeof eventsRef.current.onHideControls === 'function' &&
+        eventsRef.current.onHideControls();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showControls]);
+  }, [showControls, animations, setControlTimeout, clearControlTimeout]);
 
   useEffect(() => {
     setMuted(muted);
@@ -1075,7 +1090,10 @@ const CustomAnimations = ({
 };
 
 const JSAnimations = (props: VideoPlayerProps) => {
-  const animations = useJSAnimations(props.controlAnimationTiming);
+  const animations = useJSAnimations(
+    props.controlAnimationTiming,
+    props.showControls ?? props.showOnStart ?? true,
+  );
 
   return <AnimatedVideoPlayer animations={animations} {...props} />;
 };

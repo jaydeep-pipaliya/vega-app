@@ -60,6 +60,11 @@ export interface VideoPlayerProps extends ReactVideoProps {
   showOnStart?: boolean;
 
   /**
+   * Controlled visibility of player controls.
+   */
+  showControls?: boolean;
+
+  /**
    * Show or hide the controls on end of video
    *
    * @default false

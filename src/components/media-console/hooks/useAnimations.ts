@@ -4,10 +4,17 @@ import type {VideoAnimations} from '../types';
 
 export const useJSAnimations = (
   controlAnimationTiming: number = 450,
+  initialShowControls: boolean = true,
 ): VideoAnimations => {
-  const bottomControlMarginBottom = useRef(new Animated.Value(0)).current;
-  const controlsOpacity = useRef(new Animated.Value(1)).current;
-  const topControlMarginTop = useRef(new Animated.Value(0)).current;
+  const bottomControlMarginBottom = useRef(
+    new Animated.Value(initialShowControls ? 0 : -100),
+  ).current;
+  const controlsOpacity = useRef(
+    new Animated.Value(initialShowControls ? 1 : 0),
+  ).current;
+  const topControlMarginTop = useRef(
+    new Animated.Value(initialShowControls ? 0 : -100),
+  ).current;
 
   const hideControlAnimation = () => {
     Animated.parallel([

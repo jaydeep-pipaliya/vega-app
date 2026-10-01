@@ -1,4 +1,4 @@
-import {useCallback, useRef, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 import {cacheStorage} from '../storage';
 
 interface UsePlayerProgressOptions {
@@ -12,15 +12,46 @@ export const usePlayerProgress = ({
 }: UsePlayerProgressOptions) => {
   const videoPositionRef = useRef({position: 0, duration: 0});
   const lastSavedPositionRef = useRef(0);
+  const hasProgressRef = useRef(false);
+  const pendingProgressRef = useRef<{
+    link: string;
+    position: number;
+    duration: number;
+    onSaved?: (position: number, duration: number) => void;
+  } | null>(null);
+
+  const flushProgress = useCallback(() => {
+    const progress = pendingProgressRef.current;
+    if (!progress) return;
+    cacheStorage.setString(progress.link, JSON.stringify({position: progress.position, duration: progress.duration}));
+    progress.onSaved?.(progress.position, progress.duration);
+    lastSavedPositionRef.current = progress.position;
+    pendingProgressRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    videoPositionRef.current = {position: 0, duration: 0};
+    lastSavedPositionRef.current = 0;
+    hasProgressRef.current = false;
+    return flushProgress;
+  }, [activeEpisode.link, flushProgress]);
 
   // Memoized progress handler
   const handleProgress = useCallback(
     (e: {currentTime: number; seekableDuration: number}) => {
       const {currentTime, seekableDuration} = e;
+      if (!Number.isFinite(currentTime) || currentTime < 0 || !Number.isFinite(seekableDuration) || seekableDuration <= 0) return;
+      hasProgressRef.current = true;
 
       videoPositionRef.current = {
         position: currentTime,
         duration: seekableDuration,
+      };
+      pendingProgressRef.current = {
+        link: activeEpisode.link,
+        position: currentTime,
+        duration: seekableDuration,
+        onSaved: onProgressSaved,
       };
 
       // Save progress periodically (every 5 seconds)
@@ -28,23 +59,17 @@ export const usePlayerProgress = ({
         Math.abs(currentTime - lastSavedPositionRef.current) > 5 ||
         currentTime - lastSavedPositionRef.current > 5
       ) {
-        cacheStorage.setString(
-          activeEpisode.link,
-          JSON.stringify({
-            position: currentTime,
-            duration: seekableDuration,
-          }),
-        );
-        onProgressSaved?.(currentTime, seekableDuration);
-        lastSavedPositionRef.current = currentTime;
+        flushProgress();
       }
     },
-    [activeEpisode.link, onProgressSaved],
+    [activeEpisode.link, onProgressSaved, flushProgress],
   );
 
   return {
     videoPositionRef,
     handleProgress,
+    flushProgress,
+    hasProgressRef,
   };
 };
 
