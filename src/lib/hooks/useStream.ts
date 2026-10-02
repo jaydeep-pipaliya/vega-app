@@ -362,6 +362,18 @@ export const getCompletedDownloadPathSync = (
   return titleMatched?.filePath || null;
 };
 
+// Streams are matched by link because the selected stream is not always the
+// same object as its entry in the list (downloaded file, refetch).
+export const getNextStream = (
+  streams: Stream[],
+  current: Stream,
+): Stream | undefined => {
+  const currentIndex = streams.findIndex(
+    stream => stream.link === current.link,
+  );
+  return streams[currentIndex + 1];
+};
+
 export const useStream = ({
   activeEpisode,
   routeParams,
@@ -588,9 +600,9 @@ export const useStream = ({
 
   const switchToNextStream = () => {
     if (streamData && streamData.length > 0) {
-      const currentIndex = streamData.indexOf(selectedStream);
-      if (currentIndex < streamData.length - 1) {
-        setSelectedStream(streamData[currentIndex + 1]);
+      const nextStream = getNextStream(streamData, selectedStream);
+      if (nextStream) {
+        setSelectedStream(nextStream);
         ToastAndroid.show(
           'Video could not be played, Trying next server',
           ToastAndroid.SHORT,
