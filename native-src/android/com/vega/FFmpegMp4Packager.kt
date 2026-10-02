@@ -116,7 +116,7 @@ class FFmpegMp4Packager(
                             if (readerPositions.isEmpty() &&
                                 System.currentTimeMillis() - idleSince > IDLE_CLOSE_MS
                             ) {
-                                Log.i(TAG, "No reader for ${IDLE_CLOSE_MS / 1000}s; stopping remux at ${startSeconds}s")
+                                VegaLog.i(TAG, "No reader for ${IDLE_CLOSE_MS / 1000}s; stopping remux at ${startSeconds}s")
                                 closeLocked()
                             } else {
                                 lock.wait(1_000)
@@ -134,7 +134,7 @@ class FFmpegMp4Packager(
                     }
                 }
             } catch (e: Exception) {
-                if (!isClosed()) Log.w(TAG, "Remux output ended: ${e.message}")
+                if (!isClosed()) VegaLog.w(TAG, "Remux output ended: ${e.message}")
             }
             synchronized(lock) {
                 finished = true
@@ -281,7 +281,7 @@ class FFmpegMp4Packager(
                     target.add(ref)
                 }
 
-                Log.i(TAG, "FFmpeg remux forwarding headers: ${headers.keys}")
+                VegaLog.i(TAG, "FFmpeg remux forwarding headers: ${headers.keys}")
 
                 target.add("-reconnect")
                 target.add("1")
@@ -374,25 +374,25 @@ class FFmpegMp4Packager(
         args.add("-y")
         args.add(pipePath)
 
-        Log.i(TAG, "Starting FFmpeg remux at ${startSeconds}s [audio: transcode aac 192k]")
+        VegaLog.i(TAG, "Starting FFmpeg remux at ${startSeconds}s [audio: transcode aac 192k]")
 
         val session = FFmpegKit.executeWithArgumentsAsync(
             args.toTypedArray(),
             { completedSession ->
                 val returnCode = completedSession.returnCode
                 if (ReturnCode.isSuccess(returnCode)) {
-                    Log.i(TAG, "FFmpeg remux session completed successfully")
+                    VegaLog.i(TAG, "FFmpeg remux session completed successfully")
                 } else if (ReturnCode.isCancel(returnCode)) {
-                    Log.i(TAG, "FFmpeg remux session cancelled")
+                    VegaLog.i(TAG, "FFmpeg remux session cancelled")
                 } else {
-                    Log.w(TAG, "FFmpeg remux session failed with code $returnCode: ${completedSession.failStackTrace}")
-                    Log.w(TAG, "FFmpeg session output: ${completedSession.allLogsAsString}")
+                    VegaLog.w(TAG, "FFmpeg remux session failed with code $returnCode: ${completedSession.failStackTrace}")
+                    VegaLog.w(TAG, "FFmpeg session output: ${completedSession.allLogsAsString}")
                     // Unblock any waiting reader in background daemon so this thread never blocks
                     unblockPipeAsync(pipePath)
                 }
             },
             { log ->
-                Log.w(TAG, "[FFmpeg] ${log.message}")
+                VegaLog.w(TAG, "[FFmpeg] ${log.message}")
             },
             null
         )
@@ -480,7 +480,7 @@ class FFmpegMp4Packager(
                         headerBuf = rawHeader
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Error intercepting initial MP4 header: ${e.message}")
+                    VegaLog.w(TAG, "Error intercepting initial MP4 header: ${e.message}")
                 }
             }
 
@@ -601,7 +601,7 @@ class FFmpegMp4Packager(
                 }
             }
         }
-        Log.i(TAG, "Patched MP4 header duration to ${remainingSeconds}s (timescale: $movieTimescale)")
+        VegaLog.i(TAG, "Patched MP4 header duration to ${remainingSeconds}s (timescale: $movieTimescale)")
     }
 
     private fun readInt(b: ByteArray, offset: Int): Int =
@@ -644,13 +644,13 @@ class FFmpegMp4Packager(
                 stream.session.cancel()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Error cancelling FFmpeg session: ${e.message}")
+            VegaLog.w(TAG, "Error cancelling FFmpeg session: ${e.message}")
         }
 
         try {
             FFmpegKitConfig.closeFFmpegPipe(stream.pipePath)
         } catch (e: Exception) {
-            Log.w(TAG, "Error closing FFmpeg pipe: ${e.message}")
+            VegaLog.w(TAG, "Error closing FFmpeg pipe: ${e.message}")
         }
 
         activeStreams.remove(stream)

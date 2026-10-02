@@ -6,6 +6,7 @@ import GoogleCast, {
   RemoteMediaClient,
 } from 'react-native-google-cast';
 import * as Crypto from 'expo-crypto';
+import {DeviceEventEmitter, NativeModules} from 'react-native';
 import {remoteDeliveryService} from './remoteDeliveryService';
 import {dlnaService} from './dlnaService';
 import {useRemoteStore} from './remoteStore';
@@ -22,6 +23,11 @@ import {mainStorage} from '../storage/StorageService';
 import {torrentManager} from '../torrentManager';
 
 const CAST_HLS_KEY = 'remote.castHlsOutput';
+const VOLUME_KEYS_KEY = 'remote.volumeKeys';
+const VOLUME_KEY_STEP = 0.05;
+/** Emitted with the new level (0 to 1) when a volume key changes the receiver. */
+export const REMOTE_VOLUME_SHOWN_EVENT = 'vegaRemoteVolumeShown';
+const {VegaVolumeKeys} = NativeModules;
 
 interface AmbiguousSessionState {
   playUrl: string;
@@ -63,6 +69,11 @@ function sanitizeUrlForLog(url?: string): string {
 }
 
 // Servers on the phone's loopback, such as the torrent stream server.
+/** External subtitles the phone server can fetch: web files and picked files in the app cache. */
+function isServableExternalSubtitle(uri?: string): uri is string {
+  return Boolean(uri && /^(?:https?|file):\/\//i.test(uri));
+}
+
 function isLoopbackUrl(url: string): boolean {
   return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i.test(url);
 }
@@ -778,7 +789,7 @@ class RemotePlaybackManager {
         }
 
         // Direct video still needs a registered phone session for external subtitles.
-        if (playUrl === payload.sourceUrl && allSubs.some(sub => !sub.isEmbedded && sub.uri && /^https?:\/\//i.test(sub.uri))) {
+        if (playUrl === payload.sourceUrl && allSubs.some(sub => !sub.isEmbedded && isServableExternalSubtitle(sub.uri))) {
           const subtitleSession = await this.awaitPlaybackOperation(
             this.preparePlaybackStream({
               sessionId: operationSessionId,
@@ -990,6 +1001,83 @@ class RemotePlaybackManager {
   }
 
   /** Cast only: serve remuxed streams as HLS so the receiver seeks by itself. */
+  /** Whether the phone volume keys change the receiver volume while Vega is open. */
+  isVolumeKeysEnabled(): boolean {
+    return mainStorage.getBool(VOLUME_KEYS_KEY, false);
+  }
+
+  setVolumeKeysEnabled(enabled: boolean): void {
+    mainStorage.setBool(VOLUME_KEYS_KEY, enabled);
+    this.updateVolumeKeyCapture();
+  }
+
+  private volumeKeysStarted = false;
+
+  /** Starts following the setting and the connection; safe to call repeatedly. */
+  startVolumeKeys(): void {
+    // The TV app has no cast screen and its volume keys stay with the TV.
+    if (this.volumeKeysStarted || !VegaVolumeKeys || isTV) return;
+    this.volumeKeysStarted = true;
+    DeviceEventEmitter.addListener('onVegaVolumeKey', ({direction}) =>
+      this.handleVolumeKey(direction).catch(() => {}),
+    );
+    const setCastSession = (active: boolean) => {
+      this.castSessionActive = active;
+      this.updateVolumeKeyCapture();
+    };
+    try {
+      const sessions = GoogleCast.getSessionManager();
+      sessions.onSessionStarted(() => setCastSession(true));
+      sessions.onSessionResumed(() => setCastSession(true));
+      sessions.onSessionSuspended(() => setCastSession(false));
+      sessions.onSessionEnded(() => setCastSession(false));
+      sessions
+        .getCurrentCastSession()
+        .then(session => setCastSession(Boolean(session)))
+        .catch(() => {});
+    } catch (e) {
+      // Devices without Google Play services have no Cast framework.
+      console.warn('Cast session tracking unavailable:', e);
+    }
+    useRemoteStore.subscribe((state, previous) => {
+      if (state.connectedDevice !== previous.connectedDevice) {
+        this.updateVolumeKeyCapture();
+        // Start from the receiver level, not the store default of 100%.
+        if (state.connectedDevice) this.refreshVolume().catch(() => {});
+      }
+    });
+    this.updateVolumeKeyCapture();
+  }
+
+  private castSessionActive = false;
+  private volumeKeyTarget = 0;
+  private lastVolumeKeyAt = 0;
+
+  private async handleVolumeKey(direction: number): Promise<void> {
+    // Read the receiver level after a pause, since the TV remote may have
+    // changed it; quick repeated presses build on the last target instead.
+    if (Date.now() - this.lastVolumeKeyAt > 1500) {
+      await this.refreshVolume();
+      const {volume, isMuted} = useRemoteStore.getState();
+      this.volumeKeyTarget = isMuted ? 0 : volume;
+    }
+    this.lastVolumeKeyAt = Date.now();
+    this.volumeKeyTarget =
+      Math.round(
+        Math.min(1, Math.max(0, this.volumeKeyTarget + direction * VOLUME_KEY_STEP)) * 100,
+      ) / 100;
+    DeviceEventEmitter.emit(REMOTE_VOLUME_SHOWN_EVENT, this.volumeKeyTarget);
+    await this.setVolume(this.volumeKeyTarget);
+  }
+
+  private updateVolumeKeyCapture(): void {
+    VegaVolumeKeys?.setCaptureEnabled(
+      this.isVolumeKeysEnabled() &&
+        (this.castSessionActive ||
+          Boolean(useRemoteStore.getState().connectedDevice)),
+    );
+  }
+
   isCastHlsEnabled(): boolean {
     return mainStorage.getBool(CAST_HLS_KEY, false);
   }
@@ -1038,7 +1126,7 @@ class RemotePlaybackManager {
           resolvedUrl = `${parsed.origin}/subtitle/${sessionId}/${sub.index}.vtt`;
         }
       } catch {}
-    } else if (sub.uri && /^https?:\/\//i.test(sub.uri)) {
+    } else if (isServableExternalSubtitle(sub.uri)) {
       // A stream started past 0:00 has its own 0 there; route the file through
       // the server so it is shifted by the same amount as embedded tracks.
       try {
@@ -1052,7 +1140,8 @@ class RemotePlaybackManager {
           resolvedUrl = `${parsed.origin}/extsub/${sessionId}/${ordinal}.vtt?u=${encodeURIComponent(sub.uri)}`;
         }
       } catch {}
-      if (!resolvedUrl) resolvedUrl = sub.uri;
+      // The receiver cannot open a file on the phone.
+      if (!resolvedUrl && /^https?:\/\//i.test(sub.uri)) resolvedUrl = sub.uri;
     }
 
     if (resolvedUrl) {
@@ -1110,7 +1199,7 @@ class RemotePlaybackManager {
       if (sub.isEmbedded && sub.index !== undefined) {
         return {...sub, uri: `${parsedDelivery.origin}/subtitle/${sessionId}/${sub.index}.vtt`, contentType: 'text/vtt'};
       }
-      if (!sub.isEmbedded && sub.uri && /^https?:\/\//i.test(sub.uri)) {
+      if (!sub.isEmbedded && isServableExternalSubtitle(sub.uri)) {
         const isTtml = /\.(?:ttml|dfxp)(?:[?#]|$)/i.test(sub.uri);
         return {...sub,
           uri: `${parsedDelivery.origin}/extsub/${sessionId}/${ordinal}.${isTtml ? 'ttml' : 'vtt'}?u=${encodeURIComponent(sub.uri)}`,
@@ -1507,7 +1596,14 @@ class RemotePlaybackManager {
           } else {
             const subs = useRemoteStore.getState().subtitleTracks;
             const sub = subs.find(s => s.id === trackId);
-            const castTrackId = this.registeredCastTrackIds.get(trackId);
+            let castTrackId = this.registeredCastTrackIds.get(trackId);
+            // Chromecast takes text tracks only with the load, so a file added
+            // during playback needs a reload at the current position.
+            if (sub && castTrackId === undefined && !this.activeRemux &&
+                !sub.isEmbedded && isServableExternalSubtitle(sub.uri)) {
+              await this.reloadCastWithSubtitles(operationToken);
+              castTrackId = this.registeredCastTrackIds.get(trackId);
+            }
             if (!sub || castTrackId === undefined) {
               throw new Error(
                 'This subtitle track is not available on Chromecast',
@@ -1551,6 +1647,107 @@ class RemotePlaybackManager {
         if (operationToken === this.loadGeneration) this.changingAudio = false;
       }
     });
+  }
+
+  /**
+   * Adds a subtitle file or web URL to the cast and selects it. Picked files
+   * must be copies in the app cache; the phone server serves nothing else.
+   */
+  async addExternalSubtitle(track: {
+    uri: string;
+    title?: string;
+    language?: string;
+  }): Promise<void> {
+    if (!isServableExternalSubtitle(track.uri))
+      throw new Error('This subtitle file cannot be sent to the receiver');
+    const store = useRemoteStore.getState();
+    const existing = store.subtitleTracks.find(
+      sub => !sub.isEmbedded && sub.uri === track.uri,
+    );
+    const id = existing?.id || `external-${Crypto.randomUUID()}`;
+    if (!existing) {
+      // Append: track ordinals are part of the URLs already given to the receiver.
+      store.setSubtitleTracks([
+        ...store.subtitleTracks,
+        {
+          id,
+          uri: track.uri,
+          title: track.title,
+          language: track.language || 'und',
+          isEmbedded: false,
+        },
+      ]);
+    }
+    // A remuxed Chromecast stream restarts through the audio reload, which
+    // registers every subtitle and selects the active one after the load.
+    if (
+      !this.registeredCastTrackIds.has(id) &&
+      this.activeRemux &&
+      useRemoteStore.getState().connectedDevice?.type === 'cast'
+    ) {
+      const {audioTracks, activeAudioTrackId, currentTime} =
+        useRemoteStore.getState();
+      const audioTrack =
+        audioTracks.find(audio => audio.id === activeAudioTrackId) ||
+        audioTracks[0];
+      const previousTrackId = useRemoteStore.getState().activeSubtitleTrackId;
+      useRemoteStore.getState().setActiveSubtitleTrackId(id);
+      try {
+        await this.switchAudioTrack(audioTrack, currentTime);
+      } catch (err) {
+        if (useRemoteStore.getState().activeSubtitleTrackId === id)
+          useRemoteStore.getState().setActiveSubtitleTrackId(previousTrackId);
+        throw err;
+      }
+      if (!this.registeredCastTrackIds.has(id)) {
+        useRemoteStore.getState().setActiveSubtitleTrackId(previousTrackId);
+        useRemoteStore
+          .getState()
+          .setErrorMessage('This subtitle cannot be sent to Chromecast');
+      }
+      return;
+    }
+    await this.setActiveSubtitleTrack(id);
+  }
+
+  /** Loads the current Chromecast media again with the current subtitle list. */
+  private async reloadCastWithSubtitles(operationToken: number): Promise<void> {
+    const payload = this.activePayload;
+    if (!payload || !this.activePlayUrl)
+      throw new Error('Nothing is playing on the receiver');
+    const position = useRemoteStore.getState().currentTime;
+    let subtitleDeliveryUrl: string | undefined;
+    // A direct video has no phone session unless it started with external
+    // subtitles; register one so the receiver can fetch the new file.
+    if (!/^\/(ffmpeg|hlsout|dlna|proxy|hls)\//.test(new URL(this.activePlayUrl).pathname)) {
+      const previousSessionId = this.currentSessionId;
+      const sessionId = `session_${Crypto.randomUUID()}`;
+      const session = await this.awaitPlaybackOperation(
+        this.preparePlaybackStream(
+          {
+            sessionId,
+            sourceUrl: payload.sourceUrl,
+            headers: payload.headers,
+            mode: 'proxy',
+            durationSeconds: this.sourceDuration,
+          },
+          operationToken,
+        ),
+        operationToken,
+      );
+      subtitleDeliveryUrl = session.streamUrl;
+      this.currentSessionId = sessionId;
+      if (previousSessionId && previousSessionId !== sessionId)
+        remoteDeliveryService.cleanupSession(previousSessionId).catch(() => {});
+    }
+    await this.loadOnCast(
+      this.activePlayUrl,
+      {...payload, initialPosition: position},
+      this.activeMimeType,
+      this.timelineOffset,
+      this.sourceDuration,
+      subtitleDeliveryUrl,
+    );
   }
 
   async switchAudioTrack(
@@ -2160,13 +2357,50 @@ class RemotePlaybackManager {
     }
   }
 
+  /** Reads the receiver volume into the store; false when it cannot be read. */
+  async refreshVolume(): Promise<boolean> {
+    const device = useRemoteStore.getState().connectedDevice;
+    // A Chromecast session can outlive the cast screen, so no device in the
+    // store still means a session may be open.
+    if (!device && !this.castSessionActive) return false;
+    try {
+      if (!device || device.type === 'cast') {
+        const session =
+          await GoogleCast.getSessionManager().getCurrentCastSession();
+        if (!session) return false;
+        const [volume, muted] = await Promise.all([
+          session.getVolume(),
+          session.isMute(),
+        ]);
+        useRemoteStore.getState().setVolume(volume, muted);
+        return true;
+      }
+      const volume = await dlnaService.getVolume(device);
+      if (volume === undefined) return false;
+      useRemoteStore.getState().setVolume(volume);
+      return true;
+    } catch (e) {
+      console.warn('Remote volume read failed:', e);
+      return false;
+    }
+  }
+
   async setVolume(volume: number): Promise<void> {
     const device = useRemoteStore.getState().connectedDevice;
-    if (!device) return;
+    if (!device && !this.castSessionActive) return;
+    volume = Math.min(1, Math.max(0, volume));
 
     try {
-      if (device.type === 'cast' && this.castClient) {
-        await this.castClient.setStreamVolume(volume);
+      if (!device || device.type === 'cast') {
+        // Device volume, as the TV remote and Google Home change it. Stream
+        // volume would only scale this media below the device level.
+        const session =
+          await GoogleCast.getSessionManager().getCurrentCastSession();
+        if (!session) throw new Error('Chromecast disconnected');
+        session.setVolume(volume);
+        if (useRemoteStore.getState().isMuted) session.setMute(false);
+        useRemoteStore.getState().setVolume(volume, false);
+        return;
       } else if (device.type === 'dlna') {
         await dlnaService.setVolume(device, Math.round(volume * 100));
       }
@@ -2560,3 +2794,4 @@ class RemotePlaybackManager {
 }
 
 export const remotePlaybackManager = new RemotePlaybackManager();
+remotePlaybackManager.startVolumeKeys();

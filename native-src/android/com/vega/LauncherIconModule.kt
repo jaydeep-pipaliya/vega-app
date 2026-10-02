@@ -136,7 +136,7 @@ class LauncherIconModule(reactContext: ReactApplicationContext) : ReactContextBa
         try {
             applyLauncherAlias(ALIASES[icon] ?: return)
         } catch (error: Exception) {
-            Log.w("LauncherIconModule", "Could not apply launcher color", error)
+            VegaLog.w("LauncherIconModule", "Could not apply launcher color", error)
         }
     }
 

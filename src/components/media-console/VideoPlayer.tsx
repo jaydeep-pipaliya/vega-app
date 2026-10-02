@@ -1063,7 +1063,6 @@ const AnimatedVideoPlayer = (
             onPressRewind={rewind}
             onPressForward={forward}
             resetControlTimeout={resetControlTimeout}
-            controlOpacityStyle={animations.controlsOpacity}
             showControls={showControls && !loading}
             skipFeedbackLeft={skipFeedbackLeft}
             skipFeedbackRight={skipFeedbackRight}

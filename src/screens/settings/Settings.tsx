@@ -1,3 +1,4 @@
+import ScreenSafeArea from '../../components/ui/ScreenSafeArea';
 import {
   DevSettings,
   ToastAndroid,
@@ -312,6 +313,7 @@ const Settings = ({navigation}: Props) => {
   const ScrollContainer = isTV ? ScrollView : Animated.ScrollView;
 
   return (
+    <ScreenSafeArea className="bg-m3-background">
     <TVFocusGuide
       autoFocus={true}
       trapFocusRight={true}
@@ -486,6 +488,7 @@ const Settings = ({navigation}: Props) => {
       </View>
     </ScrollContainer>
   </TVFocusGuide>
+  </ScreenSafeArea>
   );
 };
 

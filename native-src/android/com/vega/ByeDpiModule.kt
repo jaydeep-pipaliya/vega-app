@@ -60,13 +60,13 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                                     }
                                 }
                                 fallback.setExecutable(true, false)
-                                Log.i(TAG, "Extracted libciadpi.so from APK to ${fallback.absolutePath}")
+                                VegaLog.i(TAG, "Extracted libciadpi.so from APK to ${fallback.absolutePath}")
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to extract libciadpi.so fallback from APK: ${e.message}")
+                VegaLog.w(TAG, "Failed to extract libciadpi.so fallback from APK: ${e.message}")
             }
         }
 
@@ -82,7 +82,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
         try {
             OkHttpClientProvider.getOkHttpClient().connectionPool.evictAll()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to evict connection pool: ${e.message}")
+            VegaLog.w(TAG, "Failed to evict connection pool: ${e.message}")
         }
         try {
             com.facebook.drawee.backends.pipeline.Fresco.getImagePipeline().clearMemoryCaches()
@@ -108,7 +108,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Error stopping ByeDPI process: ${e.message}")
+            VegaLog.w(TAG, "Error stopping ByeDPI process: ${e.message}")
         } finally {
             byeDpiProcess = null
             currentPort = null
@@ -186,7 +186,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                     cmdList.add("1")
                 }
 
-                Log.i(TAG, "Starting ByeDPI with args: ${cmdList.joinToString(" ")}")
+                VegaLog.i(TAG, "Starting ByeDPI with args: ${cmdList.joinToString(" ")}")
 
                 val pb = ProcessBuilder(cmdList)
                 pb.directory(reactApplicationContext.filesDir)
@@ -199,7 +199,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                 Thread {
                     try {
                         proc.inputStream.bufferedReader().forEachLine { line ->
-                            Log.d("ByeDpiProcess", line)
+                            VegaLog.d("ByeDpiProcess", line)
                             logLines.append(line).append("\n")
                         }
                     } catch (_: Exception) {}
@@ -211,7 +211,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                         proc.waitFor()
                     } catch (_: Exception) {}
                     if (byeDpiProcess == proc) {
-                        Log.i(TAG, "ByeDPI process terminated unexpectedly")
+                        VegaLog.i(TAG, "ByeDPI process terminated unexpectedly")
                         stopInternal()
                     }
                 }.start()

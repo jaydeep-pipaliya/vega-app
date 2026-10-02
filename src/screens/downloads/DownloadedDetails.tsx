@@ -1,3 +1,4 @@
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type {CompositeScreenProps} from '@react-navigation/native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
@@ -46,6 +47,7 @@ const getSeasonTitle = (item: DownloadItem): string =>
   item.seasonTitle || 'Downloaded';
 
 const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
+  const insets = useSafeAreaInsets();
   const playerReturnFocusRef = useRef<View | null>(null);
   const restorePlayerFocusRef = useRef(false);
   useFocusEffect(
@@ -243,7 +245,7 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
               height: 48,
               justifyContent: 'center',
               marginLeft: isTV ? 24 : 20,
-              marginTop: Platform.OS === 'android' ? (isTV ? 24 : 48) : 14,
+              marginTop: isTV ? 24 : insets.top + 12,
               width: 48,
             }}>
             <MaterialCommunityIcons

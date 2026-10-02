@@ -1,3 +1,4 @@
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {View, Text, ScrollView, TouchableOpacity, BackHandler} from 'react-native';
 import React, {useEffect} from 'react';
 import useContentStore from '../lib/zustand/contentStore';
@@ -21,6 +22,7 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
     item => item.value === provider.value,
   );
   const primary = useM3Colors().primary;
+  const insets = useSafeAreaInsets();
   const focusBorderColor = useTVFocusBorderColor(primary);
   const mountTimeRef = React.useRef<number>(Date.now());
 
@@ -59,7 +61,7 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
           alignItems: 'center',
           paddingBottom: 16,
           paddingHorizontal: 16,
-          paddingTop: isTV ? 28 : 40,
+          paddingTop: isTV ? 28 : insets.top + 12,
         }}>
         <View>
           <Text className="text-white text-2xl font-bold">Select Provider</Text>

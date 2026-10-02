@@ -68,7 +68,7 @@ class RemoteDeliveryModule(
                     .emit("onVegaRemoteMediaAction", map)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to emit media action: ${e.message}")
+            VegaLog.w(TAG, "Failed to emit media action: ${e.message}")
         }
     }
 
@@ -125,16 +125,16 @@ class RemoteDeliveryModule(
             else MkvCueIndex.videoKeyframesUs(reactContext, sourceUrl, isLocal, headers))
                 ?.also { keyframeCache[sourceUrl] = it }
         } catch (e: Exception) {
-            Log.w(TAG, "Keyframe index unavailable: ${e.message}")
+            VegaLog.w(TAG, "Keyframe index unavailable: ${e.message}")
             null
         }
         val targetUs = (seconds * 1_000_000.0).toLong()
         val snapped = keyframes?.lastOrNull { it <= targetUs }
         if (snapped == null) {
-            Log.w(TAG, "No keyframe index; subtitles may be offset by up to one GOP at ${seconds}s")
+            VegaLog.w(TAG, "No keyframe index; subtitles may be offset by up to one GOP at ${seconds}s")
             return seconds
         }
-        Log.i(TAG, "Snapped start ${seconds}s to keyframe ${snapped / 1_000_000.0}s")
+        VegaLog.i(TAG, "Snapped start ${seconds}s to keyframe ${snapped / 1_000_000.0}s")
         return snapped / 1_000_000.0
     }
 
@@ -158,11 +158,11 @@ class RemoteDeliveryModule(
                             }
                         }
                     } catch (e: Exception) {
-                        Log.d(TAG, "Subtitle $ordinal not prefetched: ${e.message}")
+                        VegaLog.d(TAG, "Subtitle $ordinal not prefetched: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "Subtitle prefetch skipped: ${e.message}")
+                VegaLog.d(TAG, "Subtitle prefetch skipped: ${e.message}")
             }
         }.apply {
             isDaemon = true
@@ -198,7 +198,7 @@ class RemoteDeliveryModule(
                     }
                 }
             } catch (lockEx: Exception) {
-                Log.w(TAG, "Failed to acquire wake/wifi locks: ${lockEx.message}")
+                VegaLog.w(TAG, "Failed to acquire wake/wifi locks: ${lockEx.message}")
             }
 
             val port = server!!.listeningPort
@@ -207,7 +207,7 @@ class RemoteDeliveryModule(
                 throw IllegalStateException("Connect the phone and receiver to the same Wi-Fi network")
             }
             val baseUrl = "http://$lanIp:$port"
-            Log.i(TAG, "Remote delivery server listening at $baseUrl")
+            VegaLog.i(TAG, "Remote delivery server listening at $baseUrl")
 
             try {
                 RemoteDeliveryService.start(
@@ -217,7 +217,7 @@ class RemoteDeliveryModule(
                     isPlaying = true
                 )
             } catch (serviceEx: Exception) {
-                Log.w(TAG, "Failed to start RemoteDeliveryService: ${serviceEx.message}")
+                VegaLog.w(TAG, "Failed to start RemoteDeliveryService: ${serviceEx.message}")
             }
 
             val map = Arguments.createMap()
@@ -226,7 +226,7 @@ class RemoteDeliveryModule(
             map.putString("baseUrl", baseUrl)
             promise.resolve(map)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start local delivery server", e)
+            VegaLog.e(TAG, "Failed to start local delivery server", e)
             promise.reject("SERVER_ERROR", e.message, e)
         }
     }
@@ -359,7 +359,7 @@ class RemoteDeliveryModule(
             lines.filter { it.startsWith("#EXTINF:") }
                 .map { it.removePrefix("#EXTINF:").substringBefore(',').trim().toDoubleOrNull() ?: 0.0 }
         } catch (e: Exception) {
-            Log.w(TAG, "HLS playlist probe failed: ${e.message}")
+            VegaLog.w(TAG, "HLS playlist probe failed: ${e.message}")
             null
         }
     }
@@ -431,7 +431,7 @@ class RemoteDeliveryModule(
         if (rangeHeader != null) builder.header("Range", rangeHeader)
         val upstream = hlsClient.newCall(builder.build()).execute()
         if (!upstream.isSuccessful) {
-            Log.w(TAG, "HLS proxy upstream ${upstream.code} for $target")
+            VegaLog.w(TAG, "HLS proxy upstream ${upstream.code} for $target")
             upstream.close()
             return addCors(NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.lookup(upstream.code) ?: NanoHTTPD.Response.Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "Upstream ${upstream.code}"), corsHeaders)
         }
@@ -488,13 +488,13 @@ class RemoteDeliveryModule(
                     val cookie = android.webkit.CookieManager.getInstance().getCookie(sourceUrl)
                     if (!cookie.isNullOrBlank() && !headers.keys.any { it.equals("cookie", ignoreCase = true) }) {
                         headers["Cookie"] = cookie
-                        Log.i(TAG, "Injected Android CookieManager cookies for $sourceUrl")
+                        VegaLog.i(TAG, "Injected Android CookieManager cookies for $sourceUrl")
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to read native cookies for $sourceUrl: ${e.message}")
+                    VegaLog.w(TAG, "Failed to read native cookies for $sourceUrl: ${e.message}")
                 }
             }
-            Log.i(TAG, "Registered session $sessionId with headers: ${headers.keys}")
+            VegaLog.i(TAG, "Registered session $sessionId with headers: ${headers.keys}")
 
             val ffmpegStart = if (mode == "ffmpeg") {
                 snapToKeyframe(sourceUrl, isLocal, headers, startPositionSeconds)
@@ -505,7 +505,7 @@ class RemoteDeliveryModule(
             // Probe even when JS passed a duration: it may be a stale store value.
             val resolvedDuration = if (isRemoteHls) {
                 val probed = hlsPlaylistDuration(sourceUrl, headers)
-                Log.i(TAG, "HLS duration: probed=$probed passed=$durationSeconds")
+                VegaLog.i(TAG, "HLS duration: probed=$probed passed=$durationSeconds")
                 if (probed > 0.0) probed else durationSeconds
             } else durationSeconds
 
@@ -537,7 +537,7 @@ class RemoteDeliveryModule(
                     MkvCueIndex.videoKeyframesUs(reactContext, sourceUrl, isLocal, headers)
                         ?.also { keyframeCache[sourceUrl] = it }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Keyframe index unavailable for HLS output: ${e.message}")
+                    VegaLog.w(TAG, "Keyframe index unavailable for HLS output: ${e.message}")
                     null
                 } ?: throw IllegalStateException("No keyframe index for HLS output")
                 HlsSegmentPackager(reactContext, sourceUrl, isLocal, headers, audioTrackIndex, resolvedDuration, keyframes)
@@ -590,7 +590,7 @@ class RemoteDeliveryModule(
                 else -> "http://$lanIp:$port/proxy/$sessionId/stream"
             }
             // Full URL for manual testing: adb logcat -s RemoteDeliveryModule
-            Log.i(TAG, "Registered $mode delivery: $streamUrl")
+            VegaLog.i(TAG, "Registered $mode delivery: $streamUrl")
 
             val timelineOffset = if (mode == "ffmpeg") ffmpegStart else 0.0
             val dur = if (resolvedDuration > 0.0) resolvedDuration else 0.0
@@ -1028,7 +1028,7 @@ class RemoteDeliveryModule(
 
             if (bytes == null || bytes.size < 64) null else parseEbmlTracks(bytes)
         } catch (e: Exception) {
-            Log.w(TAG, "tryInspectMkvTracks failed: ${e.message}")
+            VegaLog.w(TAG, "tryInspectMkvTracks failed: ${e.message}")
             null
         }
     }
@@ -1057,7 +1057,7 @@ class RemoteDeliveryModule(
             val durMs = durStr?.toLongOrNull() ?: 0L
             if (durMs > 0L) durMs / 1000.0 else 0.0
         } catch (e: Exception) {
-            Log.w(TAG, "MediaMetadataRetriever duration fallback failed: ${e.message}")
+            VegaLog.w(TAG, "MediaMetadataRetriever duration fallback failed: ${e.message}")
             0.0
         } finally {
             try {
@@ -1230,13 +1230,13 @@ class RemoteDeliveryModule(
                     } catch (_: Exception) {}
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Media inspection failed: ${e.message}")
+                VegaLog.w(TAG, "Media inspection failed: ${e.message}")
                 // MediaExtractor rejects some remote files (signed URLs, odd moov layouts).
                 // FFprobe goes through the same network stack as the remux, so try it first.
                 val probed = try {
                     inspectWithFfprobe(sourceUrl.trim(), headersMap)
                 } catch (pe: Exception) {
-                    Log.w(TAG, "FFprobe inspection failed: ${pe.message}")
+                    VegaLog.w(TAG, "FFprobe inspection failed: ${pe.message}")
                     null
                 }
                 reactContext.runOnUiQueueThread {
@@ -1355,7 +1355,7 @@ class RemoteDeliveryModule(
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error obtaining LAN IP", e)
+            VegaLog.e(TAG, "Error obtaining LAN IP", e)
         }
         return "127.0.0.1"
     }
@@ -1367,7 +1367,7 @@ class RemoteDeliveryModule(
             val method = session.method
             val rangeHeader = session.headers["range"]
 
-            Log.d(TAG, "Serve HTTP $method: $uri, Range: $rangeHeader")
+            VegaLog.d(TAG, "Serve HTTP $method: $uri, Range: $rangeHeader")
 
             val corsHeaders = mapOf(
                 "Access-Control-Allow-Origin" to "*",
@@ -1414,10 +1414,10 @@ class RemoteDeliveryModule(
                     e.message?.contains("Stream Closed") == true ||
                     e.message?.contains("interrupted by close") == true
                 ) {
-                    Log.d(TAG, "Client aborted or superseded connection for $uri: ${e.message}")
+                    VegaLog.d(TAG, "Client aborted or superseded connection for $uri: ${e.message}")
                     addCors(newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Aborted"), corsHeaders)
                 } else {
-                    Log.e(TAG, "Error handling request for $uri", e)
+                    VegaLog.e(TAG, "Error handling request for $uri", e)
                     sessionErrors[sessionId] = "${e.javaClass.simpleName}: ${e.message.orEmpty().replace(Regex("https?://\\S+"), "[media URL]").take(180)}"
                     addCors(newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, sessionErrors[sessionId] ?: "Media delivery failed"), corsHeaders)
                 }
@@ -1534,7 +1534,21 @@ class RemoteDeliveryModule(
             return addCors(response, corsHeaders)
         }
 
+        // The server is reachable from the LAN, so local files are limited to the
+        // app cache, where the document picker puts its copies.
+        private fun cachedSubtitleFile(url: String): File? {
+            if (!url.startsWith("file://")) return null
+            val path = Uri.parse(url).path ?: return null
+            val file = File(path).canonicalFile
+            val cacheDir = reactContext.cacheDir.canonicalFile
+            return file.takeIf { it.isFile && it.path.startsWith(cacheDir.path + File.separator) }
+        }
+
         private fun loadExternalSubtitle(url: String, headers: Map<String, String>): String {
+            if (url.startsWith("file://")) {
+                val file = cachedSubtitleFile(url) ?: throw java.io.IOException("Subtitle file is unavailable")
+                return file.readText()
+            }
             val request = Request.Builder().url(url).apply {
                 headers.forEach { (k, v) -> header(k, v) }
             }.build()
@@ -1557,7 +1571,9 @@ class RemoteDeliveryModule(
                 ?: return addCors(newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid subtitle track"), corsHeaders)
             // External files are fetched and rebased too: the stream's 0 is the session start.
             val externalUrl = if (external) {
-                parms?.get("u")?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                parms?.get("u")?.takeIf {
+                    it.startsWith("http://") || it.startsWith("https://") || cachedSubtitleFile(it) != null
+                }
                     ?: return addCors(newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Invalid subtitle URL"), corsHeaders)
             } else null
             // Preserve TTML documents: SRT/ASS/VTT are normalized below.
@@ -1569,7 +1585,7 @@ class RemoteDeliveryModule(
             }
             // Keyed by source, not session: an audio switch makes a new session for the same file.
             val key = externalUrl?.let { "ext#$it" } ?: "${session.sourceUrl}#$ordinal"
-            Log.i(TAG, "Serving subtitle: ordinal=$ordinal externalUrl=$externalUrl key=$key")
+            VegaLog.i(TAG, "Serving subtitle: ordinal=$ordinal externalUrl=$externalUrl key=$key")
             val lines = subtitleCache[key] ?: synchronized(subtitleLocks.computeIfAbsent(key) { Any() }) {
                 subtitleCache[key] ?: (if (externalUrl != null) {
                     val body = loadExternalSubtitle(externalUrl, session.headers)

@@ -15,6 +15,8 @@ interface RemoteSheetProps {
   onClose: () => void;
   headerRight?: ReactNode;
   children: ReactNode;
+  /** False for sheets with sliders, so dragging moves the slider, not the sheet. */
+  enableContentPanningGesture?: boolean;
 }
 
 /** Same bottom sheet setup as DownloadBottomSheet. */
@@ -24,6 +26,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
   onClose,
   headerRight,
   children,
+  enableContentPanningGesture = true,
 }) => {
   const colors = useM3Colors();
   const sheetRef = useRef<BottomSheet>(null);
@@ -44,6 +47,7 @@ export const RemoteSheet: React.FC<RemoteSheetProps> = ({
           ref={sheetRef}
           index={0}
           enablePanDownToClose
+          enableContentPanningGesture={enableContentPanningGesture}
           enableDynamicSizing={false}
           snapPoints={['50%', '85%']}
           backdropComponent={backdropProps => (

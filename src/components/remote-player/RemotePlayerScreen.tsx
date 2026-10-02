@@ -136,6 +136,7 @@ export const RemotePlayerScreen: React.FC<RemotePlayerScreenProps> = ({
           onSelectAudio={onSelectAudio}
           onSelectSubtitle={onSelectSubtitle}
           onSelectQuality={onSelectQuality}
+          subtitleSearchQuery={title}
         />
 
         <DevicePickerModal

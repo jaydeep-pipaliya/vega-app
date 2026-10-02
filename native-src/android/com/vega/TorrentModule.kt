@@ -62,7 +62,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         
         sm.start(SessionParams(sp))
         sessionManager = sm
-        Log.d(TAG, "SessionManager started, running=${sm.isRunning}")
+        VegaLog.d(TAG, "SessionManager started, running=${sm.isRunning}")
         return sm
     }
 
@@ -72,7 +72,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         server.sessionManager = ensureSession()
         server.start()
         streamServer = server
-        Log.d(TAG, "Stream server started on port ${server.listeningPort}")
+        VegaLog.d(TAG, "Stream server started on port ${server.listeningPort}")
         return server
     }
 
@@ -98,7 +98,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
             promise.resolve(result)
         } catch (e: Exception) {
-            Log.e(TAG, "initEngine failed", e)
+            VegaLog.e(TAG, "initEngine failed", e)
             promise.reject("INIT_ERROR", e.message, e)
         }
     }
@@ -157,7 +157,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 val th = alert.handle()
                                 val alertHash = try { th.infoHash().toHex() } catch(_: Exception) { return }
                                 if (expectedHash != null && alertHash != expectedHash) return
-                                Log.d(TAG, "Alert: AddTorrentAlert for $alertHash")
+                                VegaLog.d(TAG, "Alert: AddTorrentAlert for $alertHash")
 
                                 try {
                                     torrentHandles[alertHash] = th
@@ -170,26 +170,26 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             is MetadataReceivedAlert -> {
                                 val alertHash = try { alert.handle().infoHash().toHex() } catch(_: Exception) { return }
                                 if (expectedHash != null && alertHash != expectedHash) return
-                                Log.d(TAG, "Alert: MetadataReceivedAlert for $alertHash")
+                                VegaLog.d(TAG, "Alert: MetadataReceivedAlert for $alertHash")
                                 metadataLatch.countDown()
                             }
                             is MetadataFailedAlert -> {
                                 val alertHash = try { alert.handle().infoHash().toHex() } catch(_: Exception) { return }
                                 if (expectedHash != null && alertHash != expectedHash) return
-                                Log.d(TAG, "Alert: MetadataFailedAlert for $alertHash")
+                                VegaLog.d(TAG, "Alert: MetadataFailedAlert for $alertHash")
                                 addError = "Failed to fetch magnet metadata"
                                 metadataLatch.countDown()
                             }
                             is TorrentErrorAlert -> {
                                 val alertHash = try { alert.handle().infoHash().toHex() } catch(_: Exception) { return }
                                 if (expectedHash != null && alertHash == expectedHash) {
-                                    Log.e(TAG, "Alert: TorrentErrorAlert for $alertHash - ${alert.error().message}")
+                                    VegaLog.e(TAG, "Alert: TorrentErrorAlert for $alertHash - ${alert.error().message}")
                                 }
                             }
                             is TorrentRemovedAlert -> {
                                 val alertHash = try { alert.handle().infoHash().toHex() } catch(_: Exception) { return }
                                 if (expectedHash != null && alertHash == expectedHash) {
-                                    Log.d(TAG, "Alert: TorrentRemovedAlert for $alertHash")
+                                    VegaLog.d(TAG, "Alert: TorrentRemovedAlert for $alertHash")
                                 }
                             }
                         }
@@ -198,7 +198,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                 sm.addListener(listener)
 
-                Log.d(TAG, "Starting download: $magnetOrUrl -> $downloadDir")
+                VegaLog.d(TAG, "Starting download: $magnetOrUrl -> $downloadDir")
                 if (magnetOrUrl.startsWith("magnet:") ||
                     magnetOrUrl.startsWith("http://") ||
                     magnetOrUrl.startsWith("https://")) {
@@ -209,9 +209,9 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     sm.download(ti, File(downloadDir))
                 }
 
-                Log.d(TAG, "Waiting for metadata (45s timeout)...")
+                VegaLog.d(TAG, "Waiting for metadata (45s timeout)...")
                 val gotMetadata = metadataLatch.await(45, TimeUnit.SECONDS)
-                Log.d(TAG, "Metadata wait done: gotMetadata=$gotMetadata, addError=$addError")
+                VegaLog.d(TAG, "Metadata wait done: gotMetadata=$gotMetadata, addError=$addError")
                 sm.removeListener(listener)
 
                 if (addError != null) {
@@ -227,7 +227,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val finalHashHex = expectedHash ?: return@Thread promise.reject("INVALID_HANDLE", "Could not determine infoHash")
                 
                 val th = sm.find(Sha1Hash.parseHex(finalHashHex))
-                Log.d(TAG, "Found handle for $finalHashHex: valid=${th?.isValid}, hasMetadata=${try { th?.status()?.hasMetadata() } catch(_:Exception) { "error" }}")
+                VegaLog.d(TAG, "Found handle for $finalHashHex: valid=${th?.isValid}, hasMetadata=${try { th?.status()?.hasMetadata() } catch(_:Exception) { "error" }}")
                 if (th == null || !th.isValid) {
                     promise.reject("INVALID_HANDLE", "Torrent handle became invalid after addition")
                     return@Thread
@@ -257,16 +257,16 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                         val newName = if (ext.isNotEmpty()) "$fileName.$ext" else fileName
                                         th.renameFile(maxIdx, newName)
                                         torrentOutputPaths[finalHashHex] = File(downloadDir, newName).absolutePath
-                                        Log.d(TAG, "Renamed torrent file $originalPath to $newName")
+                                        VegaLog.d(TAG, "Renamed torrent file $originalPath to $newName")
                                     }
                                 }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Failed to rename torrent file", e)
+                                VegaLog.e(TAG, "Failed to rename torrent file", e)
                             }
                         }
                         
                         server.registerTorrent(finalHashHex, File(downloadDir))
-                        Log.d(TAG, "Registered torrent with stream server: $finalHashHex")
+                        VegaLog.d(TAG, "Registered torrent with stream server: $finalHashHex")
                     }
                     promise.resolve(buildTorrentInfo(th))
                 } catch(e: Exception) {
@@ -274,7 +274,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 }
 
             } catch (e: Exception) {
-                Log.e(TAG, "addTorrent failed", e)
+                VegaLog.e(TAG, "addTorrent failed", e)
                 promise.reject("ADD_ERROR", e.message, e)
             }
         }.start()
@@ -341,7 +341,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     ) {
         Thread {
             try {
-                Log.d(TAG, "prepareVideoFile: infoHash=$infoHash, fileIndex=$fileIndex")
+                VegaLog.d(TAG, "prepareVideoFile: infoHash=$infoHash, fileIndex=$fileIndex")
                 val sm = ensureSession()
                 val th = sm.find(Sha1Hash.parseHex(infoHash))
                 if (th == null || !th.isValid) {
@@ -413,7 +413,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }
                 }
 
-                Log.d(
+                VegaLog.d(
                     TAG,
                     "prepareVideoFile: file=$fileIndex, pieces=$startPiece-$startupEndPiece, startupBytes=$startupBytes, resuming=$resuming, fullDownload=$fullDownload"
                 )
@@ -547,7 +547,7 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     @ReactMethod
     fun deleteTorrent(infoHash: String, deleteFiles: Boolean, promise: Promise) {
-        Log.e(TAG, "deleteTorrent called for infoHash: $infoHash, deleteFiles: $deleteFiles")
+        VegaLog.e(TAG, "deleteTorrent called for infoHash: $infoHash, deleteFiles: $deleteFiles")
         try {
             val sm = ensureSession()
             val th = try { sm.find(Sha1Hash.parseHex(infoHash)) } catch(e: Exception) { null }

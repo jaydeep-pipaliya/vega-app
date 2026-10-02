@@ -146,6 +146,13 @@ class DlnaService {
     useRemoteStore.getState().setVolume(volume0to100 / 100);
   }
 
+  /** Receiver volume from 0 to 1, or undefined when the device does not report it. */
+  async getVolume(device: RemoteDevice): Promise<number | undefined> {
+    if (!device.renderingControlUrl || !VegaDlna?.getVolume) return undefined;
+    const volume0to100 = await VegaDlna.getVolume(device.renderingControlUrl);
+    return typeof volume0to100 === 'number' ? volume0to100 / 100 : undefined;
+  }
+
   private onUriObserved?: (uri: string) => void;
 
   setOnUriObserved(callback?: (uri: string) => void): void {

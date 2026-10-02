@@ -3049,48 +3049,20 @@ const Player = ({ route }: Props): React.JSX.Element => {
               right: 28,
               zIndex: 65,
             }]}>
-            <Pressable
-              accessibilityRole="button"
-              // The button fades out with the controls. On TV it must not
-              // stay focusable while invisible.
-              focusable={!isTV || showControls}
-              isTVSelectable={!isTV || showControls}
-              onPress={handleSkip}
-              style={({ pressed, focused }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: !isTV && focused
-                  ? colors.primary
-                  : 'rgba(255, 255, 255, 0.11)',
-                borderColor: focused
-                  ? '#FFFFFF'
-                  : 'rgba(255, 255, 255, 0.18)',
-                borderWidth: focused ? 2 : 1,
-                borderRadius: 24,
-                paddingVertical: 7,
-                paddingHorizontal: 16,
-                gap: 6,
-                transform: [{ scale: isTV ? 1 : focused ? 1.08 : pressed ? 0.95 : 1 }],
-              })}>
-              <Text
-                style={{
-                  color: 'rgba(255, 255, 255, 0.95)',
-                  fontWeight: '700',
-                  fontSize: 13,
-                  letterSpacing: 0.2,
-                }}>
-                {activeSkip.title
+            <SkipButton
+              label={
+                activeSkip.title
                   ? activeSkip.title.toLowerCase().startsWith('skip')
                     ? activeSkip.title
                     : `Skip ${activeSkip.title}`
-                  : 'Skip Intro'}
-              </Text>
-              <Feather
-                name="chevrons-right"
-                size={18}
-                color="rgba(255, 255, 255, 0.95)"
-              />
-            </Pressable>
+                  : 'Skip Intro'
+              }
+              focusColor={colors.primary}
+              // The button fades out with the controls. On TV it must not
+              // stay focusable while invisible.
+              focusable={!isTV || showControls}
+              onPress={handleSkip}
+            />
           </NativeAnimated.View>
         )}
 
@@ -3306,7 +3278,9 @@ const Player = ({ route }: Props): React.JSX.Element => {
                     <SearchSubtitles
                       searchQuery={searchQuery}
                       setSearchQuery={setSearchQuery}
-                      setExternalSubs={setExternalSubs}
+                      onAddSubtitle={track =>
+                        setExternalSubs(prev => [track, ...prev])
+                      }
                     />
                   </>
                 }
@@ -3716,6 +3690,69 @@ const Player = ({ route }: Props): React.JSX.Element => {
           </>
         )}
     </SafeAreaView>
+  );
+};
+
+// The pill is styled on an inner View driven by plain state, so its shape
+// does not depend on a Pressable style function being applied.
+const SkipButton = ({
+  label,
+  focusColor,
+  focusable,
+  onPress,
+}: {
+  label: string;
+  focusColor: string;
+  focusable: boolean;
+  onPress: () => void;
+}) => {
+  const [focused, setFocused] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      focusable={focusable}
+      isTVSelectable={focusable}
+      onPress={onPress}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          alignSelf: 'flex-start',
+          backgroundColor:
+            !isTV && focused ? focusColor : 'rgba(20, 20, 20, 0.55)',
+          borderColor: focused ? '#FFFFFF' : 'rgba(255, 255, 255, 0.28)',
+          borderWidth: focused ? 2 : 1,
+          borderRadius: 24,
+          paddingVertical: 8,
+          paddingHorizontal: 16,
+          gap: 6,
+          transform: [
+            {scale: isTV ? 1 : focused ? 1.08 : pressed ? 0.95 : 1},
+          ],
+        }}>
+        <Text
+          numberOfLines={1}
+          style={{
+            color: 'rgba(255, 255, 255, 0.95)',
+            fontWeight: '700',
+            fontSize: 13,
+            letterSpacing: 0.2,
+          }}>
+          {label}
+        </Text>
+        <Feather
+          name="chevrons-right"
+          size={18}
+          color="rgba(255, 255, 255, 0.95)"
+        />
+      </View>
+    </Pressable>
   );
 };
 

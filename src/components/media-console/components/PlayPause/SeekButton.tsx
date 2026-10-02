@@ -1,4 +1,3 @@
-import type {VideoAnimations} from '../../types';
 import React, {
   useCallback,
   useEffect,
@@ -6,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import {Animated as NativeAnimated, Text, View} from 'react-native';
+import {Text, View} from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -71,7 +70,6 @@ interface SeekButtonProps {
    * while a gesture seek is being accumulated.
    */
   visible?: boolean;
-  controlOpacityStyle?: VideoAnimations['controlsOpacity'];
 }
 
 export const SeekButton = ({
@@ -83,7 +81,6 @@ export const SeekButton = ({
   size = 54,
   skipTime = 0,
   visible = true,
-  controlOpacityStyle,
 }: SeekButtonProps) => {
   const isForward = direction === 'forward';
   const prevSkipRef = useRef(0);
@@ -299,8 +296,9 @@ export const SeekButton = ({
     : `${seekSeconds}`;
 
   return (
-    <NativeAnimated.View style={displaySkip === 0 && activeSkip === 0 ? controlOpacityStyle : undefined}>
-    <Animated.View style={controlOpacityStyle && displaySkip === 0 && activeSkip === 0 ? undefined : wrapperAnimatedStyle}>
+    // One opacity source only. Swapping between the controls fade and this
+    // animated style mid-press could leave the button at opacity 0.
+    <Animated.View style={wrapperAnimatedStyle}>
       <Control
         disabled={disabled}
         callback={handlePress}
@@ -323,7 +321,6 @@ export const SeekButton = ({
         </View>
       </Control>
     </Animated.View>
-    </NativeAnimated.View>
   );
 };
 
@@ -333,7 +330,6 @@ interface SeekControlsProps {
   onPressForward: () => void;
   resetControlTimeout?: () => void;
   showControls: boolean;
-  controlOpacityStyle?: VideoAnimations['controlsOpacity'];
   skipFeedbackLeft?: number;
   skipFeedbackRight?: number;
   size?: number;
@@ -350,7 +346,6 @@ export const SeekControls = ({
   onPressForward,
   resetControlTimeout,
   showControls,
-  controlOpacityStyle,
   skipFeedbackLeft = 0,
   skipFeedbackRight = 0,
   size = 54,
@@ -364,7 +359,6 @@ export const SeekControls = ({
       direction="backward"
       seekSeconds={seekSeconds}
       size={size}
-      controlOpacityStyle={controlOpacityStyle}
       disabled={!showControls}
       visible={showControls || skipFeedbackLeft > 0}
       skipTime={skipFeedbackLeft}
@@ -376,7 +370,6 @@ export const SeekControls = ({
       direction="forward"
       seekSeconds={seekSeconds}
       size={size}
-      controlOpacityStyle={controlOpacityStyle}
       disabled={!showControls}
       visible={showControls || skipFeedbackRight > 0}
       skipTime={skipFeedbackRight}

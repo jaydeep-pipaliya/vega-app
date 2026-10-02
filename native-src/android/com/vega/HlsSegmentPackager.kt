@@ -189,19 +189,19 @@ class HlsSegmentPackager(
         val args = try {
             buildArgs(index, created.dir)
         } catch (e: Exception) {
-            Log.w(TAG, "Cannot start HLS run: ${e.message}")
+            VegaLog.w(TAG, "Cannot start HLS run: ${e.message}")
             created.ended = true
             return
         }
-        Log.i(TAG, "Starting HLS run at segment $index (${starts[index]}s)")
+        VegaLog.i(TAG, "Starting HLS run at segment $index (${starts[index]}s)")
         created.session = FFmpegKit.executeWithArgumentsAsync(
             args.toTypedArray(),
             { done ->
                 created.succeeded = ReturnCode.isSuccess(done.returnCode)
                 created.ended = true
-                Log.i(TAG, "HLS run from segment $index ended: ${done.returnCode}")
+                VegaLog.i(TAG, "HLS run from segment $index ended: ${done.returnCode}")
             },
-            { log -> Log.w(TAG, "[FFmpeg] ${log.message}") },
+            { log -> VegaLog.w(TAG, "[FFmpeg] ${log.message}") },
             null
         )
         watchAhead(created)
@@ -221,7 +221,7 @@ class HlsSegmentPackager(
             while (!closed && !current.ended) {
                 synchronized(lock) {
                     if (run === current && producedLocked(current) > lastRequested + MAX_AHEAD) {
-                        Log.i(TAG, "Pausing HLS run at segment ${producedLocked(current)}")
+                        VegaLog.i(TAG, "Pausing HLS run at segment ${producedLocked(current)}")
                         stopRunLocked(current)
                     }
                 }

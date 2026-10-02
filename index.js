@@ -4,19 +4,19 @@
 
 import {AppRegistry} from 'react-native';
 import App from './src/App';
+import {installVegaLog} from './src/lib/logging/vegaLog';
 import notifee from '@notifee/react-native';
 // import notificationService from './src/lib/services/Notification';
 
 // Release builds: drop verbose logging. Each call formats its arguments and
 // crosses into native logcat on the JS thread, which adds up in hot paths
-// (provider fetches, playback, downloads). Warnings and errors are kept.
+// (provider fetches, playback, downloads). installVegaLog keeps info, warnings
+// and errors in the exportable log file, and console.log only while detailed
+// logging is on.
 if (!__DEV__) {
-  const noop = () => {};
-  console.log = noop;
-  console.info = noop;
-  console.debug = noop;
-  console.trace = noop;
+  console.trace = () => {};
 }
+installVegaLog(__DEV__);
 
 // Enable react-native-firebase debug mode for Analytics DebugView in dev
 if (__DEV__) {

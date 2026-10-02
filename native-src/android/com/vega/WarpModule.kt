@@ -74,13 +74,13 @@ class WarpModule(reactContext: ReactApplicationContext) :
                                     }
                                 }
                                 fallback.setExecutable(true, false)
-                                Log.i(TAG, "Extracted libusque.so from APK to ${fallback.absolutePath}")
+                                VegaLog.i(TAG, "Extracted libusque.so from APK to ${fallback.absolutePath}")
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to extract libusque.so fallback from APK: ${e.message}")
+                VegaLog.w(TAG, "Failed to extract libusque.so fallback from APK: ${e.message}")
             }
         }
 
@@ -108,7 +108,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
         try {
             OkHttpClientProvider.getOkHttpClient().connectionPool.evictAll()
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to evict connection pool: ${e.message}")
+            VegaLog.w(TAG, "Failed to evict connection pool: ${e.message}")
         }
     }
 
@@ -129,7 +129,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Error stopping WARP process: ${e.message}")
+            VegaLog.w(TAG, "Error stopping WARP process: ${e.message}")
         } finally {
             warpProcess = null
             currentPort = null
@@ -291,7 +291,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
 
             configFile.parentFile?.mkdirs()
             configFile.writeText(finalConfig.toString(2))
-            Log.i(TAG, "WARP config.json written successfully")
+            VegaLog.i(TAG, "WARP config.json written successfully")
         }
     }
 
@@ -318,11 +318,11 @@ class WarpModule(reactContext: ReactApplicationContext) :
 
                 val configFile = getConfigFile()
                 if (!configFile.exists() || configFile.length() == 0L) {
-                    Log.i(TAG, "Registering Cloudflare WARP account via HTTPS...")
+                    VegaLog.i(TAG, "Registering Cloudflare WARP account via HTTPS...")
                     try {
                         registerCloudflare(configFile)
                     } catch (e: Exception) {
-                        Log.e(TAG, "WARP registration error: ${e.message}", e)
+                        VegaLog.e(TAG, "WARP registration error: ${e.message}", e)
                         promise.reject("WARP_REGISTRATION_FAILED", "Failed to register WARP client: ${e.message}", e)
                         return@Thread
                     }
@@ -355,7 +355,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
                 Thread {
                     try {
                         proc.inputStream.bufferedReader().forEachLine { line ->
-                            Log.d("WarpProcess", line)
+                            VegaLog.d("WarpProcess", line)
                             logLines.append(line).append("\n")
                             if (line.contains("listening on", ignoreCase = true) || line.contains("HTTP proxy", ignoreCase = true)) {
                                 isListening = true
@@ -370,7 +370,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
                         proc.waitFor()
                     } catch (_: Exception) {}
                     if (warpProcess == proc) {
-                        Log.i(TAG, "WARP proxy process terminated unexpectedly")
+                        VegaLog.i(TAG, "WARP proxy process terminated unexpectedly")
                         stopInternal()
                     }
                 }.start()

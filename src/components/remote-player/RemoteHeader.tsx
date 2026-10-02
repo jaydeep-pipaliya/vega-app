@@ -1,13 +1,15 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React, {useState} from 'react';
-import {Clipboard, Pressable, Switch, ToastAndroid, View} from 'react-native';
+import {Host, Switch} from '@expo/ui/jetpack-compose';
+import {Clipboard, Pressable, ToastAndroid, View} from 'react-native';
 import IconButton from '../ui/IconButton';
 import AppText from '../ui/Text';
 import {useRemoteStore} from '../../lib/remote/remoteStore';
-import {useM3Colors} from '../../theme/M3PaletteContext';
+import {useM3Colors, useM3HostTheme} from '../../theme/M3PaletteContext';
 import {isTV} from '../../lib/tv';
 import {remotePlaybackManager} from '../../lib/remote/remotePlaybackManager';
-import {RemoteSheet} from './RemoteSheet';
+import {RemoteSheet, RemoteSheetSectionLabel} from './RemoteSheet';
+import {RemoteVolumeRow} from './RemoteVolumeRow';
 
 interface RemoteHeaderProps {
   onBack: () => void;
@@ -25,6 +27,10 @@ export const RemoteHeader: React.FC<RemoteHeaderProps> = ({
     remotePlaybackManager.isCastHlsEnabled(),
   );
 
+  const [volumeKeys, setVolumeKeys] = useState(() =>
+    remotePlaybackManager.isVolumeKeysEnabled(),
+  );
+
   if (isTV) return null;
 
   const copy = (value: string | undefined, label: string) => {
@@ -35,6 +41,11 @@ export const RemoteHeader: React.FC<RemoteHeaderProps> = ({
     Clipboard.setString(value);
     ToastAndroid.show(`${label[0].toUpperCase()}${label.slice(1)} copied`, ToastAndroid.SHORT);
     setMenuVisible(false);
+  };
+
+  const toggleVolumeKeys = (enabled: boolean) => {
+    remotePlaybackManager.setVolumeKeysEnabled(enabled);
+    setVolumeKeys(enabled);
   };
 
   const toggleCastHls = (enabled: boolean) => {
@@ -108,13 +119,24 @@ export const RemoteHeader: React.FC<RemoteHeaderProps> = ({
       <RemoteSheet
         visible={menuVisible}
         title="Options"
+        enableContentPanningGesture={false}
         onClose={() => setMenuVisible(false)}>
+        <RemoteVolumeRow
+          header={<RemoteSheetSectionLabel text="Volume" />}
+        />
         <MenuRow
           icon="playlist-play"
           title="HLS for Google Cast"
           detail="Lets the Chromecast seek by itself. Applies to the next video or audio change."
           onPress={() => toggleCastHls(!castHls)}
-          right={<Switch value={castHls} onValueChange={toggleCastHls} />}
+          right={<M3Switch value={castHls} onChange={toggleCastHls} />}
+        />
+        <MenuRow
+          icon="volume-vibrate"
+          title="Volume keys control the TV"
+          detail="Phone volume buttons change the receiver volume while Vega is open."
+          onPress={() => toggleVolumeKeys(!volumeKeys)}
+          right={<M3Switch value={volumeKeys} onChange={toggleVolumeKeys} />}
         />
         <MenuRow
           icon="link-variant"
@@ -128,6 +150,29 @@ export const RemoteHeader: React.FC<RemoteHeaderProps> = ({
         />
       </RemoteSheet>
     </View>
+  );
+};
+
+const M3Switch: React.FC<{value: boolean; onChange: (value: boolean) => void}> = ({
+  value,
+  onChange,
+}) => {
+  const colors = useM3Colors();
+  const hostTheme = useM3HostTheme();
+  return (
+    <Host matchContents {...hostTheme}>
+      <Switch
+        value={value}
+        onCheckedChange={onChange}
+        colors={{
+          checkedThumbColor: colors.onPrimary,
+          checkedTrackColor: colors.primary,
+          uncheckedThumbColor: colors.outline,
+          uncheckedTrackColor: colors.surfaceContainerHighest,
+          uncheckedBorderColor: colors.outline,
+        }}
+      />
+    </Host>
   );
 };
 

@@ -448,13 +448,14 @@ index 0000000..f3a530a
 +}
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt
 new file mode 100644
-index 0000000..3b1e4d9
+index 0000000..2451a2d
 --- /dev/null
 +++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/CustomSubtitleOverlayView.kt
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,327 @@
 +package com.brentvatne.exoplayer
 +
 +import android.content.Context
++import android.graphics.Bitmap
 +import android.graphics.Canvas
 +import android.graphics.Color
 +import android.graphics.Paint
@@ -494,6 +495,7 @@ index 0000000..3b1e4d9
 +        strokeCap = Paint.Cap.ROUND
 +    }
 +    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
++    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 +
 +    fun setCues(newCues: List<Cue>) {
 +        this.cues = newCues
@@ -527,6 +529,51 @@ index 0000000..3b1e4d9
 +            spannable.removeSpan(span)
 +        }
 +        return spannable
++    }
++
++    private fun buildLayout(
++        text: CharSequence,
++        paint: TextPaint,
++        width: Int,
++        alignment: Layout.Alignment
++    ): StaticLayout =
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
++            StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
++                .setAlignment(alignment)
++                .setLineSpacing(0f, 1.15f)
++                .setIncludePad(false)
++                .build()
++        } else {
++            @Suppress("DEPRECATION")
++            StaticLayout(text, paint, width, alignment, 1.15f, 0f, false)
++        }
++
++    private fun drawBitmapCue(
++        canvas: Canvas,
++        cue: Cue,
++        bitmap: Bitmap,
++        frameLeft: Float,
++        frameTop: Float,
++        frameWidth: Float,
++        frameHeight: Float
++    ) {
++        val width = if (cue.size != Cue.DIMEN_UNSET) cue.size * frameWidth
++            else bitmap.width.toFloat()
++        val height = if (cue.bitmapHeight != Cue.DIMEN_UNSET) cue.bitmapHeight * frameHeight
++            else width * bitmap.height / maxOf(1, bitmap.width)
++        val anchorX = frameLeft + (if (cue.position != Cue.DIMEN_UNSET) cue.position else 0.5f) * frameWidth
++        val anchorY = frameTop + (if (cue.line != Cue.DIMEN_UNSET) cue.line else 0.9f) * frameHeight
++        val left = when (cue.positionAnchor) {
++            Cue.ANCHOR_TYPE_START -> anchorX
++            Cue.ANCHOR_TYPE_END -> anchorX - width
++            else -> anchorX - width / 2f
++        }
++        val top = when (cue.lineAnchor) {
++            Cue.ANCHOR_TYPE_START -> anchorY
++            Cue.ANCHOR_TYPE_MIDDLE -> anchorY - height / 2f
++            else -> anchorY - height
++        }
++        canvas.drawBitmap(bitmap, null, RectF(left, top, left + width, top + height), bitmapPaint)
 +    }
 +
 +    override fun onDraw(canvas: Canvas) {
@@ -574,7 +621,8 @@ index 0000000..3b1e4d9
 +        val bottomPaddingPx = style.paddingBottom.toFloat() * density
 +
 +        val contentFrame = (parent as? ViewGroup)?.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-+        val followVideo = style.subtitlesFollowVideo && contentFrame != null && contentFrame.width > 0 && contentFrame.height > 0
++        val hasFrame = contentFrame != null && contentFrame.width > 0 && contentFrame.height > 0
++        val followVideo = style.subtitlesFollowVideo && hasFrame
 +        val videoLeft = if (followVideo) contentFrame!!.left.toFloat() else 0f
 +        val videoTop = if (followVideo) contentFrame!!.top.toFloat() else 0f
 +        val videoWidth = if (followVideo) contentFrame!!.width.toFloat() else width.toFloat()
@@ -583,32 +631,49 @@ index 0000000..3b1e4d9
 +
 +        if (videoWidth <= 0 || videoHeight <= 0) return
 +
-+        val maxTextWidth = (videoWidth - (48 * density)).toInt().coerceAtLeast(10)
++        // Positioned cues (ASS \pos and \an, WebVTT line and position) are
++        // placed within the picture, as VLC does, even when unpositioned text
++        // uses the whole view.
++        val frameLeft = if (hasFrame) contentFrame!!.left.toFloat() else videoLeft
++        val frameTop = if (hasFrame) contentFrame!!.top.toFloat() else videoTop
++        val frameWidth = if (hasFrame) contentFrame!!.width.toFloat() else videoWidth
++        val frameHeight = if (hasFrame) contentFrame!!.height.toFloat() else videoHeight
 +
-+        // Render each cue
++        val maxTextWidth = (videoWidth - (48 * density)).toInt().coerceAtLeast(10)
++        val padH = 12f * density
++        val padV = 5f * density
++        val gap = 2f * density
++        val lowestBottom = videoBottom - bottomPaddingPx - (4f * density)
++
++        val placed = ArrayList<RectF>()
++
 +        for (cue in cues) {
++            // Image subtitles (PGS, VobSub, DVB) carry a bitmap placed as a
++            // fraction of the picture, with no text.
++            val bitmap = cue.bitmap
++            if (bitmap != null) {
++                drawBitmapCue(canvas, cue, bitmap, frameLeft, frameTop, frameWidth, frameHeight)
++                continue
++            }
 +            val rawText = cue.text ?: continue
 +            if (rawText.isEmpty()) continue
 +
 +            val text = cleanCueText(rawText)
 +            val edgeText = createEdgeText(rawText)
++            val alignment = cue.textAlignment ?: Layout.Alignment.ALIGN_CENTER
++            val layoutWidth = if (cue.size != Cue.DIMEN_UNSET && cue.size > 0f) {
++                (cue.size * frameWidth).toInt().coerceIn(10, maxTextWidth)
++            } else {
++                maxTextWidth
++            }
 +
 +            textPaint.style = Paint.Style.FILL
 +            textPaint.color = fgColor
-+
-+            val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-+                StaticLayout.Builder.obtain(text, 0, text.length, textPaint, maxTextWidth)
-+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
-+                    .setLineSpacing(0f, 1.15f)
-+                    .setIncludePad(false)
-+                    .build()
-+            } else {
-+                @Suppress("DEPRECATION")
-+                StaticLayout(text, textPaint, maxTextWidth, Layout.Alignment.ALIGN_CENTER, 1.15f, 0f, false)
-+            }
++            textPaint.clearShadowLayer()
++            val staticLayout = buildLayout(text, textPaint, layoutWidth, alignment)
 +
 +            var minLineLeft = Float.MAX_VALUE
-+            var maxLineRight = Float.MIN_VALUE
++            var maxLineRight = -Float.MAX_VALUE
 +            for (i in 0 until staticLayout.lineCount) {
 +                minLineLeft = minOf(minLineLeft, staticLayout.getLineLeft(i))
 +                maxLineRight = maxOf(maxLineRight, staticLayout.getLineRight(i))
@@ -617,42 +682,71 @@ index 0000000..3b1e4d9
 +                minLineLeft = 0f
 +                maxLineRight = staticLayout.width.toFloat()
 +            }
++            val boxWidth = (maxLineRight - minLineLeft) + padH * 2
++            val boxHeight = staticLayout.height.toFloat() + padV * 2
 +
-+            val textHeight = staticLayout.height.toFloat()
-+            val padH = 12f * density
-+            val padV = 5f * density
++            // Horizontal: the cue position and its anchor, else centred.
++            var boxLeft = if (cue.position != Cue.DIMEN_UNSET) {
++                val anchorX = frameLeft + cue.position * frameWidth
++                when (cue.positionAnchor) {
++                    Cue.ANCHOR_TYPE_START -> anchorX
++                    Cue.ANCHOR_TYPE_END -> anchorX - boxWidth
++                    else -> anchorX - boxWidth / 2f
++                }
++            } else {
++                videoLeft + (videoWidth - boxWidth) / 2f
++            }
++            boxLeft = boxLeft.coerceIn(
++                videoLeft,
++                maxOf(videoLeft, videoLeft + videoWidth - boxWidth)
++            )
 +
-+            val x = videoLeft + (videoWidth - maxTextWidth) / 2f
-+            val boxLeft = x + minLineLeft - padH
-+            val boxRight = x + maxLineRight + padH
-+            val boxHeight = textHeight + padV * 2
-+            val boxBottom = videoBottom - bottomPaddingPx - (4f * density)
-+            val boxTop = boxBottom - boxHeight
-+            val y = boxTop + padV
++            // Vertical: the cue line and its anchor, else the bottom.
++            val lineHeight = textPaint.fontSpacing * 1.15f
++            var boxTop = when {
++                cue.line == Cue.DIMEN_UNSET -> lowestBottom - boxHeight
++                cue.lineType == Cue.LINE_TYPE_NUMBER -> {
++                    if (cue.line >= 0) frameTop + cue.line * lineHeight
++                    else frameTop + frameHeight + (cue.line + 1) * lineHeight - boxHeight
++                }
++                else -> {
++                    val anchorY = frameTop + cue.line * frameHeight
++                    when (cue.lineAnchor) {
++                        Cue.ANCHOR_TYPE_START -> anchorY
++                        Cue.ANCHOR_TYPE_MIDDLE -> anchorY - boxHeight / 2f
++                        else -> anchorY - boxHeight
++                    }
++                }
++            }
++            // Bottom text keeps the user's bottom padding.
++            boxTop = boxTop.coerceIn(videoTop, maxOf(videoTop, lowestBottom - boxHeight))
 +
-+            // Draw background rounded box
++            // Cues that would overlap move apart, as in VLC: text in the lower
++            // half moves up, text in the upper half moves down.
++            val movesUp = boxTop + boxHeight / 2f > videoTop + videoHeight / 2f
++            var rect = RectF(boxLeft, boxTop, boxLeft + boxWidth, boxTop + boxHeight)
++            var attempts = 0
++            while (attempts++ <= placed.size) {
++                val hit = placed.firstOrNull { RectF.intersects(it, rect) } ?: break
++                val top = if (movesUp) hit.top - gap - boxHeight else hit.bottom + gap
++                rect = RectF(rect.left, top, rect.right, top + boxHeight)
++            }
++            placed.add(rect)
++
++            val x = rect.left + padH - minLineLeft
++            val y = rect.top + padV
++
 +            if (bgAlpha > 0) {
 +                bgPaint.color = Color.argb(bgAlpha, 0, 0, 0)
-+                val bgRect = RectF(boxLeft, boxTop, boxRight, boxBottom)
-+                canvas.drawRoundRect(bgRect, 8f * density, 8f * density, bgPaint)
++                canvas.drawRoundRect(rect, 8f * density, 8f * density, bgPaint)
 +            }
 +
-+            // Draw edge effects
 +            when (edgeType) {
 +                "outline" -> {
 +                    if (outlineWidthPx > 0f) {
 +                        strokePaint.strokeWidth = outlineWidthPx * 2f
 +                        strokePaint.color = edColor
-+                        val strokeLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-+                            StaticLayout.Builder.obtain(edgeText, 0, edgeText.length, strokePaint, maxTextWidth)
-+                                .setAlignment(Layout.Alignment.ALIGN_CENTER)
-+                                .setLineSpacing(0f, 1.15f)
-+                                .setIncludePad(false)
-+                                .build()
-+                        } else {
-+                            @Suppress("DEPRECATION")
-+                            StaticLayout(edgeText, strokePaint, maxTextWidth, Layout.Alignment.ALIGN_CENTER, 1.15f, 0f, false)
-+                        }
++                        val strokeLayout = buildLayout(edgeText, strokePaint, layoutWidth, alignment)
 +                        canvas.save()
 +                        canvas.translate(x, y)
 +                        strokeLayout.draw(canvas)
@@ -664,49 +758,17 @@ index 0000000..3b1e4d9
 +                    val shadowRadius = outlineWidthPx * 2f
 +                    textPaint.setShadowLayer(shadowRadius, shadowOffset, shadowOffset, edColor)
 +                }
-+                "raised" -> {
-+                    val offset = outlineWidthPx
-+                    val shadowPaint = TextPaint(textPaint).apply {
-+                        color = edColor
-+                    }
-+                    val shadowLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-+                        StaticLayout.Builder.obtain(edgeText, 0, edgeText.length, shadowPaint, maxTextWidth)
-+                            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-+                            .setLineSpacing(0f, 1.15f)
-+                            .setIncludePad(false)
-+                            .build()
-+                    } else {
-+                        @Suppress("DEPRECATION")
-+                        StaticLayout(edgeText, shadowPaint, maxTextWidth, Layout.Alignment.ALIGN_CENTER, 1.15f, 0f, false)
-+                    }
++                "raised", "depressed" -> {
++                    val offset = if (edgeType == "raised") outlineWidthPx else -outlineWidthPx
++                    val shadowPaint = TextPaint(textPaint).apply { color = edColor }
++                    val shadowLayout = buildLayout(edgeText, shadowPaint, layoutWidth, alignment)
 +                    canvas.save()
 +                    canvas.translate(x + offset, y + offset)
 +                    shadowLayout.draw(canvas)
 +                    canvas.restore()
 +                }
-+                "depressed" -> {
-+                    val offset = outlineWidthPx
-+                    val shadowPaint = TextPaint(textPaint).apply {
-+                        color = edColor
-+                    }
-+                    val shadowLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-+                        StaticLayout.Builder.obtain(edgeText, 0, edgeText.length, shadowPaint, maxTextWidth)
-+                            .setAlignment(Layout.Alignment.ALIGN_CENTER)
-+                            .setLineSpacing(0f, 1.15f)
-+                            .setIncludePad(false)
-+                            .build()
-+                    } else {
-+                        @Suppress("DEPRECATION")
-+                        StaticLayout(edgeText, shadowPaint, maxTextWidth, Layout.Alignment.ALIGN_CENTER, 1.15f, 0f, false)
-+                    }
-+                    canvas.save()
-+                    canvas.translate(x - offset, y - offset)
-+                    shadowLayout.draw(canvas)
-+                    canvas.restore()
-+                }
 +            }
 +
-+            // Draw foreground text
 +            textPaint.style = Paint.Style.FILL
 +            textPaint.color = fgColor
 +            canvas.save()

@@ -1,4 +1,4 @@
-import {SafeAreaView, RefreshControl, View, Modal, Pressable} from 'react-native';
+import {RefreshControl, View, Modal, Pressable} from 'react-native';
 import {FlashList} from '@shopify/flash-list';
 import Slider from '../../components/Slider';
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
@@ -241,7 +241,7 @@ const Home = ({}: Props) => {
     <QueryErrorBoundary>
       <GestureHandlerRootView style={{flex: 1}}>
         <StatusBarScrim visible={statusBarScrimVisible} />
-        <SafeAreaView className="flex-1 bg-m3-background">
+        <View className="flex-1 bg-m3-background">
           <Drawer
             open={!isTV && isDrawerOpen}
             onOpen={() => {
@@ -323,7 +323,7 @@ const Home = ({}: Props) => {
               </View>
             </Modal>
           ) : null}
-        </SafeAreaView>
+        </View>
       </GestureHandlerRootView>
     </QueryErrorBoundary>
   );

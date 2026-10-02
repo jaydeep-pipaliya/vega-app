@@ -1,3 +1,4 @@
+import ScreenSafeArea from '../components/ui/ScreenSafeArea';
 import { View, Pressable, useWindowDimensions } from 'react-native';
 import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -378,7 +379,7 @@ const ScrollList = ({ route }: Props): React.ReactElement => {
   );
 
   return (
-    <View className="h-full w-full bg-m3-background p-4">
+    <ScreenSafeArea className="h-full w-full bg-m3-background p-4">
       <View className="w-full px-4 font-semibold my-6 flex-row justify-between items-center">
         <View style={{flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1}}>
           <IconButton
@@ -456,7 +457,7 @@ const ScrollList = ({ route }: Props): React.ReactElement => {
           </View>
         ) : null}
       </View>
-    </View>
+    </ScreenSafeArea>
   );
 };
 

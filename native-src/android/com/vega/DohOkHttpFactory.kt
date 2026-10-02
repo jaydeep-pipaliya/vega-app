@@ -90,13 +90,13 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
             }
 
             val doh = builder.build()
-            Log.i(TAG, "DoH configured with ${customUrl ?: currentProvider.displayName}")
+            VegaLog.i(TAG, "DoH configured with ${customUrl ?: currentProvider.displayName}")
             
             cachedDoh = doh
             lastConfigKey = configKey
             FallbackDns(doh)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to build DoH, falling back to system DNS", e)
+            VegaLog.e(TAG, "Failed to build DoH, falling back to system DNS", e)
             Dns.SYSTEM
         }
     }
@@ -121,7 +121,7 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
                     }
                     val warpPort = warpProxyPort
                     if (warpPort != null && warpPort > 0) {
-                        Log.d(TAG, "Routing ${uri?.host} through WARP HTTP proxy on port $warpPort")
+                        VegaLog.d(TAG, "Routing ${uri?.host} through WARP HTTP proxy on port $warpPort")
                         return listOf(
                             Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", warpPort)),
                             Proxy.NO_PROXY
@@ -133,7 +133,7 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
                 }
 
                 override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {
-                    Log.w(TAG, "Proxy connection failed for $uri: ${ioe?.message}")
+                    VegaLog.w(TAG, "Proxy connection failed for $uri: ${ioe?.message}")
                     if (warpProxyPort != null) {
                         warpProxyPort = null
                     }
@@ -198,7 +198,7 @@ class ByeDpiSocket : Socket() {
             // 1. Connect underlying socket to local ByeDPI proxy
             super.connect(InetSocketAddress("127.0.0.1", byeDpiPort), timeout)
         } catch (e: Exception) {
-            Log.w(TAG, "ByeDPI connection failed on port $byeDpiPort, resetting: ${e.message}")
+            VegaLog.w(TAG, "ByeDPI connection failed on port $byeDpiPort, resetting: ${e.message}")
             DohOkHttpFactory.instance?.byeDpiProxyPort = null
             throw e
         }
@@ -282,7 +282,7 @@ class ByeDpiSocket : Socket() {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "ByeDPI handshake failed on port $byeDpiPort: ${e.message}")
+            VegaLog.w(TAG, "ByeDPI handshake failed on port $byeDpiPort: ${e.message}")
             DohOkHttpFactory.instance?.byeDpiProxyPort = null
             throw e
         } finally {
@@ -307,10 +307,10 @@ private class FallbackDns(private val primary: DnsOverHttps) : Dns {
         return try {
             primary.lookup(hostname)
         } catch (e: UnknownHostException) {
-            Log.w(TAG, "DoH lookup failed for $hostname, falling back to system DNS")
+            VegaLog.w(TAG, "DoH lookup failed for $hostname, falling back to system DNS")
             Dns.SYSTEM.lookup(hostname)
         } catch (e: Exception) {
-            Log.w(TAG, "DoH error for $hostname, falling back to system DNS", e)
+            VegaLog.w(TAG, "DoH error for $hostname, falling back to system DNS", e)
             Dns.SYSTEM.lookup(hostname)
         }
     }

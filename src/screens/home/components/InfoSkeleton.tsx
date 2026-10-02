@@ -1,3 +1,4 @@
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React from 'react';
 import {View} from 'react-native';
@@ -5,7 +6,9 @@ import SkeletonLoader from '../../../components/Skeleton';
 import {TVFocusable} from '../../../components/tv';
 import {isTV} from '../../../lib/tv/constants';
 
-const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
+const InfoSkeleton = ({onBack}: {onBack: () => void}) => {
+  const insets = useSafeAreaInsets();
+  return (
   <View style={{backgroundColor: '#000000', flex: 1}}>
     <SkeletonLoader
       show
@@ -27,7 +30,7 @@ const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
         justifyContent: 'center',
         left: 10,
         position: 'absolute',
-        top: 36,
+        top: isTV ? 36 : insets.top + 12,
         width: 48,
       }}>
       <MaterialCommunityIcons name="arrow-left" color="#FFFFFF" size={28} />
@@ -47,6 +50,7 @@ const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
       <SkeletonLoader show height={72} width="100%" marginVertical={0} />
     </View>
   </View>
-);
+  );
+};
 
 export default InfoSkeleton;

@@ -1,3 +1,4 @@
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React, {useEffect, useMemo, useState} from 'react';
 import {Image, Linking, Pressable, TouchableOpacity, View, findNodeHandle} from 'react-native';
@@ -170,6 +171,7 @@ const ContentOverview = ({
   trailerUrl,
   year,
 }: ContentOverviewProps) => {
+  const insets = useSafeAreaInsets();
   const colors = useM3Colors();
   const focusBorderColor = useTVFocusBorderColor();
   const [logoFailed, setLogoFailed] = useState(false);
@@ -217,7 +219,7 @@ const ContentOverview = ({
             flexDirection: 'row',
             left: 12,
             position: 'absolute',
-            top: 42,
+            top: isTV ? 42 : insets.top + 12,
           }}>
           <HeaderIconButton
             focusRef={backButtonRef}

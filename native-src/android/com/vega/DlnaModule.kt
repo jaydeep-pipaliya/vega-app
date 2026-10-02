@@ -100,7 +100,7 @@ class DlnaModule(
                     try {
                         socket.networkInterface = wifiIface
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to set networkInterface: ${e.message}")
+                        VegaLog.w(TAG, "Failed to set networkInterface: ${e.message}")
                     }
                     val wifiIp = wifiIface.inetAddresses.toList().firstOrNull { it is Inet4Address && !it.isLoopbackAddress }
                     if (wifiIp != null) {
@@ -116,7 +116,7 @@ class DlnaModule(
                     try {
                         wifiNetwork.bindSocket(socket)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to bindSocket to Wi-Fi: ${e.message}")
+                        VegaLog.w(TAG, "Failed to bindSocket to Wi-Fi: ${e.message}")
                     }
                 }
 
@@ -142,7 +142,7 @@ class DlnaModule(
                         socket.send(createSearchPacket(target, multicastAddr))
                         socket.send(createSearchPacket(target, broadcastAddr))
                     } catch (e: Exception) {
-                        Log.w(TAG, "SSDP send error for $target: ${e.message}")
+                        VegaLog.w(TAG, "SSDP send error for $target: ${e.message}")
                     }
                 }
 
@@ -164,17 +164,17 @@ class DlnaModule(
 
                         val location = extractHeader(response, "LOCATION")
                         if (!location.isNullOrBlank() && discoveredDevices.putIfAbsent(location, true) == null) {
-                            Log.i(TAG, "Discovered SSDP location: $location")
+                            VegaLog.i(TAG, "Discovered SSDP location: $location")
                             fetchAndParseDeviceDescription(location)
                         }
                     } catch (_: java.net.SocketTimeoutException) {
                         break
                     } catch (e: Exception) {
-                        Log.w(TAG, "SSDP receive error: ${e.message}")
+                        VegaLog.w(TAG, "SSDP receive error: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Discovery error", e)
+                VegaLog.e(TAG, "Discovery error", e)
             } finally {
                 isSearching = false
                 try {
@@ -216,7 +216,7 @@ class DlnaModule(
             try {
                 readDeviceDescription(locationUrl)?.let { sendEvent(DEVICE_FOUND_EVENT, it) }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to parse device description from $locationUrl: ${e.message}")
+                VegaLog.w(TAG, "Failed to parse device description from $locationUrl: ${e.message}")
             }
         }.start()
     }
@@ -242,7 +242,7 @@ class DlnaModule(
                     promise.resolve(device)
                     return@Thread
                 } catch (e: Exception) {
-                    Log.w(TAG, "No renderer at $location: ${e.message}")
+                    VegaLog.w(TAG, "No renderer at $location: ${e.message}")
                 }
             }
             promise.reject("DLNA_NOT_FOUND", "No DLNA renderer found at $address")
@@ -312,7 +312,7 @@ class DlnaModule(
     fun setAVTransportURI(controlUrl: String, mediaUrl: String, title: String, subtitleUrl: String?, promise: Promise) {
         Thread {
             try {
-                Log.i(TAG, "setAVTransportURI: mediaUrl=$mediaUrl subtitleUrl=$subtitleUrl controlUrl=$controlUrl")
+                VegaLog.i(TAG, "setAVTransportURI: mediaUrl=$mediaUrl subtitleUrl=$subtitleUrl controlUrl=$controlUrl")
                 val subXml = if (!subtitleUrl.isNullOrBlank()) {
                     val escapedSub = escapeXml(subtitleUrl)
                     val srtUrl = if (subtitleUrl.endsWith(".vtt", ignoreCase = true)) {
@@ -543,6 +543,28 @@ class DlnaModule(
         }.start()
     }
 
+    @ReactMethod
+    fun getVolume(renderingControlUrl: String, promise: Promise) {
+        Thread {
+            val soapBody = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+                    <s:Body>
+                        <u:GetVolume xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1">
+                            <InstanceID>0</InstanceID>
+                            <Channel>Master</Channel>
+                        </u:GetVolume>
+                    </s:Body>
+                </s:Envelope>
+            """.trimIndent()
+            val res = sendSoapAction(renderingControlUrl, "urn:schemas-upnp-org:service:RenderingControl:1#GetVolume", soapBody)
+            val volume = res?.let { parseTagString(it, "CurrentVolume")?.trim()?.toIntOrNull() }
+            reactContext.runOnUiQueueThread {
+                if (volume != null) promise.resolve(volume) else promise.reject("SOAP_ERROR", "GetVolume failed")
+            }
+        }.start()
+    }
+
     private fun sendSoapAction(controlUrl: String, soapAction: String, soapBody: String): String? {
         lastSoapError = null
         return try {
@@ -564,13 +586,13 @@ class DlnaModule(
                     } else {
                         "HTTP ${response.code}: ${errBody.take(120)}"
                     }
-                    Log.w(TAG, "SOAP request $soapAction to $controlUrl returned ${response.code}: $lastSoapError")
+                    VegaLog.w(TAG, "SOAP request $soapAction to $controlUrl returned ${response.code}: $lastSoapError")
                     null
                 }
             }
         } catch (e: Exception) {
             lastSoapError = e.message ?: "Network error"
-            Log.w(TAG, "SOAP execution error for $soapAction", e)
+            VegaLog.w(TAG, "SOAP execution error for $soapAction", e)
             null
         }
     }

@@ -1,6 +1,5 @@
 import {
   View,
-  TouchableOpacity,
   Pressable,
   Modal,
   TextInput,
@@ -8,39 +7,51 @@ import {
   ToastAndroid,
   ScrollView,
   useWindowDimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import React, {useState} from 'react';
-import {TextTracks, TextTrackType} from 'react-native-video';
+import {TextTrackType} from 'react-native-video';
 import DropdownField from './ui/DropdownField';
 import AppText from './ui/Text';
 import {useM3Colors} from '../theme/M3PaletteContext';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 import PlayerMenuRow from './PlayerMenuRow';
 
+export interface FoundSubtitle {
+  type: TextTrackType;
+  language: string;
+  title: string;
+  uri: string;
+}
+
 const SearchSubtitles = ({
   searchQuery,
   setSearchQuery,
-  setExternalSubs,
+  onAddSubtitle,
+  renderTrigger,
 }: {
   searchQuery: string;
   setSearchQuery: (text: string) => void;
-  setExternalSubs: React.Dispatch<React.SetStateAction<TextTracks>>;
+  onAddSubtitle: (track: FoundSubtitle) => void;
+  /** Replaces the default menu row that opens the search. */
+  renderTrigger?: (open: () => void) => React.ReactNode;
 }) => {
   const colors = useM3Colors();
   const primary = colors.primary;
   const focusBorderColor = useTVFocusBorderColor(primary);
   const {width} = useWindowDimensions();
-  const compact = width < 760;
   const contentWidth = Math.min(width - 32, 1120);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [season, setSeason] = useState('');
   const [episode, setEpisode] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [subId, setSubId] = useState('eng');
+  const [focusedControl, setFocusedControl] = useState<string | null>(null);
 
   const subLanguageIds = [
     {name: 'English', id: 'eng'},
@@ -67,6 +78,7 @@ const SearchSubtitles = ({
   ];
 
   const searchSubtitles = async () => {
+    if (loading || !searchQuery.trim()) return;
     try {
       setError('');
       setLoading(true);
@@ -98,7 +110,9 @@ const SearchSubtitles = ({
         },
       );
       console.log('openSubtitles⭐', response);
+      if (!response.ok) throw new Error(`Subtitle search failed (${response.status})`);
       const data = await response.json();
+      if (!Array.isArray(data)) throw new Error('Unexpected subtitle search response');
       setLoading(false);
       if (data?.length === 0) {
         setError('No Results Found');
@@ -115,25 +129,31 @@ const SearchSubtitles = ({
   };
   return (
     <View>
-      <PlayerMenuRow
-        title="Search subtitles online"
-        detail="Find a subtitle from OpenSubtitles"
-        accentColor={primary}
-        icon="travel-explore"
-        onPress={() => setSearchModalVisible(true)}
-      />
+      {renderTrigger ? (
+        renderTrigger(() => setSearchModalVisible(true))
+      ) : (
+        <PlayerMenuRow
+          title="Search subtitles online"
+          detail="Find a subtitle from OpenSubtitles"
+          accentColor={primary}
+          icon="travel-explore"
+          onPress={() => setSearchModalVisible(true)}
+        />
+      )}
       <Modal
         animationType="slide"
-        transparent
-        presentationStyle="overFullScreen"
+        presentationStyle="fullScreen"
         statusBarTranslucent
         visible={searchModalVisible}
         onRequestClose={() => {
           setSearchModalVisible(false);
         }}>
         <SafeAreaView
-          className="h-full w-full"
-          style={{backgroundColor: 'rgba(0,0,0,0.96)'}}>
+          edges={['top', 'bottom', 'left', 'right']}
+          style={{flex: 1, backgroundColor: '#0B0B0B'}}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{flex: 1}}>
           <View className="flex-1 self-center" style={{width: contentWidth}}>
             <View className="flex-row items-center py-3">
               <Pressable
@@ -142,19 +162,21 @@ const SearchSubtitles = ({
                 focusable={true}
                 isTVSelectable={true}
                 hasTVPreferredFocus={true}
-                style={({focused}) => ({
+                onFocus={() => setFocusedControl('close')}
+                onBlur={() => setFocusedControl(null)}
+                style={{
                   height: 44,
                   width: 44,
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderRadius: 22,
-                  backgroundColor: focused
+                  backgroundColor: focusedControl === 'close'
                     ? 'rgba(255,255,255,0.22)'
                     : 'rgba(255,255,255,0.08)',
-                  borderWidth: focused ? 2 : 0,
+                  borderWidth: focusedControl === 'close' ? 2 : 0,
                   borderColor: focusBorderColor,
-                  transform: [{scale: focused ? 1.1 : 1}],
-                })}
+
+                }}
                 onPress={() => setSearchModalVisible(false)}>
                 <MaterialIcons name="arrow-back" size={25} color="white" />
               </Pressable>
@@ -168,6 +190,11 @@ const SearchSubtitles = ({
               </View>
             </View>
 
+            <ScrollView
+              style={{flex: 1}}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              contentContainerStyle={{flexGrow: 1, paddingBottom: 24}}>
             <View
               className="rounded-3xl p-3"
               style={{
@@ -190,83 +217,73 @@ const SearchSubtitles = ({
                 value={searchQuery}
               />
 
-              <View
-                className="mt-3 flex-row items-center"
-                style={{gap: 10, flexWrap: compact ? 'wrap' : 'nowrap'}}>
-                <View style={{flex: 1, minWidth: compact ? 190 : 220}}>
-                  <DropdownField
-                    options={subLanguageIds}
-                    value={subLanguageIds.find(option => option.id === subId)}
-                    getKey={option => option.id}
-                    getLabel={option => option.name}
-                    onChange={option => setSubId(option.id)}
+              <View style={{marginTop: 12, gap: 12}}>
+                <DropdownField
+                  options={subLanguageIds}
+                  value={subLanguageIds.find(option => option.id === subId)}
+                  getKey={option => option.id}
+                  getLabel={option => option.name}
+                  onChange={option => setSubId(option.id)}
+                />
+                <View style={{flexDirection: 'row', gap: 12}}>
+                  <TextInput
+                    accessibilityLabel="Season number (optional)"
+                    placeholder="Season"
+                    placeholderTextColor="#A9A9A9"
+                    keyboardType="numeric"
+                    style={{flex: 1, minWidth: 0, minHeight: 56, borderRadius: 16,
+                      paddingHorizontal: 16, fontSize: 16, color: '#FFFFFF',
+                      backgroundColor: '#222222', borderColor: '#3B3B3B', borderWidth: 1}}
+                    onChangeText={setSeason}
+                    value={season}
+                  />
+                  <TextInput
+                    accessibilityLabel="Episode number (optional)"
+                    placeholder="Episode"
+                    placeholderTextColor="#A9A9A9"
+                    keyboardType="numeric"
+                    style={{flex: 1, minWidth: 0, minHeight: 56, borderRadius: 16,
+                      paddingHorizontal: 16, fontSize: 16, color: '#FFFFFF',
+                      backgroundColor: '#222222', borderColor: '#3B3B3B', borderWidth: 1}}
+                    onChangeText={setEpisode}
+                    value={episode}
                   />
                 </View>
-                <TextInput
-                  placeholder="Season"
-                  placeholderTextColor="rgba(255,255,255,0.42)"
-                  keyboardType="numeric"
-                  className="h-14 rounded-2xl px-4 text-white"
-                  style={{
-                    width: compact ? 100 : 120,
-                    backgroundColor: 'rgba(255,255,255,0.065)',
-                    borderColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1,
-                  }}
-                  onChangeText={text => setSeason(text)}
-                  value={season}
-                />
-                <TextInput
-                  placeholder="Episode"
-                  placeholderTextColor="rgba(255,255,255,0.42)"
-                  keyboardType="numeric"
-                  className="h-14 rounded-2xl px-4 text-white"
-                  style={{
-                    width: compact ? 100 : 120,
-                    backgroundColor: 'rgba(255,255,255,0.065)',
-                    borderColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1,
-                  }}
-                  onChangeText={text => setEpisode(text)}
-                  value={episode}
-                />
                 <Pressable
                   accessibilityLabel="Search subtitles"
                   accessibilityRole="button"
+                  accessibilityState={{disabled: loading || !searchQuery.trim(), busy: loading}}
                   focusable={true}
                   isTVSelectable={true}
                   disabled={loading || !searchQuery.trim()}
-                  className="h-14 flex-row items-center justify-center rounded-2xl px-5"
-                  style={({focused}) => ({
-                    backgroundColor: primary,
-                    opacity: loading || !searchQuery.trim() ? 0.45 : 1,
-                    borderWidth: focused ? 2.5 : 0,
-                    borderColor: focusBorderColor,
-                    transform: [{scale: focused ? 1.05 : 1}],
-                  })}
+                  onFocus={() => setFocusedControl('search')}
+                  onBlur={() => setFocusedControl(null)}
+                  style={{
+                    minHeight: 56, width: '100%', flexDirection: 'row', gap: 8,
+                    alignItems: 'center', justifyContent: 'center', borderRadius: 16,
+                    paddingHorizontal: 20, paddingVertical: 12,
+                    backgroundColor: loading || !searchQuery.trim() ? '#454545' : '#F0EBE5',
+                    borderWidth: 3, borderColor: focusedControl === 'search' ? focusBorderColor : 'transparent',
+                  }}
                   onPress={searchSubtitles}>
-                  <MaterialIcons
-                    name="search"
-                    size={24}
-                    color={colors.onPrimary}
-                  />
-                  <AppText
-                    className="ml-2 text-base font-bold"
-                    style={{color: colors.onPrimary}}>
-                    Search
+                  {loading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <MaterialIcons name="search" size={24}
+                      color={!searchQuery.trim() ? '#D0D0D0' : '#211F1E'} />
+                  )}
+                  <AppText role="labelLarge" style={{fontWeight: '700',
+                    color: loading || !searchQuery.trim() ? '#D0D0D0' : '#211F1E'}}>
+                    {loading ? 'Searching…' : 'Search'}
                   </AppText>
                 </Pressable>
               </View>
             </View>
 
-            <ScrollView
-              className="mt-3 flex-1"
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              contentContainerStyle={{flexGrow: 1, paddingBottom: 24}}>
+            <View style={{flex: 1, marginTop: 12, minHeight: 160}}>
               {loading ? (
-                <View className="w-full h-full justify-center items-center">
-                  <ActivityIndicator size="large" color={primary} />
+                <View style={{flex: 1, minHeight: 160, alignItems: 'center', justifyContent: 'center'}}>
+                  <ActivityIndicator size="large" color="#FFFFFF" />
                 </View>
               ) : (
                 searchResults.map((result: any) => (
@@ -274,31 +291,30 @@ const SearchSubtitles = ({
                     key={result?.IDSubtitleFile}
                     focusable={true}
                     isTVSelectable={true}
-                    className="my-1.5 flex-row items-center rounded-2xl p-3"
-                    style={({focused}) => ({
-                      backgroundColor: focused
+                    onFocus={() => setFocusedControl(String(result?.IDSubtitleFile))}
+                    onBlur={() => setFocusedControl(null)}
+                    style={{
+                      marginVertical: 6, flexDirection: 'row', alignItems: 'center',
+                      borderRadius: 16, padding: 12,
+                      backgroundColor: focusedControl === String(result?.IDSubtitleFile)
                         ? 'rgba(255, 255, 255, 0.16)'
                         : 'rgba(255,255,255,0.055)',
-                      borderColor: focused
+                      borderColor: focusedControl === String(result?.IDSubtitleFile)
                         ? focusBorderColor
                         : 'rgba(255,255,255,0.09)',
-                      borderWidth: focused ? 2.5 : 1,
-                      transform: [{scale: focused ? 1.03 : 1}],
-                    })}
+                      borderWidth: focusedControl === String(result?.IDSubtitleFile) ? 2.5 : 1,
+                    }}
                     onPress={() => {
                       setSearchModalVisible(false);
-                      setExternalSubs(prev => [
-                        {
-                          type: TextTrackType.SUBRIP,
-                          language: result?.ISO639,
-                          title:
-                            result?.InfoReleaseGroup +
-                            ' ' +
-                            result?.UserNickName,
-                          uri: result?.SubDownloadLink?.replace('.gz', ''),
-                        },
-                        ...prev,
-                      ]);
+                      onAddSubtitle({
+                        type: TextTrackType.SUBRIP,
+                        language: result?.ISO639,
+                        title:
+                          result?.InfoReleaseGroup +
+                          ' ' +
+                          result?.UserNickName,
+                        uri: result?.SubDownloadLink?.replace('.gz', ''),
+                      });
                     }}>
                     <View
                       className="mr-3 min-w-14 items-center rounded-xl px-2 py-2"
@@ -358,8 +374,10 @@ const SearchSubtitles = ({
                   </AppText>
                 </View>
               )}
+            </View>
             </ScrollView>
           </View>
+          </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
     </View>

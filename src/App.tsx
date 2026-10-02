@@ -64,6 +64,7 @@ import {
 } from './lib/sync/syncService';
 import StreamingTabBar from './components/navigation/StreamingTabBar';
 import AppDialogHost from './components/AppDialogHost';
+import {RemoteVolumeToast} from './components/remote-player/RemoteVolumeToast';
 import {
   getAnalytics,
   getCrashlytics,
@@ -349,7 +350,7 @@ function DownloadsStackScreen() {
 function SettingsStackScreen() {
   const insets = useSafeAreaInsets();
   const subpageOptions = useMemo(
-    () => ({contentStyle: {flex: 1, paddingTop: insets.top}}),
+    () => ({contentStyle: {flex: 1, paddingTop: isTV ? 0 : insets.top}}),
     [insets.top],
   );
 
@@ -383,7 +384,6 @@ function SettingsStackScreen() {
       <SettingsStack.Screen
         name="DownloadsStack"
         component={DownloadsStackScreen}
-        options={subpageOptions}
       />
       <SettingsStack.Screen
         name="SubTitlesPreferences"
@@ -653,6 +653,7 @@ const App = () => {
               {/* Global WAF / captcha solving dialog, triggered by providers via
                 providerContext.openWebView */}
               <WafWebViewDialog />
+              <RemoteVolumeToast />
               {/* Isolated realm that runs untrusted provider code. Must stay
                 mounted for the app lifetime: every provider call is dispatched
                 into it. */}

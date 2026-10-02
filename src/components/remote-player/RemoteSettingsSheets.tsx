@@ -1,5 +1,7 @@
 import {isRemotePlaybackCanceled} from '../../lib/remote/remotePlaybackErrors';
-import React from 'react';
+import * as DocumentPicker from 'expo-document-picker';
+import React, {useState} from 'react';
+import SearchSubtitles, {FoundSubtitle} from '../SearchSubtitles';
 import {useRemoteStore} from '../../lib/remote/remoteStore';
 import {remotePlaybackManager} from '../../lib/remote/remotePlaybackManager';
 import {
@@ -56,6 +58,8 @@ interface RemoteSettingsSheetsProps {
   onSelectAudio?: (track: RemoteAudioTrack) => void;
   onSelectSubtitle?: (track?: RemoteSubtitleTrack) => void;
   onSelectQuality?: (q: RemoteQuality) => void;
+  /** Starting text for the online subtitle search. */
+  subtitleSearchQuery?: string;
 }
 
 const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
@@ -82,7 +86,9 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
   onSelectAudio,
   onSelectSubtitle,
   onSelectQuality,
+  subtitleSearchQuery,
 }) => {
+  const [searchQuery, setSearchQuery] = useState(subtitleSearchQuery || '');
   const servers = useRemoteStore(state => state.servers);
   const activeServerId = useRemoteStore(state => state.activeServerId);
   const audioTracks = useRemoteStore(state => state.audioTracks);
@@ -118,6 +124,42 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
         if (!isRemotePlaybackCanceled(error))
           useRemoteStore.getState().setErrorMessage(error.message || 'Unable to change playback speed');
       });
+  };
+
+  const addSubtitle = (track: Pick<FoundSubtitle, 'uri' | 'title' | 'language'>) => {
+    onClose();
+    // The manager reports failures on the remote screen.
+    remotePlaybackManager.addExternalSubtitle(track).catch(() => {});
+  };
+
+  const pickSubtitleFile = async () => {
+    try {
+      // The picker copies the file into the app cache, the only local
+      // folder the phone server shares with the receiver.
+      const res = await DocumentPicker.getDocumentAsync({
+        type: [
+          'text/vtt',
+          'application/x-subrip',
+          'text/srt',
+          'application/ttml+xml',
+          'text/plain',
+          'application/octet-stream',
+        ],
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+      const asset = !res.canceled ? res.assets?.[0] : undefined;
+      if (!asset) return;
+      addSubtitle({
+        uri: asset.uri,
+        title: asset.name || 'External subtitle',
+        language: 'und',
+      });
+    } catch (error: any) {
+      useRemoteStore
+        .getState()
+        .setErrorMessage(error?.message || 'Could not open the subtitle file');
+    }
   };
 
   const renderContent = () => {
@@ -245,6 +287,26 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
                 />
               );
             })}
+            <RemoteSheetSectionLabel text="Add subtitles" />
+            <RemoteSheetOption
+              icon="file-document-outline"
+              title="Add external file"
+              supportingText="SRT, VTT or TTML from this phone"
+              onPress={pickSubtitleFile}
+            />
+            <SearchSubtitles
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              onAddSubtitle={addSubtitle}
+              renderTrigger={open => (
+                <RemoteSheetOption
+                  icon="earth"
+                  title="Search subtitles online"
+                  supportingText="Find a subtitle from OpenSubtitles"
+                  onPress={open}
+                />
+              )}
+            />
           </>
         );
 

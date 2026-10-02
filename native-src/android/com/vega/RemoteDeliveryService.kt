@@ -83,7 +83,7 @@ class RemoteDeliveryService : Service() {
                     context.startService(intent)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start RemoteDeliveryService: ${e.message}", e)
+                VegaLog.e(TAG, "Failed to start RemoteDeliveryService: ${e.message}", e)
             }
         }
 
@@ -109,7 +109,7 @@ class RemoteDeliveryService : Service() {
             try {
                 context.startService(intent)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to update RemoteDeliveryService: ${e.message}")
+                VegaLog.w(TAG, "Failed to update RemoteDeliveryService: ${e.message}")
             }
         }
 
@@ -117,7 +117,7 @@ class RemoteDeliveryService : Service() {
             try {
                 context.stopService(Intent(context, RemoteDeliveryService::class.java))
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to stop RemoteDeliveryService: ${e.message}")
+                VegaLog.w(TAG, "Failed to stop RemoteDeliveryService: ${e.message}")
             }
         }
     }
@@ -182,7 +182,7 @@ class RemoteDeliveryService : Service() {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to acquire wakeLock: ${e.message}")
+            VegaLog.w(TAG, "Failed to acquire wakeLock: ${e.message}")
         }
 
         try {
@@ -194,7 +194,7 @@ class RemoteDeliveryService : Service() {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to acquire wifiLock: ${e.message}")
+            VegaLog.w(TAG, "Failed to acquire wifiLock: ${e.message}")
         }
     }
 
@@ -279,7 +279,7 @@ class RemoteDeliveryService : Service() {
                 isActive = true
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize MediaSession: ${e.message}", e)
+            VegaLog.e(TAG, "Failed to initialize MediaSession: ${e.message}", e)
         }
     }
 
@@ -400,7 +400,7 @@ class RemoteDeliveryService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "startForeground error: ${e.message}", e)
+            VegaLog.e(TAG, "startForeground error: ${e.message}", e)
         }
     }
 
@@ -409,7 +409,7 @@ class RemoteDeliveryService : Service() {
             val notification = buildNotification()
             notificationManager?.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
-            Log.w(TAG, "updateNotification error: ${e.message}")
+            VegaLog.w(TAG, "updateNotification error: ${e.message}")
         }
     }
 
@@ -440,7 +440,7 @@ class RemoteDeliveryService : Service() {
                 )
             mediaSession?.setPlaybackState(stateBuilder.build())
         } catch (e: Exception) {
-            Log.w(TAG, "updatePlaybackState error: ${e.message}")
+            VegaLog.w(TAG, "updatePlaybackState error: ${e.message}")
         }
     }
 
@@ -457,7 +457,7 @@ class RemoteDeliveryService : Service() {
             }
             mediaSession?.setMetadata(metaBuilder.build())
         } catch (e: Exception) {
-            Log.w(TAG, "updateMediaSessionMetadata error: ${e.message}")
+            VegaLog.w(TAG, "updateMediaSessionMetadata error: ${e.message}")
         }
     }
 
@@ -494,7 +494,7 @@ class RemoteDeliveryService : Service() {
                     updateNotification()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Artwork load failed: ${e.message}")
+                VegaLog.w(TAG, "Artwork load failed: ${e.message}")
             }
         }.start()
     }
@@ -602,7 +602,7 @@ class RemoteDeliveryService : Service() {
                 stopForeground(true)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "stopForeground error: ${e.message}")
+            VegaLog.w(TAG, "stopForeground error: ${e.message}")
         }
         stopSelf()
     }

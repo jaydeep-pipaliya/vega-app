@@ -38,7 +38,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
     fun registerTorrent(infoHash: String, saveDir: File) {
         torrents[infoHash] = TorrentEntry(saveDir)
-        Log.d(TAG, "Registered torrent $infoHash, saveDir=$saveDir")
+        VegaLog.d(TAG, "Registered torrent $infoHash, saveDir=$saveDir")
     }
 
     fun unregisterTorrent(infoHash: String) {
@@ -74,7 +74,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         return try {
             sessionManager?.find(Sha1Hash.parseHex(infoHash))?.takeIf { it.isValid }
         } catch (e: Exception) {
-            Log.w(TAG, "freshHandle($infoHash) failed: ${e.message}")
+            VegaLog.w(TAG, "freshHandle($infoHash) failed: ${e.message}")
             null
         }
     }
@@ -90,7 +90,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
                     th.setPieceDeadline(pieceIndex, 1000)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "waitForPiece error: ${e.message}")
+                VegaLog.w(TAG, "waitForPiece error: ${e.message}")
                 return false
             }
             Thread.sleep(PIECE_WAIT_INTERVAL_MS)
@@ -122,7 +122,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
-        Log.d(TAG, "Request: $uri, headers: ${session.headers["range"] ?: "no-range"}")
+        VegaLog.d(TAG, "Request: $uri, headers: ${session.headers["range"] ?: "no-range"}")
 
         val parts = uri.trimStart('/').split("/")
         if (parts.size < 3 || parts[0] != "stream") {
@@ -134,13 +134,13 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
         val entry = torrents[infoHash]
         if (entry == null) {
-            Log.w(TAG, "Torrent $infoHash not registered")
+            VegaLog.w(TAG, "Torrent $infoHash not registered")
             return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Torrent not found")
         }
 
         val th = freshHandle(infoHash)
         if (th == null) {
-            Log.w(TAG, "No valid handle for $infoHash")
+            VegaLog.w(TAG, "No valid handle for $infoHash")
             return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "Torrent not ready")
         }
 
@@ -149,7 +149,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         }
 
         if (!status.hasMetadata()) {
-            Log.w(TAG, "No metadata for $infoHash")
+            VegaLog.w(TAG, "No metadata for $infoHash")
             return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "No metadata yet")
         }
 
@@ -186,10 +186,10 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         val contentLength = end - start + 1
         val startPiece = ((fileOffset + start) / pieceLength).toInt()
 
-        Log.d(TAG, "Serving $infoHash file=$fileIndex range=$start-$end (piece $startPiece, pieceLen=$pieceLength)")
+        VegaLog.d(TAG, "Serving $infoHash file=$fileIndex range=$start-$end (piece $startPiece, pieceLen=$pieceLength)")
 
         if (!waitForPieceAvailable(infoHash, startPiece, INITIAL_PIECE_WAIT_MAX)) {
-            Log.e(TAG, "Timeout waiting for initial piece $startPiece")
+            VegaLog.e(TAG, "Timeout waiting for initial piece $startPiece")
             return newFixedLengthResponse(Response.Status.SERVICE_UNAVAILABLE, MIME_PLAINTEXT, "Piece not available yet")
         }
 
@@ -200,14 +200,14 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
             fileWait++
         }
         if (!file.exists()) {
-            Log.e(TAG, "File still doesn't exist after waiting: ${file.absolutePath}")
+            VegaLog.e(TAG, "File still doesn't exist after waiting: ${file.absolutePath}")
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "File not ready")
         }
 
         val raf = try {
             RandomAccessFile(file, "r")
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open file: ${e.message}")
+            VegaLog.e(TAG, "Cannot open file: ${e.message}")
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "File error: ${e.message}")
         }
 
@@ -233,7 +233,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         response.addHeader("Content-Length", contentLength.toString())
         response.addHeader("Connection", "keep-alive")
 
-        Log.d(TAG, "Response ready: 206, Content-Length=$contentLength, Content-Range=bytes $start-$end/$fileSize")
+        VegaLog.d(TAG, "Response ready: 206, Content-Length=$contentLength, Content-Range=bytes $start-$end/$fileSize")
         return response
     }
 
@@ -318,7 +318,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
             if (toRead <= 0) return 0
 
             val r = try { raf.read(b, off, toRead) } catch (e: Exception) {
-                Log.e(TAG, "RAF read error at pos=$currentPos: ${e.message}")
+                VegaLog.e(TAG, "RAF read error at pos=$currentPos: ${e.message}")
                 -1
             }
             if (r > 0) {

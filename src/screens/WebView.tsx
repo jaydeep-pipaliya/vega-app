@@ -1,10 +1,10 @@
 import {
   BackHandler,
   View,
-  SafeAreaView,
   Linking,
   ToastAndroid,
 } from 'react-native';
+import ScreenSafeArea from '../components/ui/ScreenSafeArea';
 import React, {useEffect, useRef, useState} from 'react';
 import {WebView} from 'react-native-webview';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
@@ -65,7 +65,7 @@ const Webview = ({route, navigation}: Props) => {
   }
 
   return (
-    <SafeAreaView className="h-full w-full bg-m3-background">
+    <ScreenSafeArea className="h-full w-full bg-m3-background">
       <View className="mt-6 h-16 w-full flex-row items-center justify-between bg-m3-surface-container px-4">
         <AppText role="titleLargeEmphasized" className="text-m3-on-surface">
           Web
@@ -122,7 +122,7 @@ const Webview = ({route, navigation}: Props) => {
           </AppText>
         </View>
       )}
-    </SafeAreaView>
+    </ScreenSafeArea>
   );
 };
 

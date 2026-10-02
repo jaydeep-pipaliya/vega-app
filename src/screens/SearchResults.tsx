@@ -1,6 +1,7 @@
-import {SafeAreaView, ScrollView, View, TextInput, StyleSheet} from 'react-native';
+import {ScrollView, View, TextInput, StyleSheet} from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Slider from '../components/Slider';
+import ScreenSafeArea from '../components/ui/ScreenSafeArea';
 import React, {useEffect, useState, useRef, useCallback, useMemo} from 'react';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {SearchStackParamList} from '../App';
@@ -204,7 +205,7 @@ const SearchResults = ({route, navigation}: Props): React.ReactElement => {
   );
 
   return (
-    <SafeAreaView className="h-full w-full bg-m3-background">
+    <ScreenSafeArea className="h-full w-full bg-m3-background">
       <ScrollView showsVerticalScrollIndicator={false}>
         <View className="mt-6 px-4 flex flex-row items-center gap-x-3">
           {isTV ? (
@@ -292,7 +293,7 @@ const SearchResults = ({route, navigation}: Props): React.ReactElement => {
         )}
         <View className="h-16" />
       </ScrollView>
-    </SafeAreaView>
+    </ScreenSafeArea>
   );
 };
 

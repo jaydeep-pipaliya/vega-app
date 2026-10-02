@@ -92,10 +92,10 @@ export const EpisodeResumeCard = React.forwardRef<
         </View>
       </View>
       {target.mode === 'resume' && target.progress !== undefined && (
-        <View style={{backgroundColor: colors.onPrimary + '33', height: 4}}>
+        <View style={{backgroundColor: 'rgba(0,0,0,0.10)', height: 4}}>
           <View
             style={{
-              backgroundColor: colors.onPrimary,
+              backgroundColor: 'rgba(0,0,0,0.24)',
               height: 4,
               width: `${Math.min(100, Math.max(2, target.progress * 100))}%`,
             }}

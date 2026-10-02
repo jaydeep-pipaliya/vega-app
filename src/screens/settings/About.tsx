@@ -17,6 +17,12 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {TVFocusable, TVFocusGuide} from '../../components/tv';
 import {isTV} from '../../lib/tv';
+import {
+  isDetailedLoggingEnabled,
+  setDetailedLogging,
+  shareLogs,
+} from '../../lib/logging/vegaLog';
+import {useRemoteStore} from '../../lib/remote/remoteStore';
 
 const deletePartialFile = async (filePath: string) => {
   try {
@@ -192,6 +198,31 @@ const About = ({navigation}: any) => {
   const [autoCheckUpdate, setAutoCheckUpdate] = useState<boolean>(
     settingsStorage.isAutoCheckUpdateEnabled(),
   );
+  const [detailedLogging, setDetailedLoggingState] = useState(
+    isDetailedLoggingEnabled,
+  );
+  const [exportingLogs, setExportingLogs] = useState(false);
+
+  const exportLogs = async () => {
+    setExportingLogs(true);
+    try {
+      const device = useRemoteStore.getState().connectedDevice;
+      await shareLogs(
+        device
+          ? `Receiver ${device.type}: ${[device.manufacturer, device.model, device.name]
+              .filter(Boolean)
+              .join(' ')}`
+          : undefined,
+      );
+    } catch (error: any) {
+      ToastAndroid.show(
+        error?.message || 'Could not export logs',
+        ToastAndroid.SHORT,
+      );
+    } finally {
+      setExportingLogs(false);
+    }
+  };
 
   // Register only while this screen is focused. A hidden screen in a
   // mounted tab or stack must not swallow back presses.
@@ -301,6 +332,30 @@ const About = ({navigation}: any) => {
             </>
           )}
         </SettingsSection>
+
+        {!isTV && (
+          <SettingsSection title="Troubleshooting">
+            <SettingsSwitchRow
+              title="Detailed logging"
+              description="Records more detail for bug reports. Keeps up to 2 MB of logs. Turns off after 24 hours."
+              value={detailedLogging}
+              onValueChange={next => {
+                setDetailedLoggingState(next);
+                setDetailedLogging(next);
+              }}
+            />
+            <SettingsRow
+              title="Export logs"
+              description="Share recent app logs with the developer. Links and sign-in data are removed."
+              icon="file-document-outline"
+              divider={false}
+              trailing={
+                exportingLogs ? <LoadingIndicator size={14} /> : undefined
+              }
+              onPress={exportingLogs ? undefined : exportLogs}
+            />
+          </SettingsSection>
+        )}
       </ScrollView>
     </TVFocusGuide>
   );

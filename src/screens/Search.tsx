@@ -6,7 +6,7 @@ import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {SearchStackParamList, TabStackParamList} from '../App';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {MMKV} from '../lib/Mmkv';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import ScreenSafeArea from '../components/ui/ScreenSafeArea';
 import Animated, {FadeInDown} from 'react-native-reanimated';
 import {searchOMDB} from '../lib/services/omdb';
 import {OMDBResult} from '../types/omdb';
@@ -311,7 +311,7 @@ const Search = () => {
     searchText.trim().length >= 2 && suggestions.length > 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-m3-background">
+    <ScreenSafeArea className="flex-1 bg-m3-background">
       {/* Title Section */}
       <HeaderContainer
         {...(!isTV ? {entering: FadeInDown.duration(300)} : {})}
@@ -418,7 +418,7 @@ const Search = () => {
           )}
         </View>
       </View>
-    </SafeAreaView>
+    </ScreenSafeArea>
   );
 };
 
