@@ -11,8 +11,9 @@ const nativeModule = NativeModules.LauncherIconModule as
   | undefined;
 
 export const setLauncherIcon = async (icon: LauncherIcon): Promise<void> => {
-  if (Platform.OS !== 'android' || !nativeModule) {
-    return;
+  if (Platform.OS !== 'android') return;
+  if (!nativeModule) {
+    throw new Error('Launcher icon module is unavailable. Rebuild the Android app.');
   }
   await nativeModule.setIcon(icon);
 };

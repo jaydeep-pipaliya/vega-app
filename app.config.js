@@ -58,6 +58,8 @@ module.exports = () => {
       },
     ],
     'react-native-edge-to-edge',
+    // Manifest mods execute in reverse order: configure TV before moving its
+    // launcher intent onto the color aliases.
     './plugins/with-dynamic-launcher-splash.js',
     [
       'react-native-bootsplash',

@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {Platform, Pressable, View} from 'react-native';
+import {Platform, Pressable, ToastAndroid, View} from 'react-native';
 import {isDynamicColorAvailable} from '@expo/ui/jetpack-compose';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import useThemeStore from '../../../lib/zustand/themeStore';
@@ -166,7 +166,7 @@ const AppearancePreference = () => {
                         settingsStorage.setLauncherIcon(icon.id);
                         setSelectedLauncherIcon(icon.id);
                       } catch {
-                        // The launcher may refresh its icon asynchronously.
+                        ToastAndroid.show('Could not change the launcher icon', ToastAndroid.LONG);
                       }
                     }}
                     style={{

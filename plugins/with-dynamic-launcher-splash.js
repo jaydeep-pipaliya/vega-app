@@ -8,7 +8,7 @@ const {
 } = require('expo/config-plugins');
 
 const variants = [
-  {id: 'White', color: '#FFFFFFFF', enabled: true},
+  {id: 'White', color: '#FFFFFFFF', enabled: false},
   {id: 'Tomato', color: '#FFFF6347', enabled: false},
   {id: 'Gray', color: '#FF9E9E9E', enabled: false},
   {id: 'Blue', color: '#FF2196F3', enabled: false},
@@ -39,14 +39,19 @@ const upsertStyle = (styles, name, parent, items = []) => {
   }
 };
 
-const createLauncherAlias = (packageName, variant) => ({
+const createLauncherAlias = (
+  packageName,
+  variant,
+  name = `.Launcher${variant.id}`,
+  enabled = variant.enabled,
+) => ({
   $: {
-    'android:name': `.Launcher${variant.id}`,
-    'android:enabled': String(variant.enabled),
+    'android:name': name,
+    'android:enabled': String(enabled),
     'android:exported': 'true',
     'android:icon': `@drawable/ic_launcher_${variant.id.toLowerCase()}`,
     'android:roundIcon': `@drawable/ic_launcher_${variant.id.toLowerCase()}`,
-    'android:banner': '@drawable/tv_banner',
+    'android:banner': `@drawable/tv_banner_${variant.id.toLowerCase()}`,
     'android:targetActivity': '.MainActivity',
     'android:theme': `@style/BootTheme.${variant.id}`,
   },
@@ -76,16 +81,26 @@ const withLauncherManifest = config =>
     if (!application) {
       return manifestConfig;
     }
+    // TV artwork belongs to the selected launcher alias. A fixed application
+    // banner lets TV launchers keep showing the default color after alias changes.
+    delete application.$['android:banner'];
     const mainActivity = application.activity?.find(
       activity => activity?.$?.['android:name'] === '.MainActivity',
     );
     if (mainActivity) {
       removeLauncherIntent(mainActivity);
+      delete mainActivity.$['android:banner'];
       mainActivity.$['android:theme'] = '@style/BootTheme';
     }
-    application['activity-alias'] = variants.map(variant =>
-      createLauncherAlias(manifestConfig.android?.package, variant),
-    );
+    // The install-time entry is a separate white alias. Every selectable color,
+    // white included, starts disabled so switching always enables a component
+    // that was off. Google TV keeps the previous banner when the newly enabled
+    // alias is one the manifest already enables.
+    const packageName = manifestConfig.android?.package;
+    application['activity-alias'] = [
+      createLauncherAlias(packageName, variants[0], '.LauncherDefault', true),
+      ...variants.map(variant => createLauncherAlias(packageName, variant)),
+    ];
     return manifestConfig;
   });
 
@@ -115,14 +130,14 @@ const withLauncherStyles = config =>
 
 const bootThemeMethod = `  private fun getBootTheme(): Int {
     val launchedAlias = intent?.component?.className?.substringAfterLast('.')
-    val selectedIcon = when (launchedAlias) {
+    val selectedIcon = getSharedPreferences("vega_launcher", MODE_PRIVATE)
+      .getString("icon", null) ?: when (launchedAlias) {
       "LauncherWhite" -> "white"
       "LauncherTomato" -> "tomato"
       "LauncherGray" -> "gray"
       "LauncherBlue" -> "blue"
       "LauncherLavender" -> "lavender"
-      else -> getSharedPreferences("vega_launcher", MODE_PRIVATE)
-        .getString("icon", "white")
+      else -> "white"
     }
     return when (selectedIcon) {
       "tomato" -> R.style.BootTheme_Tomato
@@ -144,7 +159,9 @@ const bootSplashInitialization = `val bootTheme = getBootTheme()
 const withLauncherMainActivity = config =>
   withMainActivity(config, activityConfig => {
     let contents = activityConfig.modResults.contents;
-    if (!contents.includes('private fun getBootTheme()')) {
+    if (contents.includes('private fun getBootTheme()')) {
+      contents = contents.replace(/  private fun getBootTheme\(\): Int \{[\s\S]*?\r?\n  \}\r?\n(?:\r?\n)?/, bootThemeMethod);
+    } else {
       contents = contents.replace(
         /class MainActivity\s*:\s*ReactActivity\(\)\s*\{\n/,
         match => `${match}${bootThemeMethod}`,
@@ -179,6 +196,18 @@ const writeLauncherResources = resRoot => {
     <background android:drawable="@color/iconBackground" />
     <foreground android:drawable="@drawable/ic_launcher_foreground_${id}" />
 </adaptive-icon>\n`,
+    );
+  }
+};
+
+const copyTvBannerResources = (projectRoot, resRoot) => {
+  const targetDir = path.join(resRoot, 'drawable-nodpi');
+  fs.mkdirSync(targetDir, {recursive: true});
+  for (const variant of variants) {
+    const filename = `tv_banner_${variant.id.toLowerCase()}.png`;
+    fs.copyFileSync(
+      path.join(projectRoot, 'assets', 'tv-banners', filename),
+      path.join(targetDir, filename),
     );
   }
 };
@@ -233,6 +262,7 @@ const withLauncherResources = config =>
         'res',
       );
       writeLauncherResources(resRoot);
+      copyTvBannerResources(projectRoot, resRoot);
       copySplashResources(projectRoot, resRoot);
       patchGeneratedBootSplashFiles(
         projectRoot,
