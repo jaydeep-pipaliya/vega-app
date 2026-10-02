@@ -48,7 +48,12 @@ const TVTouchable = ({
   return (
     <Pressable
       {...(props as any)}
-      focusable={!props.disabled}
+      // Keep a focused button focusable when it turns disabled, or focus is
+      // lost. Presses stay blocked.
+      disabled={props.disabled && !focused}
+      onPress={props.disabled ? undefined : props.onPress}
+      onLongPress={props.disabled ? undefined : props.onLongPress}
+      focusable={!props.disabled || focused}
       onFocus={event => {
         setFocused(true);
         onFocus?.(event);

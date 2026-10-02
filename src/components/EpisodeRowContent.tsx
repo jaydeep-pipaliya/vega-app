@@ -91,6 +91,7 @@ const EpisodeRowContent = ({
         <Image
           source={{uri: imageUri}}
           resizeMode="cover"
+          resizeMethod="resize"
           onError={() => setImageFailed(true)}
           style={{borderRadius: 4, height: 56, width: 88}}
         />

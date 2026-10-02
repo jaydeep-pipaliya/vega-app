@@ -4,12 +4,15 @@ import renderer, {act} from 'react-test-renderer';
 jest.mock('../src/lib/tv/constants', () => ({isTV: true}));
 jest.mock('@react-navigation/native', () => ({useIsFocused: jest.fn(() => true)}));
 jest.mock('react-native', () => ({
-  findNodeHandle: jest.fn(() => 42),
+  findNodeHandle: jest.fn((node: any) => node?.handle ?? 42),
   UIManager: {dispatchViewManagerCommand: jest.fn()},
 }));
 
 import {UIManager} from 'react-native';
-import {useTVNavFocusMemory} from '../src/lib/tv/useTVNavFocusMemory';
+import {
+  __resetTVFocusTracking,
+  useTVNavFocusMemory,
+} from '../src/lib/tv/useTVNavFocusMemory';
 import useTVNavigationStore, {
   selectRailFocusHandle,
 } from '../src/lib/zustand/tvNavigationStore';
@@ -18,9 +21,12 @@ const dispatch = UIManager.dispatchViewManagerCommand as jest.Mock;
 
 type Memory = ReturnType<typeof useTVNavFocusMemory>;
 
-const setup = (initial: {isNavFocused: boolean; preferred: boolean}) => {
+const setup = (
+  initial: {isNavFocused: boolean; preferred: boolean},
+  handle = 42,
+) => {
   let memory!: Memory;
-  const ref = {current: {}};
+  const ref = {current: {handle}};
   const Harness = ({isNavFocused, preferred}: typeof initial) => {
     memory = useTVNavFocusMemory({
       ref,
@@ -46,6 +52,7 @@ const setup = (initial: {isNavFocused: boolean; preferred: boolean}) => {
 beforeEach(() => {
   jest.useFakeTimers();
   dispatch.mockClear();
+  __resetTVFocusTracking();
   useTVNavigationStore.setState({
     activeTabKey: null,
     activeScreenFocusHandle: null,
@@ -112,4 +119,62 @@ it('gives the rail a target only for the tab that saved it', () => {
   act(() => store.setActiveTabKey('home'));
   expect(selectRailFocusHandle(useTVNavigationStore.getState())).toBe(42);
   h.unmount();
+});
+
+it('forgets the rail target when the element unmounts', () => {
+  const h = setup({isNavFocused: true, preferred: false});
+  act(() => h.memory.onFocus());
+  expect(useTVNavigationStore.getState().activeScreenFocusHandle).toBe(42);
+  h.unmount();
+  expect(useTVNavigationStore.getState().activeScreenFocusHandle).toBeNull();
+});
+
+it('moves focus to the previous element when the focused one unmounts', () => {
+  const a = setup({isNavFocused: true, preferred: false}, 1);
+  const b = setup({isNavFocused: true, preferred: false}, 2);
+  act(() => a.memory.onFocus());
+  act(() => a.memory.onBlur());
+  act(() => b.memory.onFocus());
+  b.unmount();
+  act(() => jest.advanceTimersByTime(200));
+  expect(dispatch).toHaveBeenCalledWith(1, 'requestTVFocus', []);
+  a.unmount();
+});
+
+it('does not rescue when the replacement element takes focus', () => {
+  const a = setup({isNavFocused: true, preferred: false}, 1);
+  const b = setup({isNavFocused: true, preferred: false}, 2);
+  act(() => a.memory.onFocus());
+  act(() => a.memory.onBlur());
+  act(() => b.memory.onFocus());
+  b.unmount();
+  const c = setup({isNavFocused: true, preferred: false}, 3);
+  act(() => c.memory.onFocus());
+  act(() => jest.advanceTimersByTime(200));
+  expect(dispatch).not.toHaveBeenCalled();
+  a.unmount();
+  c.unmount();
+});
+
+it('does not rescue to an element on a hidden screen', () => {
+  const a = setup({isNavFocused: true, preferred: false}, 1);
+  const b = setup({isNavFocused: true, preferred: false}, 2);
+  act(() => a.memory.onFocus());
+  act(() => a.memory.onBlur());
+  a.update({isNavFocused: false, preferred: false});
+  act(() => b.memory.onFocus());
+  b.unmount();
+  act(() => jest.advanceTimersByTime(200));
+  expect(dispatch).not.toHaveBeenCalled();
+  a.unmount();
+});
+
+it('does not rescue when an unfocused element unmounts', () => {
+  const a = setup({isNavFocused: true, preferred: false}, 1);
+  const b = setup({isNavFocused: true, preferred: false}, 2);
+  act(() => a.memory.onFocus());
+  b.unmount();
+  act(() => jest.advanceTimersByTime(200));
+  expect(dispatch).not.toHaveBeenCalled();
+  a.unmount();
 });

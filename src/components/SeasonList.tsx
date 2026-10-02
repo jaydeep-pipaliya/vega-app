@@ -133,6 +133,61 @@ interface EpisodeDetailsState {
   image?: string;
 }
 
+const readLastPlayedLink = (key: string): string | undefined => {
+  try {
+    const stored = cacheStorage.getString(key);
+    return stored ? JSON.parse(stored)?.link : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+// Opens a stream in an external player app. Errors reject the promise.
+const launchExternalPlayer = async (
+  streamUrl: string,
+  headers?: Record<string, string>,
+  title?: string,
+) => {
+  const intentParams: any = {
+    data: streamUrl,
+    type: 'video/*',
+    flags: 1,
+  };
+
+  const extra: Record<string, any> = {};
+
+  if (title) {
+    extra.title = title;
+    extra['android.intent.extra.TITLE'] = title;
+  }
+
+  if (headers && Object.keys(headers).length > 0) {
+    Object.assign(extra, headers);
+    extra['android.media.intent.extra.HTTP_HEADERS'] = headers;
+    extra.headers = headers;
+
+    const headersArray = Object.entries(headers).map(
+      ([key, val]) => `${key}: ${val}`,
+    );
+    extra.headers_array = headersArray;
+
+    const referer = headers['Referer'] || headers['referer'];
+    if (referer) {
+      extra['android.intent.extra.REFERRER'] = referer;
+      extra['android.intent.extra.REFERRER_NAME'] = referer;
+    }
+  }
+
+  if (Object.keys(extra).length > 0) {
+    intentParams.extra = extra;
+  }
+
+  await IntentLauncher.startActivityAsync(
+    'android.intent.action.VIEW',
+    intentParams,
+  );
+};
+
 const getOriginalLinkIndex = <T extends {link: string}>(
   links: T[] | undefined,
   link: string,
@@ -408,11 +463,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     useCallback(() => {
       if (!isTV || !restorePlayerFocusRef.current) return;
       const timer = setTimeout(() => {
-        let lastPlayedLink: string | undefined;
-        try {
-          const stored = cacheStorage.getString(lastPlayedKeyRef.current);
-          lastPlayedLink = stored ? JSON.parse(stored)?.link : undefined;
-        } catch {}
+        const lastPlayedLink = readLastPlayedLink(lastPlayedKeyRef.current);
         const target =
           (lastPlayedLink && playControlsRef.current.get(lastPlayedLink)) ||
           playerReturnFocusRef.current;
@@ -433,7 +484,11 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   }, []);
   const episodeSortOrderKey = `episodeSortOrder:${providerValue}:${routeParams.link}`;
   const lastPlayedKey = `LastPlayed:${providerValue}:${routeParams.link}`;
-  lastPlayedKeyRef.current = lastPlayedKey;
+  // Written in an effect, not during render: React Compiler skips components
+  // that write refs while rendering. The focus timer reads it 350 ms later.
+  useEffect(() => {
+    lastPlayedKeyRef.current = lastPlayedKey;
+  }, [lastPlayedKey]);
 
   // Memoized initial active season
   const [activeSeason, setActiveSeason] = useState<Link>(() => {
@@ -560,7 +615,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       Array.isArray(activeSeason?.directLinks)
         ? activeSeason.directLinks.filter(link => link && link.title && link.link)
         : [],
-    [activeSeason?.directLinks],
+    [activeSeason.directLinks],
   );
 
   // Long seasons are shown in blocks of 50; the chosen block is remembered per season.
@@ -652,40 +707,43 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   );
 
   // Memoized external player handler
+  // Promise chains instead of try/finally here and below: React Compiler
+  // skips any component that contains a finally clause.
   const handleExternalPlayer = useCallback(
-    async (link: string, streamType: string) => {
+    (link: string, streamType: string) => {
       setVlcLoading(true);
       setIsLoadingStreams(true);
 
-      try {
-        const streams = await fetchStreams(link, streamType, providerValue);
+      return fetchStreams(link, streamType, providerValue)
+        .then(streams => {
+          if (!streams || streams.length === 0) {
+            ToastAndroid.show(
+              'No streams available from provider',
+              ToastAndroid.SHORT,
+            );
+            return;
+          }
 
-        if (!streams || streams.length === 0) {
+          console.log('Available Streams Count:', streams.length);
+          setExternalPlayerStreams([...streams]);
+          setIsLoadingStreams(false);
+          setVlcLoading(false);
+          setShowServerModal(true);
+
           ToastAndroid.show(
-            'No streams available from provider',
+            `Found ${streams.length} servers`,
             ToastAndroid.SHORT,
           );
-          return;
-        }
-
-        console.log('Available Streams Count:', streams.length);
-        setExternalPlayerStreams([...streams]);
-        setIsLoadingStreams(false);
-        setVlcLoading(false);
-        setShowServerModal(true);
-
-        ToastAndroid.show(
-          `Found ${streams.length} servers`,
-          ToastAndroid.SHORT,
-        );
-      } catch (error: any) {
-        console.error('Error fetching streams:', error);
-        const errorMessage = error?.message || 'Failed to load streams';
-        ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
-      } finally {
-        setVlcLoading(false);
-        setIsLoadingStreams(false);
-      }
+        })
+        .catch((error: any) => {
+          console.error('Error fetching streams:', error);
+          const errorMessage = error?.message || 'Failed to load streams';
+          ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
+        })
+        .finally(() => {
+          setVlcLoading(false);
+          setIsLoadingStreams(false);
+        });
     },
     [fetchStreams, providerValue],
   );
@@ -700,51 +758,17 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       setShowServerModal(false);
       setVlcLoading(true);
 
-      try {
-        const intentParams: any = {
-          data: streamUrl,
-          type: 'video/*',
-          flags: 1,
-        };
-
-        const extra: Record<string, any> = {};
-
-        if (title) {
-          extra.title = title;
-          extra['android.intent.extra.TITLE'] = title;
-        }
-
-        if (headers && Object.keys(headers).length > 0) {
-          Object.assign(extra, headers);
-          extra['android.media.intent.extra.HTTP_HEADERS'] = headers;
-          extra.headers = headers;
-
-          const headersArray = Object.entries(headers).map(
-            ([key, val]) => `${key}: ${val}`,
+      await launchExternalPlayer(streamUrl, headers, title)
+        .catch(error => {
+          console.error('Error opening external player:', error);
+          ToastAndroid.show(
+            'Failed to open external player',
+            ToastAndroid.SHORT,
           );
-          extra.headers_array = headersArray;
-
-          const referer = headers['Referer'] || headers['referer'];
-          if (referer) {
-            extra['android.intent.extra.REFERRER'] = referer;
-            extra['android.intent.extra.REFERRER_NAME'] = referer;
-          }
-        }
-
-        if (Object.keys(extra).length > 0) {
-          intentParams.extra = extra;
-        }
-
-        await IntentLauncher.startActivityAsync(
-          'android.intent.action.VIEW',
-          intentParams,
-        );
-      } catch (error) {
-        console.error('Error opening external player:', error);
-        ToastAndroid.show('Failed to open external player', ToastAndroid.SHORT);
-      } finally {
-        setVlcLoading(false);
-      }
+        })
+        .finally(() => {
+          setVlcLoading(false);
+        });
     },
     [],
   );
@@ -826,6 +850,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       handleExternalPlayer,
       navigation,
       lastPlayedKey,
+      episodeList,
     ],
   );
 
@@ -960,7 +985,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     playHandler,
     type,
     metaTitle,
-    activeSeason?.title,
+    activeSeason.title,
   ]);
 
   // Memoized episode render item
@@ -1076,7 +1101,8 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       playHandler,
       rememberPlayerFocus,
       metaTitle,
-      activeSeason?.title,
+      activeSeason.title,
+      activeSeason.quickDownload,
       episodeList,
       playableEpisodes,
       onLongPressHandler,
@@ -1085,6 +1111,11 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       routeParams.link,
       imdbId,
       poster.poster,
+      poster.background,
+      type,
+      restoreDetailsLink,
+      quickDownload,
+      synopsis,
     ],
   );
 
@@ -1218,8 +1249,9 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       playHandler,
       rememberPlayerFocus,
       metaTitle,
-      activeSeason?.title,
-      activeSeason?.directLinks,
+      activeSeason.title,
+      activeSeason.directLinks,
+      activeSeason.quickDownload,
       playableDirectLinks,
       onLongPressHandler,
       primary,
@@ -1227,6 +1259,11 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       routeParams.link,
       imdbId,
       poster.poster,
+      poster.background,
+      type,
+      restoreDetailsLink,
+      quickDownload,
+      synopsis,
     ],
   );
 
@@ -1346,7 +1383,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       playHandler,
       type,
       metaTitle,
-      activeSeason?.title,
+      activeSeason.title,
     ],
   );
 
@@ -1555,6 +1592,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               <Image
                 source={{uri: getValidImageUri(episodeDetails.image)}}
                 resizeMode="cover"
+                resizeMethod="resize"
                 onError={() => setEpisodeDetailsImageFailed(true)}
                 style={{aspectRatio: 16 / 9, width: '100%'}}
               />

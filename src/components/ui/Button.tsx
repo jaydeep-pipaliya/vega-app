@@ -60,6 +60,9 @@ const Button = React.forwardRef<View, ButtonProps>(({
   const colors = useM3Colors();
   const hostTheme = useM3HostTheme();
   const tvFocusBorderColor = useTVFocusBorderColor();
+  // Declared before the TV early return so hook order never depends on a
+  // branch (React Compiler skips components that call hooks conditionally).
+  const [tvFocused, setTvFocused] = React.useState(false);
   const ButtonComponent =
     variant === 'tonal'
       ? FilledTonalButton
@@ -136,7 +139,6 @@ const Button = React.forwardRef<View, ButtonProps>(({
     );
   }
 
-  const [tvFocused, setTvFocused] = React.useState(false);
 
   return (
     <View

@@ -126,6 +126,44 @@ const toSyncedDownload = (item: DownloadItem): SyncedDownload => {
   return download;
 };
 
+// Download items are immutable store entries, so a key computed once per item
+// object stays valid. Sync compares every remote download against every local
+// one; without the cache that rebuilt the synced form for each pair.
+const downloadMediaKeyCache = new WeakMap<DownloadItem, string>();
+
+const getLocalDownloadMediaKey = (item: DownloadItem): string => {
+  let key = downloadMediaKeyCache.get(item);
+  if (key === undefined) {
+    key = getDownloadMediaKey(toSyncedDownload(item));
+    downloadMediaKeyCache.set(item, key);
+  }
+  return key;
+};
+
+// The manifest lists completed downloads only. Progress updates of running
+// downloads change nothing in it, so they need no publish.
+const hasCompletedDownloadChanges = (
+  previous: Record<string, DownloadItem>,
+  next: Record<string, DownloadItem>,
+): boolean => {
+  for (const id in next) {
+    const nextItem = next[id];
+    const previousItem = previous[id];
+    if (
+      nextItem !== previousItem &&
+      (nextItem.status === 'completed' || previousItem?.status === 'completed')
+    ) {
+      return true;
+    }
+  }
+  for (const id in previous) {
+    if (previous[id].status === 'completed' && !next[id]) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const toSyncedWatchListItem = (item: WatchListItem): SyncedWatchListItem => ({
   ...item,
   updatedAt: item.updatedAt || 0,
@@ -257,7 +295,14 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
       };
     });
 
-  useContinueWatchingStore.setState({items});
+  // Periodic sync usually finds nothing new. Skip the store update then, so
+  // screens do not re-render and the store is not persisted again.
+  if (
+    JSON.stringify(items) !==
+    JSON.stringify(useContinueWatchingStore.getState().items)
+  ) {
+    useContinueWatchingStore.setState({items});
+  }
 };
 
 export const publishSyncManifest = async (): Promise<void> => {
@@ -352,7 +397,7 @@ const applyRemoteDownloads = async (
             candidate.id.includes('_subtitle_') ||
             isSubtitleDownloadItem(candidate),
         ) === isItemSubtitle &&
-        getDownloadMediaKey(toSyncedDownload(candidate)) === item.mediaKey,
+        getLocalDownloadMediaKey(candidate) === item.mediaKey,
     );
     const existing = equivalentEntries
       .map(([, candidate]) => candidate)
@@ -403,13 +448,23 @@ const applyRemoteWatchList = (
   const items = Object.values(watchlist).sort(
     (a, b) => a.updatedAt - b.updatedAt,
   );
-  mainStorage.setArray(WatchListKeys.WATCH_LIST, items);
-  useWatchListStore.setState({watchList: items});
+  // Write and notify only on a real change; periodic sync usually has none.
+  const serialized = JSON.stringify(items);
+  if (
+    JSON.stringify(mainStorage.getArray(WatchListKeys.WATCH_LIST) || []) !==
+    serialized
+  ) {
+    mainStorage.setArray(WatchListKeys.WATCH_LIST, items);
+  }
+  if (JSON.stringify(useWatchListStore.getState().watchList) !== serialized) {
+    useWatchListStore.setState({watchList: items});
+  }
 };
 
 const applyTombstones = (tombstones: Record<string, SyncTombstone>) => {
   const store = useDownloadsStore.getState();
-  let history = useContinueWatchingStore.getState().items;
+  const currentHistory = useContinueWatchingStore.getState().items;
+  let history = currentHistory;
   const localHistory = getLocalHistory();
   for (const tombstone of Object.values(tombstones)) {
     if (tombstone.kind === 'download') {
@@ -424,7 +479,7 @@ const applyTombstones = (tombstones: Record<string, SyncTombstone>) => {
           (tombstone.mediaKey &&
             item.status === 'completed' &&
             Boolean(tombstone.mediaKey.includes(':subtitle:')) === isItemSub &&
-            getDownloadMediaKey(toSyncedDownload(item)) === tombstone.mediaKey);
+            getLocalDownloadMediaKey(item) === tombstone.mediaKey);
         if (matches && tombstone.deletedAt >= item.updatedAt) {
           store.removeDownload(item.id);
         }
@@ -442,7 +497,10 @@ const applyTombstones = (tombstones: Record<string, SyncTombstone>) => {
     }
   }
   saveLocalHistory(localHistory);
-  useContinueWatchingStore.setState({items: history});
+  // The filter only removes items, so an unchanged length means no change.
+  if (history.length !== currentHistory.length) {
+    useContinueWatchingStore.setState({items: history});
+  }
 };
 
 const runSharedFolderSync = async (): Promise<void> => {
@@ -499,12 +557,18 @@ export const initializeSyncService = async (): Promise<void> => {
           addTombstone(
             'download',
             id,
-            getDownloadMediaKey(toSyncedDownload(item)),
+            getLocalDownloadMediaKey(item),
           );
         }
       }
+      const shouldPublish = hasCompletedDownloadChanges(
+        previousDownloads,
+        state.downloads,
+      );
       previousDownloads = state.downloads;
-      schedulePublish();
+      if (shouldPublish) {
+        schedulePublish();
+      }
     });
     useContinueWatchingStore.subscribe(state => {
       if (applyingRemoteState) {

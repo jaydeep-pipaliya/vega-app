@@ -15,14 +15,14 @@ Android app for streaming media.
 
 ___
 
-## Download ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/Zenda-Cross/vega-app/total?link=https%3A%2F%2Fgithub.com%2FZenda-Cross%2Fvega-app%2Freleases&label=Github%20Downloads)
+## Download ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/vega-org/vega-app/total?link=https%3A%2F%2Fgithub.com%2Fvega-org%2Fvega-app%2Freleases&label=Github%20Downloads)
 <!-- > <sub>Download Universal version if you are confused about armeabi-v7a or arm64-v8a or follow this guide https://vega.8man.in/guide/.</sub> -->
 
 <a href="https://play.google.com/store/apps/details?id=vega.app">
   <img src="https://appure.io/badges/playstore/en.svg" width="200" alt="Get it on Google Play">
 </a>
 
-[![Download Apk](https://custom-icon-badges.demolab.com/badge/-Download_From_Github-black?style=for-the-badge&logo=download&logoColor=white)](https://github.com/Zenda-Cross/vega-app/releases/latest)
+[![Download Apk](https://custom-icon-badges.demolab.com/badge/-Download_From_Github-black?style=for-the-badge&logo=download&logoColor=white)](https://github.com/vega-org/vega-app/releases/latest)
 
 [![Download Apk](https://custom-icon-badges.demolab.com/badge/-Website-tomato?style=for-the-badge&logo=download&logoColor=white)](https://vega.8man.in/#mobile)
 
@@ -63,7 +63,7 @@ ___
 
 1. clone
      ```bash
-     git clone https://github.com/Zenda-Cross/vega-app.git
+     git clone https://github.com/vega-org/vega-app.git
      ```
      ```
      cd vega-app

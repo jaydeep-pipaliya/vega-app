@@ -1,5 +1,5 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import {Pressable, View} from 'react-native';
+import {useWindowDimensions, View} from 'react-native';
 import {FlatList} from 'react-native-gesture-handler';
 import React, {memo, useCallback, useMemo} from 'react';
 import type {Post} from '../lib/providers/types';
@@ -16,6 +16,36 @@ import {TVFocusable, TVFocusGuide} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 
 import AppText from './ui/Text';
+
+const SKELETON_CARD_SPAN = 136;
+const MAX_SKELETON_CARDS = 20;
+
+const SliderSeparator = () => <View style={{width: 14}} />;
+
+// One memoized cell per post, so the press handler stays stable and
+// MediaPosterCard skips re-rendering when the list re-renders.
+const SliderPosterItem = memo(
+  ({item, onPressItem}: {item: Post; onPressItem: (item: Post) => void}) => {
+    const ratio = parseAspectRatio(item.aspectRatio, 2 / 3);
+    const cardWidth = ratio > 1.2 ? 220 : ratio > 0.85 ? 150 : 124;
+    const handlePress = useCallback(
+      () => onPressItem(item),
+      [onPressItem, item],
+    );
+
+    return (
+      <MediaPosterCard
+        title={item.title}
+        poster={item.image}
+        width={cardWidth}
+        aspectRatio={item.aspectRatio}
+        borderRadius={item.borderRadius}
+        cornerTag={item.cornerTag || item.tag}
+        onPress={handlePress}
+      />
+    );
+  },
+);
 
 const Slider = ({
   isLoading,
@@ -41,6 +71,13 @@ const Slider = ({
     useNavigation<NativeStackNavigationProp<HomeStackParamList>>();
   const [isSelected, setSelected] = React.useState('');
   const uniquePosts = useMemo(() => deduplicatePosts(posts), [posts]);
+  const {width: windowWidth} = useWindowDimensions();
+  // Cards that fit on screen, plus one. The skeleton row clips overflow, so
+  // more are never seen; the post row renders this many before measuring.
+  const skeletonCount = Math.min(
+    MAX_SKELETON_CARDS,
+    Math.ceil(windowWidth / SKELETON_CARD_SPAN) + 1,
+  );
 
   const handleMorePress = useCallback(() => {
     navigation.navigate('ScrollList', {
@@ -64,22 +101,9 @@ const Slider = ({
   );
 
   const renderItem = useCallback(
-    ({item}: {item: Post}) => {
-      const ratio = parseAspectRatio(item.aspectRatio, 2 / 3);
-      const cardWidth = ratio > 1.2 ? 220 : ratio > 0.85 ? 150 : 124;
-
-      return (
-        <MediaPosterCard
-          title={item.title}
-          poster={item.image}
-          width={cardWidth}
-          aspectRatio={item.aspectRatio}
-          borderRadius={item.borderRadius}
-          cornerTag={item.cornerTag || item.tag}
-          onPress={() => handleItemPress(item)}
-        />
-      );
-    },
+    ({item}: {item: Post}) => (
+      <SliderPosterItem item={item} onPressItem={handleItemPress} />
+    ),
     [handleItemPress],
   );
 
@@ -149,7 +173,7 @@ const Slider = ({
       </View>
       {isLoading ? (
         <View className="flex flex-row gap-2 overflow-hidden">
-          {Array.from({length: 20}).map((_, index) => (
+          {Array.from({length: skeletonCount}).map((_, index) => (
             <View
               className="gap-2 flex mb-3 justify-center"
               style={{marginLeft: index === 0 ? 18 : 0, marginRight: 12}}
@@ -171,12 +195,14 @@ const Slider = ({
             paddingHorizontal: 20,
             overflow: 'visible',
           }}
-          ItemSeparatorComponent={() => <View style={{width: 14}} />}
+          ItemSeparatorComponent={SliderSeparator}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          initialNumToRender={8}
+          initialNumToRender={skeletonCount}
           maxToRenderPerBatch={8}
-          windowSize={7}
+          // Two screens of posters on each side. Enough for flings and held
+          // D-pad presses, and far fewer mounted cards per row than 7.
+          windowSize={5}
           removeClippedSubviews={false}
           ListFooterComponent={
             !isLoading && error ? (

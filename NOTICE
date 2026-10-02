@@ -1,0 +1,17 @@
+Vega
+Copyright (c) 2026 [LICENSOR NAME]
+
+Starting after commit 9ccc0c8 (2026-10-02), Vega is licensed under the
+PolyForm Noncommercial License 1.0.0. See LICENSE. Commercial licenses are
+available on request.
+
+Earlier versions, up to and including commit 9ccc0c8, were released under the
+Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0). That license
+still applies to copies of those versions.
+
+Portions of this software were contributed by third parties under the Apache
+License 2.0 and remain under that license. Their copyright belongs to their
+respective authors; see the git history for attribution.
+
+This software includes third-party libraries, such as FFmpeg, libtorrent and
+React Native, under their own licenses.

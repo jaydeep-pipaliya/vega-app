@@ -14,7 +14,6 @@ import {getColors} from 'react-native-image-colors';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, {FadeIn, FadeInDown} from 'react-native-reanimated';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
-import debounce from 'lodash/debounce';
 import {HomeStackParamList} from '../App';
 import {useHeroMetadata} from '../lib/hooks/useHomePageData';
 import useContentStore from '../lib/zustand/contentStore';
@@ -52,6 +51,42 @@ const getReadableContentColor = (backgroundColor: string) => {
   return (red * 299 + green * 587 + blue * 114) / 1000 > 145
     ? '#211F1E'
     : '#FFFFFF';
+};
+
+// Kept outside the component: React Compiler cannot compile a component whose
+// try block contains conditional expressions.
+const extractHeroAccentColor = async (
+  imageUri: string,
+): Promise<string | undefined> => {
+  try {
+    const imageColors = await getColors(imageUri, {
+      cache: true,
+      fallback: IMAGE_COLOR_FALLBACK,
+      key: `hero-accent-v2:${imageUri}`,
+      pixelSpacing: 8,
+    });
+    const candidates =
+      imageColors.platform === 'android'
+        ? [
+            imageColors.lightVibrant,
+            imageColors.vibrant,
+            imageColors.dominant,
+            imageColors.average,
+            imageColors.darkVibrant,
+          ]
+        : imageColors.platform === 'ios'
+          ? [imageColors.primary, imageColors.secondary]
+          : [imageColors.vibrant, imageColors.dominant];
+    const extractedColor = candidates.find(
+      candidate =>
+        candidate.toUpperCase() !== IMAGE_COLOR_FALLBACK.toUpperCase(),
+    );
+    return extractedColor
+      ? mixHex(extractedColor, '#FFFFFF', 0.72)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 const HeroTopButton = React.forwardRef<
@@ -235,19 +270,6 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
 
   const suppressSuggestionsRef = useRef(false);
 
-  // Debounced IMDb search suggestions for home page search
-  const debouncedFetchSuggestions = useCallback(
-    debounce(async (text: string) => {
-      const clean = text.trim();
-      if (clean.length >= 2 && !suppressSuggestionsRef.current) {
-        const results = await fetchIMDbSuggestions(clean);
-        setSuggestions(results);
-      } else {
-        setSuggestions([]);
-      }
-    }, 250),
-    [],
-  );
 
   const handleTextChange = useCallback((text: string) => {
     suppressSuggestionsRef.current = false;
@@ -293,48 +315,38 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
     [submitProviderSearch],
   );
 
+  // Debounced IMDb search suggestions for home page search. The timer lives in
+  // the effect so the component stays compatible with React Compiler.
   useEffect(() => {
-    if (searchActive && searchText.trim().length >= 2) {
-      debouncedFetchSuggestions(searchText);
-    } else {
+    if (!searchActive || searchText.trim().length < 2) {
       setSuggestions([]);
+      return;
     }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (suppressSuggestionsRef.current) {
+        setSuggestions([]);
+        return;
+      }
+      const results = await fetchIMDbSuggestions(searchText.trim());
+      if (!cancelled) {
+        setSuggestions(results);
+      }
+    }, 250);
     return () => {
-      debouncedFetchSuggestions.cancel();
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [searchText, searchActive, debouncedFetchSuggestions]);
+  }, [searchText, searchActive]);
 
   const updateSearchButtonColor = useCallback(async () => {
     if (!imageUri) {
       return;
     }
-    try {
-      const imageColors = await getColors(imageUri, {
-        cache: true,
-        fallback: IMAGE_COLOR_FALLBACK,
-        key: `hero-accent-v2:${imageUri}`,
-        pixelSpacing: 8,
-      });
-      const candidates =
-        imageColors.platform === 'android'
-          ? [
-              imageColors.lightVibrant,
-              imageColors.vibrant,
-              imageColors.dominant,
-              imageColors.average,
-              imageColors.darkVibrant,
-            ]
-          : imageColors.platform === 'ios'
-            ? [imageColors.primary, imageColors.secondary]
-            : [imageColors.vibrant, imageColors.dominant];
-      const extractedColor = candidates.find(
-        candidate =>
-          candidate.toUpperCase() !== IMAGE_COLOR_FALLBACK.toUpperCase(),
-      );
-      if (extractedColor) {
-        setSearchButtonColor(mixHex(extractedColor, '#FFFFFF', 0.72));
-      }
-    } catch {}
+    const accentColor = await extractHeroAccentColor(imageUri);
+    if (accentColor) {
+      setSearchButtonColor(accentColor);
+    }
   }, [imageUri]);
   const genres = useMemo(
     () => (heroData?.genre || heroData?.tags || []).slice(0, 3),
@@ -370,6 +382,7 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
           source={imageSource}
           onLoad={updateSearchButtonColor}
           resizeMode="cover"
+          resizeMethod="resize"
           style={{height: '100%', width: '100%'}}
         />
       )}
@@ -438,6 +451,7 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
             source={{uri: heroData.logo}}
             onError={() => setLogoFailed(true)}
             resizeMode="contain"
+            resizeMethod="resize"
             style={{height: 94, width: 280}}
           />
         ) : heroData?.title || hero?.title ? (

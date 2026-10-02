@@ -1,6 +1,13 @@
 import {MaterialCommunityIcons} from '@expo/vector-icons';
-import React from 'react';
-import {ActivityIndicator, Text, View} from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {
+  ActivityIndicator,
+  findNodeHandle,
+  Text,
+  UIManager,
+  View,
+} from 'react-native';
+import {isTV} from '../../../lib/tv';
 import {TVFocusable, TVFocusGuide} from '../../../components/tv';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import type {ProviderExtension} from '../../../lib/storage/extensionStorage';
@@ -34,6 +41,22 @@ export const ProviderCardActions: React.FC<ProviderCardActionsProps> = ({
   onOpenSettings,
 }) => {
   const colors = useM3Colors();
+  const testButtonRef = useRef<View>(null);
+  const installFocusedRef = useRef(false);
+
+  // The Install button unmounts once the provider is installed. Move focus to
+  // the Test button that replaces it, or TV focus is lost.
+  useEffect(() => {
+    if (!isTV || !installed || !installFocusedRef.current) return;
+    installFocusedRef.current = false;
+    const timer = setTimeout(() => {
+      const handle = findNodeHandle(testButtonRef.current);
+      if (handle) {
+        UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [installed]);
 
   if (!installed) {
     return (
@@ -43,6 +66,12 @@ export const ProviderCardActions: React.FC<ProviderCardActionsProps> = ({
           accessibilityLabel={`Install ${provider.display_name}`}
           disabled={installing}
           onPress={onInstall}
+          onFocus={() => {
+            installFocusedRef.current = true;
+          }}
+          onBlur={() => {
+            installFocusedRef.current = false;
+          }}
           borderRadius={16}
           focusScale={1.04}
           style={{
@@ -81,6 +110,7 @@ export const ProviderCardActions: React.FC<ProviderCardActionsProps> = ({
     <TVFocusGuide style={{flexDirection: 'row', gap: 8, padding: 12}}>
       {/* Test Button */}
       <TVFocusable
+        ref={testButtonRef}
         testID={`test-provider-${itemKey}`}
         accessibilityLabel={`Test ${provider.display_name}`}
         disabled={testStatus === 'testing'}

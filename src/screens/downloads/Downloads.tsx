@@ -160,14 +160,6 @@ const Downloads = () => {
     }, [groups.length, firstCardNode, exploreButtonNode, currentDownloads.length, currentDownloadActionNode]),
   );
 
-  useEffect(() => {
-    if (!isSelectionMode) return;
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleExitSelection();
-      return true;
-    });
-    return () => backSub.remove();
-  }, [isSelectionMode]);
 
   const triggerHaptic = (
     type: HapticFeedbackTypes = HapticFeedbackTypes.effectTick,
@@ -217,6 +209,17 @@ const Downloads = () => {
     setIsSelectionModeActive(false);
   };
 
+  // Declared after handleExitSelection: React Compiler skips components that
+  // read a value before its declaration.
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleExitSelection();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [isSelectionMode]);
+
   const handleToggleSelectAll = () => {
     triggerHaptic(HapticFeedbackTypes.effectClick);
     if (selectedGroupIds.size === groups.length) {
@@ -239,17 +242,21 @@ const Downloads = () => {
     });
   };
 
-  const deleteSelectedGroups = async (targetGroups: DownloadedMediaGroup[]) => {
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
+  const deleteSelectedGroups = (targetGroups: DownloadedMediaGroup[]) => {
     setIsDeleting(true);
-    try {
-      await deleteDownloadedMediaGroups(targetGroups);
-      setSelectedGroupIds(new Set());
-      setIsSelectionModeActive(false);
-    } catch (err) {
-      console.error('Error deleting selected download groups:', err);
-    } finally {
-      setIsDeleting(false);
-    }
+    return deleteDownloadedMediaGroups(targetGroups)
+      .then(() => {
+        setSelectedGroupIds(new Set());
+        setIsSelectionModeActive(false);
+      })
+      .catch(err => {
+        console.error('Error deleting selected download groups:', err);
+      })
+      .finally(() => {
+        setIsDeleting(false);
+      });
   };
 
   const handleDeletePress = () => {

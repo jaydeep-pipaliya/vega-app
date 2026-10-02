@@ -9,7 +9,6 @@ import {MMKV} from '../lib/Mmkv';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import Animated, {FadeInDown} from 'react-native-reanimated';
 import {searchOMDB} from '../lib/services/omdb';
-import debounce from 'lodash/debounce';
 import {OMDBResult} from '../types/omdb';
 import {fetchIMDbSuggestions, type IMDbSuggestion} from '../lib/services/imdbSuggestions';
 import {sanitizeSearchQuery} from '../lib/utils/helpers';
@@ -155,33 +154,37 @@ const Search = () => {
     };
   }, [navigation]);
 
-  // Debounced IMDb search suggestions (spelling completer)
-  const debouncedFetchSuggestions = useCallback(
-    debounce(async (text: string) => {
-      const clean = text.trim();
+  // Debounced IMDb search suggestions (spelling completer). The timers live
+  // in effects so the screen stays compatible with React Compiler.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const clean = searchText.trim();
       if (clean.length >= 2 && !suppressSuggestionsRef.current) {
         const results = await fetchIMDbSuggestions(clean);
-        setSuggestions(results);
+        if (!cancelled) {
+          setSuggestions(results);
+        }
       } else {
         setSuggestions([]);
       }
-    }, 250),
-    [],
-  );
-
-  useEffect(() => {
-    debouncedFetchSuggestions(searchText);
+    }, 250);
     return () => {
-      debouncedFetchSuggestions.cancel();
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [searchText, debouncedFetchSuggestions]);
+  }, [searchText]);
 
   // Debounced OMDB search
-  const debouncedSearch = useCallback(
-    debounce(async (text: string) => {
-      if (text.length >= 2) {
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (searchText.length >= 2) {
         setSearchResults([]); // Clear previous results
-        const results = await searchOMDB(text);
+        const results = await searchOMDB(searchText);
+        if (cancelled) {
+          return;
+        }
         if (results.length > 0) {
           // Remove duplicates based on imdbID
           const uniqueResults = results.reduce((acc, current) => {
@@ -201,16 +204,12 @@ const Search = () => {
       } else {
         setSearchResults([]);
       }
-    }, 300),
-    [],
-  );
-
-  useEffect(() => {
-    debouncedSearch(searchText);
+    }, 300);
     return () => {
-      debouncedSearch.cancel();
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [searchText, debouncedSearch]);
+  }, [searchText]);
 
   const handleTextChange = useCallback((text: string) => {
     suppressSuggestionsRef.current = false;

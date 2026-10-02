@@ -96,7 +96,7 @@ export const checkForUpdate = async (
   setUpdateLoading(true);
   try {
     const res = await fetch(
-      'https://api.github.com/repos/Zenda-Cross/vega-app/releases/latest',
+      'https://api.github.com/repos/vega-org/vega-app/releases/latest',
     );
     if (res.status === 403 || res.status === 429) {
       ToastAndroid.show(

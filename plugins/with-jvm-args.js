@@ -11,7 +11,10 @@ const GRADLE_PROPERTIES = {
   'kotlin.daemon.jvmargs': '-Xmx1536m',
   'reactNativeArchitectures': 'armeabi-v7a,arm64-v8a',
   'expo.useLegacyPackaging': 'true',
-  'android.enableBundleCompression': 'true',
+  // Store the Hermes bundle uncompressed so it is memory-mapped at launch
+  // instead of inflated into RAM first. Faster cold start and less memory on
+  // low-end phones and TV boxes, for a slightly larger APK.
+  'android.enableBundleCompression': 'false',
 };
 
 function upsertProperty(modResults, key, value) {

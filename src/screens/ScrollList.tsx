@@ -149,6 +149,7 @@ const ScrollListCard = memo(({
               'https://placehold.jp/24/363636/ffffff/100x150.png?text=Vega',
           }}
           resizeMode="cover"
+          resizeMethod="resize"
           style={{
             width: '100%',
             height: '100%',
@@ -279,39 +280,41 @@ const ScrollList = ({ route }: Props): React.ReactElement => {
 
       setIsLoading(true);
 
-      try {
-        const getNewPosts = isSearch
-          ? providerManager.getSearchPosts({
-              searchQuery: filter,
-              page,
-              providerValue: activeProviderValue,
-              signal,
-            })
-          : providerManager.getPosts({
-              filter,
-              page,
-              providerValue: activeProviderValue,
-              signal,
-            });
+      // Promise chain instead of try/catch/finally: React Compiler skips any
+      // component with a finally clause or conditionals inside a try block.
+      const getNewPosts = isSearch
+        ? providerManager.getSearchPosts({
+            searchQuery: filter,
+            page,
+            providerValue: activeProviderValue,
+            signal,
+          })
+        : providerManager.getPosts({
+            filter,
+            page,
+            providerValue: activeProviderValue,
+            signal,
+          });
 
-        const newPosts = await getNewPosts;
+      await getNewPosts
+        .then(newPosts => {
+          if (cancelled || signal.aborted) return;
 
-        if (cancelled || signal.aborted) return;
+          if (!newPosts || newPosts.length === 0) {
+            setIsEnd(true);
+            return;
+          }
 
-        if (!newPosts || newPosts.length === 0) {
+          setPosts(prev => (page === 1 ? newPosts : [...prev, ...newPosts]));
+        })
+        .catch(error => {
+          if (cancelled || signal.aborted || (error as any)?.name === 'AbortError') return;
+          console.error('Error fetching posts:', error);
           setIsEnd(true);
-          return;
-        }
+        });
 
-        setPosts(prev => (page === 1 ? newPosts : [...prev, ...newPosts]));
-      } catch (error) {
-        if (cancelled || signal.aborted || (error as any)?.name === 'AbortError') return;
-        console.error('Error fetching posts:', error);
-        setIsEnd(true);
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+      if (!cancelled) {
+        setIsLoading(false);
       }
     };
 

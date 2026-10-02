@@ -109,6 +109,7 @@ const ProviderCard = ({
               source={{uri: provider.icon}}
               style={{height: '100%', width: '100%'}}
               resizeMode="cover"
+              resizeMethod="resize"
             />
           ) : (
             <MaterialCommunityIcons

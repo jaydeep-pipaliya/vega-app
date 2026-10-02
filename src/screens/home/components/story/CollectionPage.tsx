@@ -32,6 +32,7 @@ const CollectionRow = ({ item }: { item: TmdbStoryCollectionItem }) => {
         <Image
           source={{ uri: image }}
           resizeMode="cover"
+          resizeMethod="resize"
           style={{
             alignSelf: 'stretch',
             backgroundColor: colors.surfaceContainer,

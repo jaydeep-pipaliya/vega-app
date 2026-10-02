@@ -47,6 +47,7 @@ export const RelatedPage: React.FC<RelatedPageProps> = ({
                 <Image
                   source={{ uri: item.image }}
                   resizeMode="cover"
+                  resizeMethod="resize"
                   style={{
                     aspectRatio: 0.72,
                     backgroundColor: colors.surfaceContainer,

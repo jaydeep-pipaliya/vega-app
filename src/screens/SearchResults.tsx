@@ -104,15 +104,16 @@ const SearchResults = ({route, navigation}: Props): React.ReactElement => {
 
     const getSearchResults = () => {
       installedProviders.forEach(item => {
-        const fetchPromise = (async () => {
-          try {
-            const data = await providerManager.getSearchPosts({
-              searchQuery: route.params.filter,
-              page: 1,
-              providerValue: item.value,
-              signal: signal,
-            });
-
+        // Promise chain instead of try/catch: React Compiler skips any
+        // component with conditionals inside a try block.
+        const fetchPromise = providerManager
+          .getSearchPosts({
+            searchQuery: route.params.filter,
+            page: 1,
+            providerValue: item.value,
+            signal: signal,
+          })
+          .then(data => {
             // Skip updating state if request was aborted
             if (signal.aborted) return;
 
@@ -139,7 +140,8 @@ const SearchResults = ({route, navigation}: Props): React.ReactElement => {
             }
 
             updateLoading(item.value, {isLoading: false});
-          } catch (error: any) {
+          })
+          .catch((error: any) => {
             if (signal.aborted) return;
 
             console.error(
@@ -148,8 +150,7 @@ const SearchResults = ({route, navigation}: Props): React.ReactElement => {
             );
             const errorMessage = error?.message || 'Failed to search';
             updateLoading(item.value, {isLoading: false, error: errorMessage});
-          }
-        })();
+          });
 
         fetchPromises.push(fetchPromise);
       });

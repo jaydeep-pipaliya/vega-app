@@ -2,6 +2,7 @@
   "name": "vega",
   "version": "5.0.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "android": "npm run build:sandbox && expo run:android",
     "android:keystore": "node scripts/paste-keystore.js",

@@ -91,6 +91,7 @@ export const RemotePlayerScreen: React.FC<RemotePlayerScreenProps> = ({
             <Image
               source={{uri: backdrop || poster}}
               resizeMode="cover"
+              resizeMethod="resize"
               blurRadius={backdrop ? 0 : 12}
               style={{height: BACKDROP_HEIGHT, opacity: 0.35, width: '100%'}}
             />

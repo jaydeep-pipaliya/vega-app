@@ -96,9 +96,11 @@ const IconButton = ({
       accessibilityLabel={label}
       accessibilityRole="button"
       accessibilityState={{disabled: Boolean(disabled), selected}}
-      disabled={Boolean(disabled)}
-      focusable={isTV ? !disabled : undefined}
-      isTVSelectable={isTV ? !disabled : undefined}
+      // On TV keep a focused button focusable when it turns disabled, or focus
+      // is lost. handlePress still ignores presses while disabled.
+      disabled={Boolean(disabled) && !(isTV && isFocused)}
+      focusable={isTV ? !disabled || isFocused : undefined}
+      isTVSelectable={isTV ? !disabled || isFocused : undefined}
       nextFocusUp={isTV ? nextFocusUp ?? undefined : undefined}
       nextFocusDown={isTV ? nextFocusDown ?? undefined : undefined}
       nextFocusLeft={isTV ? nextFocusLeft ?? undefined : undefined}

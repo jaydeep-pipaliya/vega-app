@@ -52,6 +52,7 @@ export const CastPage: React.FC<CastPageProps> = ({ data, onInteract }) => {
                 <Image
                   source={{ uri: image }}
                   resizeMode="cover"
+                  resizeMethod="resize"
                   style={{
                     aspectRatio: 0.78,
                     backgroundColor: colors.surfaceContainer,

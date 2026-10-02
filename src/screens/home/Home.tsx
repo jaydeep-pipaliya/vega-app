@@ -1,4 +1,5 @@
-import {SafeAreaView, ScrollView, RefreshControl, View, Modal, Pressable} from 'react-native';
+import {SafeAreaView, RefreshControl, View, Modal, Pressable} from 'react-native';
+import {FlashList} from '@shopify/flash-list';
 import Slider from '../../components/Slider';
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {useFocusEffect} from '@react-navigation/native';
@@ -18,7 +19,7 @@ import {HomeStackParamList} from '../../App';
 import {Drawer} from 'react-native-drawer-layout';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {providerManager} from '../../lib/services/ProviderManager';
-import {Catalog} from '../../lib/providers/types';
+import {Catalog, Post} from '../../lib/providers/types';
 import Tutorial from '../../components/Touturial';
 import {QueryErrorBoundary} from '../../components/ErrorBoundary';
 import {StatusBar} from 'expo-status-bar';
@@ -29,6 +30,26 @@ import StatusBarScrim from '../../components/ui/StatusBarScrim';
 import {isTV} from '../../lib/tv/constants';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Home'>;
+
+type HomeRow = {
+  key: string;
+  isLoading: boolean;
+  title: string;
+  filter: string;
+  posts: Post[];
+};
+
+const EMPTY_POSTS: Post[] = [];
+
+const homeRowKey = (row: HomeRow) => row.key;
+
+// One item type per row. A row is then never recycled into a different
+// catalog, so each row keeps its own horizontal scroll position and focus.
+const homeRowType = (row: HomeRow) => row.key;
+
+// TV focus can only move to rows that are mounted. Keep about two rows ahead
+// ready so fast D-pad presses do not run past the rendered content.
+const HOME_DRAW_DISTANCE = isTV ? 800 : 400;
 
 const Home = ({}: Props) => {
   const colors = useM3Colors();
@@ -93,9 +114,11 @@ const Home = ({}: Props) => {
   );
 
   // Optimized refresh handler
-  const handleRefresh = useCallback(async () => {
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
+  const handleRefresh = useCallback(() => {
     setManualRefreshing(true);
-    try {
+    const refresh = async () => {
       // Clear hero cache to get a new random hero on refresh
       clearHeroCache(provider?.value);
       await Promise.race([
@@ -107,13 +130,16 @@ const Home = ({}: Props) => {
         ]),
         new Promise(resolve => setTimeout(resolve, 10000)),
       ]);
-    } catch (refreshError) {
-      console.error('Error refreshing home data:', refreshError);
-    } finally {
-      setTimeout(() => {
-        setManualRefreshing(false);
-      }, 50);
-    }
+    };
+    return refresh()
+      .catch(refreshError => {
+        console.error('Error refreshing home data:', refreshError);
+      })
+      .then(() => {
+        setTimeout(() => {
+          setManualRefreshing(false);
+        }, 50);
+      });
   }, [refetch, provider?.value]);
 
   // Catalog now runs in the provider sandbox, so it resolves asynchronously.
@@ -142,34 +168,43 @@ const Home = ({}: Props) => {
     };
   }, [provider?.value]);
 
-  // Memoized loading skeleton
-  const loadingSliders = useMemo(
+  // Rows of the vertical list. The list mounts only the rows near the screen,
+  // so opening Home no longer builds every catalog row and its posters at once.
+  const rows = useMemo<HomeRow[]>(
     () =>
-      skeletonCatalog.map((item, index) => (
-        <Slider
-          isLoading={true}
-          key={`loading-${item.filter}-${index}`}
-          title={item.title}
-          posts={[]}
-          filter={item.filter}
-        />
-      )),
-    [skeletonCatalog],
+      isLoading
+        ? skeletonCatalog.map((item, index) => ({
+            key: `loading-${item.filter}-${index}`,
+            isLoading: true,
+            title: item.title,
+            filter: item.filter,
+            posts: EMPTY_POSTS,
+          }))
+        : homeData.map((item, index) => ({
+            key: `content-${item.filter}-${index}`,
+            isLoading: false,
+            title: item.title,
+            filter: item.filter,
+            posts: item.Posts,
+          })),
+    [isLoading, skeletonCatalog, homeData],
   );
 
-  // Memoized content sliders
-  const contentSliders = useMemo(() => {
-    return homeData.map((item, index) => (
+  const providerValue = provider?.value;
+  const renderRow = useCallback(
+    ({item}: {item: HomeRow}) => (
       <Slider
-        isLoading={false}
-        key={`content-${item.filter}-${index}`}
+        isLoading={item.isLoading}
         title={item.title}
-        posts={item.Posts}
+        posts={item.posts}
         filter={item.filter}
-        providerValue={provider?.value}
+        providerValue={item.isLoading ? undefined : providerValue}
       />
-    ));
-  }, [homeData, provider?.value]);
+    ),
+    [providerValue],
+  );
+
+  const openDrawer = useCallback(() => setIsDrawerOpen(true), []);
 
   // Memoized error message - only show if there is no cached data and an error occurred
   const errorComponent = useMemo(() => {
@@ -230,12 +265,17 @@ const Home = ({}: Props) => {
             }>
             <StatusBar style="light" />
 
-            <ScrollView
+            <FlashList
+              data={rows}
+              renderItem={renderRow}
+              keyExtractor={homeRowKey}
+              getItemType={homeRowType}
+              drawDistance={HOME_DRAW_DISTANCE}
               onScroll={handleScroll}
-              scrollEventThrottle={16} // Optimize scroll performance
+              scrollEventThrottle={16}
               showsVerticalScrollIndicator={false}
-              className="bg-m3-background"
-              contentContainerStyle={{ paddingBottom: isTV ? 120 : 32 }}
+              style={{backgroundColor: colors.background}}
+              contentContainerStyle={{paddingBottom: isTV ? 120 : 32}}
               refreshControl={
                 <RefreshControl
                   colors={[colors.primary]}
@@ -245,21 +285,23 @@ const Home = ({}: Props) => {
                   onRefresh={handleRefresh}
                   enabled={isAtTop || manualRefreshing}
                 />
-              }>
-              <HeroOptimized
-                isDrawerOpen={isDrawerOpen}
-                onOpenDrawer={() => setIsDrawerOpen(true)}
-              />
-
-              <ContinueWatching />
-
-              <View className="relative z-20 pb-8">
-                {isLoading ? loadingSliders : contentSliders}
-                {errorComponent}
-              </View>
-
-              <View className="h-8" />
-            </ScrollView>
+              }
+              ListHeaderComponent={
+                <>
+                  <HeroOptimized
+                    isDrawerOpen={isDrawerOpen}
+                    onOpenDrawer={openDrawer}
+                  />
+                  <ContinueWatching />
+                </>
+              }
+              ListFooterComponent={
+                <View className="pb-8">
+                  {errorComponent}
+                  <View className="h-8" />
+                </View>
+              }
+            />
           </Drawer>
 
           {isTV && isDrawerOpen ? (

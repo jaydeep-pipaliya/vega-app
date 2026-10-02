@@ -60,6 +60,7 @@ export const AboutPage: React.FC<AboutPageProps> = ({
           fadeDuration={500}
           source={{ uri: backdrop }}
           resizeMode="cover"
+          resizeMethod="resize"
           style={{
             aspectRatio: isTV ? undefined : 16 / 9,
             backgroundColor: colors.surfaceContainer,

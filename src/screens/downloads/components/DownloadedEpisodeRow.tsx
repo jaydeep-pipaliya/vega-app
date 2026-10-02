@@ -41,6 +41,7 @@ const DownloadedItemThumbnail = ({item}: {item: DownloadItem}) => {
         <Image
           source={{uri: thumbnailUri}}
           resizeMode="cover"
+          resizeMethod="resize"
           onError={() => setThumbnailUri(null)}
           style={{
             position: 'absolute',

@@ -69,7 +69,9 @@ import { useM3Colors } from '../../theme/M3PaletteContext';
 import { useTVFocusBorderColor } from '../../lib/tv/useTVFocusBorderColor';
 import useContinueWatchingStore from '../../lib/zustand/continueWatchingStore';
 import useLocalVideoStore from '../../lib/zustand/localVideoStore';
-import useDownloadsStore from '../../lib/zustand/downloadsStore';
+import useDownloadsStore, {
+  type DownloadItem,
+} from '../../lib/zustand/downloadsStore';
 import { RemotePlayerScreen } from '../../components/remote-player';
 import { useRemoteStore } from '../../lib/remote/remoteStore';
 import { remotePlaybackManager } from '../../lib/remote/remotePlaybackManager';
@@ -145,6 +147,40 @@ const cacheSkips = (keys: (string | undefined)[], skips: SkipInterval[]) => {
       cacheStorage.setString(`skips_${key}`, serialized);
     } catch {}
   }
+};
+
+// Download that holds the file or source of the playing episode, if any.
+const findDownloadForEpisode = (
+  downloads: Record<string, DownloadItem>,
+  activeEpisode: any,
+  selectedStream: any,
+): DownloadItem | undefined =>
+  Object.values(downloads).find(
+    d =>
+      (activeEpisode?.id && d.id === activeEpisode.id) ||
+      (activeEpisode?.link &&
+        (d.filePath === activeEpisode.link ||
+          d.url === activeEpisode.link ||
+          d.sourceLink === activeEpisode.link)) ||
+      (activeEpisode?.sourceLink &&
+        (d.sourceLink === activeEpisode.sourceLink ||
+          d.url === activeEpisode.sourceLink ||
+          d.filePath === activeEpisode.sourceLink)) ||
+      (selectedStream?.link &&
+        (d.filePath === selectedStream.link ||
+          d.url === selectedStream.link)),
+  );
+
+// Everything the screen renders from the playback position: the active skip
+// interval and whether the "Next" button shows (past 80% of the video).
+const getPlaybackRenderKey = (
+  time: number,
+  skips: SkipInterval[],
+  duration: number,
+) => {
+  const skipIndex = skips.findIndex(s => time >= s.from && time < s.to);
+  const nearEnd = duration > 0 && time / duration > 0.8;
+  return `${skipIndex}:${nearEnd}`;
 };
 
 const getResumePosition = (position: number, duration: number) => {
@@ -328,6 +364,7 @@ const SidebarEpisodeRow = React.memo<SidebarEpisodeRowProps>(
               source={{ uri: imageUri }}
               style={{ width: '100%', height: '100%' }}
               resizeMode="cover"
+              resizeMethod="resize"
               onError={() => setImageFailed(true)}
             />
           ) : (
@@ -454,7 +491,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       active = false;
     };
   }, [dynamicInfoAccentEnabled, hourglassArtwork, primary]);
-  const { provider } = useContentStore();
+  const provider = useContentStore(state => state.provider);
   const navigation = useNavigation();
   const upsertContinueWatching = useContinueWatchingStore(
     state => state.upsertItem,
@@ -702,7 +739,15 @@ const Player = ({ route }: Props): React.JSX.Element => {
     [continueWatchingId, updateContinueWatchingProgress],
   );
 
+  // currentPlaybackTime is render state. The video reports progress every
+  // second, but this screen is large, so the state only changes when a value
+  // rendered from it changes (skip button, Next button) or while the TV
+  // timeline is visible. playbackTimeRef always holds the latest position.
   const [currentPlaybackTime, setCurrentPlaybackTime] = useState(0);
+  const playbackTimeRef = useRef(0);
+  const playbackRenderKeyRef = useRef('');
+  const combinedSkipsRef = useRef<SkipInterval[]>([]);
+  const liveTimelineRef = useRef(false);
   const [settingsCloseFocused, setSettingsCloseFocused] = useState(false);
   const timelineRef = useRef<View>(null);
   const [timelineFocusHandle, setTimelineFocusHandle] = useState<number | null>(null);
@@ -777,10 +822,31 @@ const Player = ({ route }: Props): React.JSX.Element => {
   const handleProgressWithTime = useCallback(
     (e: { currentTime: number; seekableDuration: number }) => {
       handleProgress(e);
-      setCurrentPlaybackTime(e.currentTime);
+      playbackTimeRef.current = e.currentTime;
+      if (liveTimelineRef.current) {
+        setCurrentPlaybackTime(e.currentTime);
+        return;
+      }
+      const renderKey = getPlaybackRenderKey(
+        e.currentTime,
+        combinedSkipsRef.current,
+        videoPositionRef.current.duration,
+      );
+      if (renderKey !== playbackRenderKeyRef.current) {
+        playbackRenderKeyRef.current = renderKey;
+        setCurrentPlaybackTime(e.currentTime);
+      }
     },
-    [handleProgress],
+    [handleProgress, videoPositionRef],
   );
+
+  // The TV timeline shows the running time, so it needs every progress tick.
+  useEffect(() => {
+    liveTimelineRef.current = isTV && showControls;
+    if (liveTimelineRef.current) {
+      setCurrentPlaybackTime(playbackTimeRef.current);
+    }
+  }, [showControls]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
@@ -789,7 +855,13 @@ const Player = ({ route }: Props): React.JSX.Element => {
     return () => subscription.remove();
   }, [flushProgress]);
 
-  const downloads = useDownloadsStore(state => state.downloads);
+  // Select only the matching download's skip list. Subscribing to all
+  // downloads re-rendered the player on every download progress update.
+  const matchedDownloadSkip = useDownloadsStore(
+    state =>
+      findDownloadForEpisode(state.downloads, activeEpisode, selectedStream)
+        ?.skip,
+  );
 
   // Combined skip intervals from episode, direct links, stream, downloads, and cache
   const combinedSkips: SkipInterval[] = useMemo(() => {
@@ -840,24 +912,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
     }
 
     // Check downloadsStore for matching download item with skip intervals
-    const allDownloadsList = Object.values(downloads);
-    const matchedDownload = allDownloadsList.find(
-      d =>
-        (activeEpisode?.id && d.id === activeEpisode.id) ||
-        (activeEpisode?.link &&
-          (d.filePath === activeEpisode.link ||
-            d.url === activeEpisode.link ||
-            d.sourceLink === activeEpisode.link)) ||
-        (activeEpisode?.sourceLink &&
-          (d.sourceLink === activeEpisode.sourceLink ||
-            d.url === activeEpisode.sourceLink ||
-            d.filePath === activeEpisode.sourceLink)) ||
-        (selectedStream?.link &&
-          (d.filePath === selectedStream.link ||
-            d.url === selectedStream.link)),
-    );
-    if (matchedDownload?.skip) {
-      addSkips(matchedDownload.skip);
+    if (matchedDownloadSkip) {
+      addSkips(matchedDownloadSkip);
     }
 
     // Check cacheStorage if no skips found yet
@@ -893,10 +949,21 @@ const Player = ({ route }: Props): React.JSX.Element => {
     activeEpisode,
     activeEpisodeKey,
     continueWatchingId,
-    downloads,
+    matchedDownloadSkip,
     selectedStream,
     (route.params as any)?.linkList,
   ]);
+
+  // New skip intervals change what the current position renders.
+  useEffect(() => {
+    combinedSkipsRef.current = combinedSkips;
+    playbackRenderKeyRef.current = getPlaybackRenderKey(
+      playbackTimeRef.current,
+      combinedSkips,
+      videoPositionRef.current.duration,
+    );
+    setCurrentPlaybackTime(playbackTimeRef.current);
+  }, [combinedSkips, videoPositionRef]);
 
   // Currently active skip interval based on playback position
   const activeSkip = useMemo(() => {
@@ -917,6 +984,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       });
     }
     playerRef.current?.seek(activeSkip.to);
+    playbackTimeRef.current = activeSkip.to;
     setCurrentPlaybackTime(activeSkip.to);
   }, [activeSkip]);
 

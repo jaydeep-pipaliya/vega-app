@@ -46,6 +46,7 @@ const createLauncherAlias = (packageName, variant) => ({
     'android:exported': 'true',
     'android:icon': `@drawable/ic_launcher_${variant.id.toLowerCase()}`,
     'android:roundIcon': `@drawable/ic_launcher_${variant.id.toLowerCase()}`,
+    'android:banner': '@drawable/tv_banner',
     'android:targetActivity': '.MainActivity',
     'android:theme': `@style/BootTheme.${variant.id}`,
   },

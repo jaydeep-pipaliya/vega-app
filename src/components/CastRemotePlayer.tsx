@@ -146,6 +146,7 @@ const CastRemotePlayer = ({
     <ImageBackground
       source={artwork ? {uri: artwork} : undefined}
       resizeMode="cover"
+      resizeMethod="resize"
       className="flex-1 bg-black">
       <View className="absolute inset-0 bg-black/70" />
 

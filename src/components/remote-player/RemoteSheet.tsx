@@ -134,6 +134,7 @@ export const RemoteSheetOption: React.FC<RemoteSheetOptionProps> = ({
           source={{uri: thumbnail}}
           onError={() => setFailedThumbnail(thumbnail)}
           resizeMode="cover"
+          resizeMethod="resize"
           style={{
             backgroundColor: colors.surfaceContainerHighest,
             borderRadius: 8,

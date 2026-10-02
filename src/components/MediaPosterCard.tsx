@@ -4,7 +4,6 @@ import { Image, Pressable, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { useM3Colors } from '../theme/M3PaletteContext';
-import useThemeStore from '../lib/zustand/themeStore';
 import AppText from './ui/Text';
 import { isTV } from '../lib/tv/constants';
 import { useTVFocusBorderColor } from '../lib/tv/useTVFocusBorderColor';
@@ -72,7 +71,11 @@ interface MediaPosterCardProps {
   onLayout?: (event: any) => void;
 }
 
-const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
+// TV boxes have little GPU headroom, and a row of cards entering at once
+// competes with D-pad focus animations. Cards appear without a transition there.
+const CARD_ENTERING = isTV ? undefined : FadeInDown.duration(280);
+
+const MediaPosterCardBase = React.forwardRef<View, MediaPosterCardProps>(
   (
     {
       title,
@@ -99,7 +102,7 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
     ref,
   ) => {
     const colors = useM3Colors();
-    const themePrimary = useThemeStore(state => state.primary);
+
 
     const isNavFocused = useSafeIsNavFocused();
     const isCurrentlyFocusable = isNavFocused;
@@ -163,7 +166,7 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
 
     return (
       <Animated.View
-        entering={FadeInDown.duration(280)}
+        entering={CARD_ENTERING}
         style={{
           width,
           paddingVertical: 6,
@@ -323,6 +326,10 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
                   <Image
                     source={{ uri: poster }}
                     resizeMode="cover"
+                    // Decode at card size. Android otherwise decodes remote
+                    // images at full resolution, which wastes memory and
+                    // causes jank while scrolling on low-end phones and TVs.
+                    resizeMethod="resize"
                     style={{
                       aspectRatio: activeAspectRatio,
                       width: selected ? width - 8 : width,
@@ -393,6 +400,8 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
     </Animated.View>
   );
 });
+
+const MediaPosterCard = React.memo(MediaPosterCardBase);
 
 export default MediaPosterCard;
 

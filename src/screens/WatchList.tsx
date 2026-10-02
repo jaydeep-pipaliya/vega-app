@@ -3,6 +3,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {StatusBar} from 'expo-status-bar';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   BackHandler,
@@ -30,6 +31,7 @@ import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 import useTVNavigationStore from '../lib/zustand/tvNavigationStore';
 
 const WatchList = () => {
+  const insets = useSafeAreaInsets();
   const colors = useM3Colors();
   const focusBorderColor = useTVFocusBorderColor();
   const navigation =
@@ -106,14 +108,6 @@ const WatchList = () => {
     }, []),
   );
 
-  useEffect(() => {
-    if (!isSelectionMode) return;
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleExitSelection();
-      return true;
-    });
-    return () => backSub.remove();
-  }, [isSelectionMode]);
 
   const triggerHaptic = (
     type: HapticFeedbackTypes = HapticFeedbackTypes.effectTick,
@@ -166,6 +160,17 @@ const WatchList = () => {
     setSelectedLinks(new Set());
     setIsSelectionModeActive(false);
   };
+
+  // Declared after handleExitSelection: React Compiler skips components that
+  // read a value before its declaration.
+  useEffect(() => {
+    if (!isSelectionMode) return;
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleExitSelection();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [isSelectionMode]);
 
   const handleToggleSelectAll = () => {
     triggerHaptic(HapticFeedbackTypes.effectClick);
@@ -238,7 +243,7 @@ const WatchList = () => {
       trapFocusRight={true}
       trapFocusDown={true}
       trapFocusUp={true}
-      style={{flex: 1, backgroundColor: colors.background}}>
+      style={{flex: 1, backgroundColor: colors.background, paddingTop: isTV ? 0 : insets.top}}>
       <StatusBar />
 
       {/* Top Selection Header Toolbar */}

@@ -71,6 +71,7 @@ export const RemoteMediaCard: React.FC<RemoteMediaCardProps> = ({
             <Image
               source={{uri: poster}}
               resizeMode="contain"
+              resizeMethod="resize"
               onLoad={event => {
                 const {width, height} = event.nativeEvent.source;
                 if (width > 0 && height > 0) setArtworkSize({uri: poster, ratio: width / height});

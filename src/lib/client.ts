@@ -35,7 +35,9 @@ export const queryClient = new QueryClient({
 
       // Performance optimizations
       refetchInterval: false, // Disable automatic polling by default
-      notifyOnChangeProps: 'all', // Only notify on tracked properties
+      // notifyOnChangeProps left unset: React Query then re-renders a
+      // component only when a result property it reads changes. 'all' made
+      // every observer re-render on each fetch status change.
 
       // Error handling
       throwOnError: false, // Don't throw errors, handle them in components

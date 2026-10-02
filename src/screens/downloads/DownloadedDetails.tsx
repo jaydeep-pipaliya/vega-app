@@ -193,16 +193,16 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
     });
   };
 
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
   const deleteItem = async (item: DownloadItem) => {
     if (deletingId) {
       return;
     }
     setDeletingId(item.id);
-    try {
-      await deleteDownloadedItemAndSubtitles(item);
-    } finally {
+    await deleteDownloadedItemAndSubtitles(item).finally(() => {
       setDeletingId(null);
-    }
+    });
   };
 
   const backgroundImage =
@@ -218,6 +218,7 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
           source={{uri: backgroundImage}}
           className="h-[340px] w-full"
           resizeMode="cover"
+          resizeMethod="resize"
         />
       </View>
       <ScrollView showsVerticalScrollIndicator={false}>

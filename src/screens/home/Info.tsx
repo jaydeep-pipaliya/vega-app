@@ -190,31 +190,32 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
   );
 
   const webUrl = info?.webUrl?.trim();
+  const linkList = info?.linkList;
   const filteredLinkList = useMemo(() => {
-    if (!info?.linkList) {
+    if (!linkList) {
       return [];
     }
     const excludedQualities = settingsStorage.getExcludedQualities();
-    const filtered = info.linkList.filter(
+    const filtered = linkList.filter(
       (item: Link) =>
         !item.quality || !excludedQualities.includes(item.quality),
     );
-    return filtered.length > 0 ? filtered : info.linkList;
-  }, [info?.linkList]);
+    return filtered.length > 0 ? filtered : linkList;
+  }, [linkList]);
 
-  const handleRefresh = useCallback(async () => {
+  // Promise chain instead of try/finally: React Compiler skips any component
+  // that contains a finally clause.
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setRefreshVersion(version => version + 1);
-    try {
-      await Promise.race([
-        refetch(),
-        new Promise(resolve => setTimeout(resolve, 10000)),
-      ]);
-    } finally {
+    return Promise.race([
+      refetch(),
+      new Promise(resolve => setTimeout(resolve, 10000)),
+    ]).finally(() => {
       setTimeout(() => {
         setRefreshing(false);
       }, 50);
-    }
+    });
   }, [refetch]);
 
   const handleScroll = useCallback((event: any) => {
@@ -343,6 +344,7 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
             <Image
               source={{uri: backgroundImage}}
               resizeMode="cover"
+              resizeMethod="resize"
               style={{height: 340, width: '100%'}}
             />
           </View>

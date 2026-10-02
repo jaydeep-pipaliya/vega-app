@@ -103,6 +103,11 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
   });
 
   const [isFocused, setIsFocused] = React.useState(false);
+  // A view that turns disabled while focused (loading, busy, deleting) drops
+  // TV focus and nothing takes it. Keep it focusable until focus moves away;
+  // presses stay blocked.
+  const nativeFocusable =
+    isCurrentlyFocusable || (isTV && isNavFocused && disabled && isFocused);
   const lastPressTime = useRef<number>(0);
   const scale = useSharedValue(1);
   const borderOpacity = useSharedValue(0);
@@ -110,8 +115,8 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
   React.useEffect(() => {
     if (!isNavFocused && isFocused) {
       setIsFocused(false);
-      scale.value = withTiming(1, {duration: 150});
-      borderOpacity.value = withTiming(0, {duration: 150});
+      scale.set(withTiming(1, {duration: 150}));
+      borderOpacity.set(withTiming(0, {duration: 150}));
     }
   }, [isNavFocused, isFocused, scale, borderOpacity]);
 
@@ -130,33 +135,33 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
     setIsFocused(true);
     rememberFocus();
     // Keep the TV focus ring within the control's layout bounds.
-    scale.value = withTiming(1, {
+    scale.set(withTiming(1, {
       duration: TV_FOCUS_ANIMATION_DURATION,
       easing: Easing.out(Easing.ease),
-    });
-    borderOpacity.value = withTiming(1, {
+    }));
+    borderOpacity.set(withTiming(1, {
       duration: TV_FOCUS_ANIMATION_DURATION,
-    });
+    }));
     onFocus?.();
   }, [onFocus, scale, borderOpacity, isCurrentlyFocusable, rememberFocus]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
     forgetFocus();
-    scale.value = withTiming(1, {
+    scale.set(withTiming(1, {
       duration: TV_FOCUS_ANIMATION_DURATION,
       easing: Easing.out(Easing.ease),
-    });
-    borderOpacity.value = 0;
+    }));
+    borderOpacity.set(0);
     onBlur?.();
   }, [onBlur, scale, borderOpacity, forgetFocus]);
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{scale: scale.value}],
+    transform: [{scale: scale.get()}],
   }));
 
   const borderAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: showFocusBorder && isFocused ? borderOpacity.value : 0,
+    opacity: showFocusBorder && isFocused ? borderOpacity.get() : 0,
   }));
 
   if (!isTV) {
@@ -192,14 +197,14 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
       onLongPress={isCurrentlyFocusable ? onLongPress : undefined}
       onFocus={handleFocus}
       onBlur={handleBlur}
-      disabled={!isCurrentlyFocusable}
+      disabled={!nativeFocusable}
       hasTVPreferredFocus={preferredFocus && !disabled}
       nextFocusUp={nextFocusUp ?? undefined}
       nextFocusDown={nextFocusDown ?? undefined}
       nextFocusLeft={nextFocusLeft ?? undefined}
       nextFocusRight={nextFocusRight ?? undefined}
-      focusable={isCurrentlyFocusable}
-      isTVSelectable={isCurrentlyFocusable}
+      focusable={nativeFocusable}
+      isTVSelectable={nativeFocusable}
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole={accessibilityRole as any}

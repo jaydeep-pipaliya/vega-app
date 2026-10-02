@@ -1,5 +1,11 @@
+import {AppState} from 'react-native';
 import {create} from 'zustand';
-import {createJSONStorage, persist} from 'zustand/middleware';
+import {
+  createJSONStorage,
+  persist,
+  type PersistStorage,
+  type StorageValue,
+} from 'zustand/middleware';
 import type {DownloadLocationConfig} from '../downloadLocation';
 import {createZustandStorage} from '../storage/StorageService';
 import {
@@ -280,6 +286,81 @@ const updateStatus = (
   };
 };
 
+type PersistedDownloads = {downloads: Record<string, DownloadItem>};
+
+const PROGRESS_PERSIST_INTERVAL_MS = 1000;
+
+const getStatusSignature = (downloads: Record<string, DownloadItem>) => {
+  let signature = '';
+  for (const id in downloads) {
+    signature += `${id}\u0000${downloads[id].status}\u0001`;
+  }
+  return signature;
+};
+
+// Native progress events arrive several times a second per download, and each
+// write serialized every stored download on the JS thread. A change to the set
+// of downloads or to any status is written at once, with all pending changes.
+// Other changes (progress, speed) are written at most once per interval, and
+// pending ones are written when the app leaves the foreground.
+const createDownloadsPersistStorage =
+  (): PersistStorage<PersistedDownloads> => {
+    const storage = createJSONStorage<PersistedDownloads>(() =>
+      createZustandStorage(),
+    )!;
+    let pending: {
+      name: string;
+      value: StorageValue<PersistedDownloads>;
+    } | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastSignature: string | null = null;
+
+    const flush = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (!pending) {
+        return;
+      }
+      const {name, value} = pending;
+      pending = null;
+      storage.setItem(name, value);
+    };
+
+    // Optional chaining: test environments mock react-native without AppState.
+    AppState?.addEventListener?.('change', state => {
+      if (state !== 'active') {
+        flush();
+      }
+    });
+
+    return {
+      getItem: name => storage.getItem(name),
+      setItem: (name, value) => {
+        pending = {name, value};
+        const signature = getStatusSignature(value.state.downloads || {});
+        if (signature !== lastSignature) {
+          lastSignature = signature;
+          flush();
+          return;
+        }
+        if (!timer) {
+          timer = setTimeout(flush, PROGRESS_PERSIST_INTERVAL_MS);
+        }
+      },
+      removeItem: name => {
+        pending = null;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        lastSignature = null;
+        return storage.removeItem(name);
+      },
+    };
+  };
+
 export const useDownloadsStore = create<DownloadState>()(
   persist(
     (set, get) => ({
@@ -475,7 +556,7 @@ export const useDownloadsStore = create<DownloadState>()(
     {
       name: DOWNLOADS_STORAGE_KEY,
       version: DOWNLOADS_SCHEMA_VERSION,
-      storage: createJSONStorage(() => createZustandStorage()),
+      storage: createDownloadsPersistStorage(),
       partialize: state => ({downloads: state.downloads}),
       migrate: persistedState => {
         const persisted = persistedState as

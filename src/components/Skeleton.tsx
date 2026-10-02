@@ -1,7 +1,6 @@
-import React, {useEffect, useRef} from 'react';
-import {Animated, StyleSheet, View} from 'react-native';
+import React, {useEffect, useMemo} from 'react';
+import {Animated, Easing, StyleSheet, View} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
-import {Easing} from 'react-native-reanimated';
 
 type SkeletonLoaderProps = {
   width: number | string;
@@ -14,6 +13,44 @@ type SkeletonLoaderProps = {
   baseColor?: string;
   highlightColor?: string;
 };
+
+// One shimmer value and one native loop shared by every mounted skeleton.
+// A loading screen can show dozens of skeletons; a loop per instance cost a
+// native animation each and started them all on the same frame.
+const shimmerValue = new Animated.Value(0);
+let shimmerUsers = 0;
+let shimmerLoop: Animated.CompositeAnimation | null = null;
+
+const acquireShimmer = () => {
+  shimmerUsers += 1;
+  if (shimmerLoop) {
+    return;
+  }
+  shimmerValue.setValue(0);
+  shimmerLoop = Animated.loop(
+    Animated.timing(shimmerValue, {
+      toValue: 1,
+      duration: 1500,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    }),
+  );
+  shimmerLoop.start();
+};
+
+const releaseShimmer = () => {
+  shimmerUsers = Math.max(0, shimmerUsers - 1);
+  if (shimmerUsers === 0 && shimmerLoop) {
+    shimmerLoop.stop();
+    shimmerLoop = null;
+  }
+};
+
+const LIGHT_COLORS = ['#E0E0E0', '#F5F5F5', '#E0E0E0'];
+const DARK_COLORS = ['#333333', '#444', '#333333'];
+const GRADIENT_START = {x: 0, y: 0.5};
+const GRADIENT_END = {x: 1, y: 0.5};
+
 const SkeletonLoader = ({
   width,
   height,
@@ -25,39 +62,37 @@ const SkeletonLoader = ({
   baseColor,
   highlightColor,
 }: SkeletonLoaderProps) => {
-  const animatedValue = useRef(new Animated.Value(0)).current;
+  const visible = !(children && !show);
 
   useEffect(() => {
-    const startShimmer = () => {
-      Animated.loop(
-        Animated.timing(animatedValue, {
-          toValue: 1,
-          duration: 1500,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        }),
-      ).start();
-    };
+    if (!visible) {
+      return;
+    }
+    acquireShimmer();
+    return releaseShimmer;
+  }, [visible]);
 
-    startShimmer();
-  }, [animatedValue]);
-
-  const lightColors = ['#E0E0E0', '#F5F5F5', '#E0E0E0'];
-  const darkColors = ['#333333', '#444', '#333333'];
-  const fallbackColors = darkMode ? darkColors : lightColors;
-  const colors =
-    baseColor && highlightColor
-      ? [baseColor, highlightColor, baseColor]
-      : fallbackColors;
+  const fallbackColors = darkMode ? DARK_COLORS : LIGHT_COLORS;
+  const colors = useMemo(
+    () =>
+      baseColor && highlightColor
+        ? [baseColor, highlightColor, baseColor]
+        : fallbackColors,
+    [baseColor, highlightColor, fallbackColors],
+  );
   const resolvedBaseColor = baseColor || fallbackColors[0];
 
   const animationWidth = typeof width === 'string' ? 200 : width;
-  const translateX = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-animationWidth, animationWidth],
-  });
+  const translateX = useMemo(
+    () =>
+      shimmerValue.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-animationWidth, animationWidth],
+      }),
+    [animationWidth],
+  );
 
-  if (children && !show) {
+  if (!visible) {
     return <>{children}</>;
   }
 
@@ -68,16 +103,12 @@ const SkeletonLoader = ({
         {backgroundColor: resolvedBaseColor, width, height, marginVertical},
         style,
       ]}>
-      <Animated.View
-        style={{
-          flex: 1,
-          transform: [{translateX}],
-        }}>
+      <Animated.View style={[styles.shimmer, {transform: [{translateX}]}]}>
         <LinearGradient
           colors={colors}
-          start={{x: 0, y: 0.5}}
-          end={{x: 1, y: 0.5}}
-          style={[{width: '100%', height: '100%'}]}
+          start={GRADIENT_START}
+          end={GRADIENT_END}
+          style={styles.gradient}
         />
       </Animated.View>
     </View>
@@ -90,6 +121,13 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     // based on dark mode
     backgroundColor: '#333',
+  },
+  shimmer: {
+    flex: 1,
+  },
+  gradient: {
+    width: '100%',
+    height: '100%',
   },
 });
 

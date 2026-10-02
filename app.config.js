@@ -121,7 +121,7 @@ module.exports = () => {
             '@react-native-tvos/config-tv',
             {
               isTV: true,
-              androidTVBanner: './assets/adaptive_icon.png',
+              androidTVBanner: './assets/tv-banner.png',
             },
           ],
         ]

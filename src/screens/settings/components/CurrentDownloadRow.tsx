@@ -88,6 +88,7 @@ const CurrentDownloadRow = ({
               source={{uri: item.poster}}
               className="h-full w-full"
               resizeMode="cover"
+              resizeMethod="resize"
             />
           ) : (
             <View className="h-full w-full items-center justify-center">

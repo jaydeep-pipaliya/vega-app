@@ -245,6 +245,7 @@ const ContentOverview = ({
                 source={{uri: logo}}
                 onError={() => setLogoFailed(true)}
                 resizeMode="contain"
+                resizeMethod="resize"
                 style={{height: 64, width: 220}}
               />
             ) : (

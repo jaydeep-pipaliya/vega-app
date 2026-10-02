@@ -1,4 +1,4 @@
-import React, {useEffect} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import './global.css';
 import Home from './screens/home/Home';
 import Info from './screens/home/Info';
@@ -28,7 +28,7 @@ import {enableFreeze, enableScreens} from 'react-native-screens';
 import Preferences from './screens/settings/Preference';
 import Appearance from './screens/settings/Appearance';
 import {M3ThemeProvider} from './theme/M3ThemeProvider';
-import {AppState, LogBox, useWindowDimensions, View} from 'react-native';
+import {AppState, LogBox, useWindowDimensions} from 'react-native';
 import {EpisodeLink} from './lib/providers/types';
 import {
   SafeAreaProvider,
@@ -158,8 +158,22 @@ export type TabStackParamList = {
   SettingsStack: undefined;
 };
 const Tab = createBottomTabNavigator<TabStackParamList>();
+// Navigators and their screen components live at module scope. Created inside
+// App, every App render made new component types and remounted all tabs.
+const HomeStack = createNativeStackNavigator<HomeStackParamList>();
+const Stack = createNativeStackNavigator<RootStackParamList>();
+const SearchStack = createNativeStackNavigator<SearchStackParamList>();
+const WatchListStack = createNativeStackNavigator<WatchListStackParamList>();
+const DownloadsStack = createNativeStackNavigator<DownloadsStackParamList>();
+const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 let pendingDownloadsNavigation = false;
+
+LogBox.ignoreLogs([
+  'You have passed a style to FlashList',
+  'new NativeEventEmitter()',
+  'Failed to fetch manifest',
+]);
 
 export const openDownloadsScreen = (): void => {
   if (!navigationRef.isReady()) {
@@ -177,23 +191,268 @@ export const openDownloadsScreen = (): void => {
   navigationRef.navigate('TabStack', {screen: 'DownloadsStack'});
 };
 
-const App = () => {
+const stackScreenOptions = {
+  headerShown: false,
+  animation: 'ios_from_right',
+  animationDuration: 200,
+  freezeOnBlur: true,
+} as const;
+
+const rootStackScreenOptions = {
+  ...stackScreenOptions,
+  contentStyle: {backgroundColor: 'transparent'},
+} as const;
+
+const navigationTheme = {
+  fonts: {
+    regular: {
+      fontFamily: 'Inter_400Regular',
+      fontWeight: '400',
+    },
+    medium: {
+      fontFamily: 'Inter_500Medium',
+      fontWeight: '500',
+    },
+    bold: {
+      fontFamily: 'Inter_700Bold',
+      fontWeight: '700',
+    },
+    heavy: {
+      fontFamily: 'Inter_800ExtraBold',
+      fontWeight: '800',
+    },
+  },
+  dark: true,
+  colors: {
+    background: 'transparent',
+    card: 'black',
+    primary: '#E4E4E4',
+    text: 'white',
+    border: 'black',
+    notification: '#E4E4E4',
+  },
+} as const;
+
+const playerScreenOptions = ({route}: {route: {params?: object}}) => {
+  const isRemotePortrait =
+    !isTV &&
+    (Boolean((route.params as any)?.alwaysCast) ||
+      settingsStorage.isAlwaysCastMode());
+  return {
+    orientation: isTV
+      ? ('landscape' as const)
+      : isRemotePortrait
+        ? ('portrait' as const)
+        : ('default' as const),
+    statusBarHidden: isTV || !isRemotePortrait,
+    navigationBarHidden: isTV || !isRemotePortrait,
+    autoHideHomeIndicator: isTV || !isRemotePortrait,
+  };
+};
+
+const logScreenView = async () => {
+  try {
+    const route = navigationRef.getCurrentRoute();
+    if (route?.name) {
+      const analytics = getAnalytics();
+      analytics &&
+        (await analytics().logScreenView({
+          screen_name: route.name,
+          screen_class: 'Navigation',
+        }));
+    }
+  } catch {}
+};
+
+type TabIconProps = {focused: boolean; color: string; size: number};
+type TabIconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+
+const makeTabIcon =
+  (focusedName: TabIconName, unfocusedName: TabIconName) =>
+  ({focused, color, size}: TabIconProps) => (
+    <MaterialCommunityIcons
+      name={focused ? focusedName : unfocusedName}
+      color={color}
+      size={size}
+    />
+  );
+
+const homeTabOptions = {
+  title: 'Home',
+  tabBarIcon: makeTabIcon('home-variant', 'home-variant-outline'),
+};
+const searchTabOptions = {
+  title: 'Search',
+  tabBarIcon: makeTabIcon('magnify', 'magnify'),
+};
+const watchListTabOptions = {
+  title: 'Watch List',
+  tabBarIcon: makeTabIcon('bookmark', 'bookmark-outline'),
+};
+const downloadsTabOptions = {
+  title: 'Downloads',
+  tabBarIcon: makeTabIcon('download', 'download-outline'),
+};
+const settingsTabOptions = {
+  title: 'Settings',
+  tabBarIcon: makeTabIcon('cog', 'cog-outline'),
+};
+
+const renderTabBar = (props: React.ComponentProps<typeof StreamingTabBar>) => (
+  <StreamingTabBar {...props} />
+);
+
+function HomeStackScreen() {
+  return (
+    <HomeStack.Navigator screenOptions={stackScreenOptions}>
+      <HomeStack.Screen name="Home" component={Home} />
+      <HomeStack.Screen name="Info" component={Info} />
+      <HomeStack.Screen name="ScrollList" component={ScrollList} />
+      <HomeStack.Screen name="Webview" component={WebView} />
+    </HomeStack.Navigator>
+  );
+}
+
+function SearchStackScreen() {
+  return (
+    <SearchStack.Navigator screenOptions={stackScreenOptions}>
+      <SearchStack.Screen name="Search" component={Search} />
+      <SearchStack.Screen name="ScrollList" component={ScrollList} />
+      <SearchStack.Screen name="Info" component={Info} />
+      <SearchStack.Screen name="SearchResults" component={SearchResults} />
+      <HomeStack.Screen name="Webview" component={WebView} />
+    </SearchStack.Navigator>
+  );
+}
+
+function WatchListStackScreen() {
+  return (
+    <WatchListStack.Navigator screenOptions={stackScreenOptions}>
+      <WatchListStack.Screen name="WatchList" component={WatchList} />
+      <WatchListStack.Screen name="Info" component={Info} />
+    </WatchListStack.Navigator>
+  );
+}
+
+function DownloadsStackScreen() {
+  return (
+    <DownloadsStack.Navigator screenOptions={stackScreenOptions}>
+      <DownloadsStack.Screen name="Downloads" component={Downloads} />
+      <DownloadsStack.Screen
+        name="DownloadedDetails"
+        component={DownloadedDetails}
+      />
+    </DownloadsStack.Navigator>
+  );
+}
+
+function SettingsStackScreen() {
+  const insets = useSafeAreaInsets();
+  const subpageOptions = useMemo(
+    () => ({contentStyle: {flex: 1, paddingTop: insets.top}}),
+    [insets.top],
+  );
+
+  return (
+    <SettingsStack.Navigator screenOptions={stackScreenOptions}>
+      <SettingsStack.Screen name="Settings" component={Settings} />
+      <SettingsStack.Screen
+        name="Appearance"
+        component={Appearance}
+        options={subpageOptions}
+      />
+      {/* <SettingsStack.Screen
+        name="DisableProviders"
+        component={DisableProviders}
+      /> */}
+      <SettingsStack.Screen
+        name="About"
+        component={About}
+        options={subpageOptions}
+      />
+      <SettingsStack.Screen
+        name="Preferences"
+        component={Preferences}
+        options={subpageOptions}
+      />
+      <SettingsStack.Screen
+        name="Extensions"
+        component={Extensions}
+        options={subpageOptions}
+      />
+      <SettingsStack.Screen
+        name="DownloadsStack"
+        component={DownloadsStackScreen}
+        options={subpageOptions}
+      />
+      <SettingsStack.Screen
+        name="SubTitlesPreferences"
+        component={SubtitlePreference}
+        options={subpageOptions}
+      />
+    </SettingsStack.Navigator>
+  );
+}
+
+function TabStack() {
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
   const isLargeScreen = isTV || Math.min(windowWidth, windowHeight) >= 600;
-  LogBox.ignoreLogs([
-    'You have passed a style to FlashList',
-    'new NativeEventEmitter()',
-    'Failed to fetch manifest',
-  ]);
-  const HomeStack = createNativeStackNavigator<HomeStackParamList>();
-  const Stack = createNativeStackNavigator<RootStackParamList>();
-  const SearchStack = createNativeStackNavigator<SearchStackParamList>();
-  const WatchListStack = createNativeStackNavigator<WatchListStackParamList>();
-  const DownloadsStack = createNativeStackNavigator<DownloadsStackParamList>();
-  const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
-  const hasFirebase =
-    Boolean(Constants?.expoConfig?.extra?.hasFirebase) &&
-    isFirebaseNativeReady();
+  const hideDownloadsTab = useNavigationPreferencesStore(
+    state => state.hideDownloadsTab,
+  );
+  const screenOptions = useMemo(
+    () => ({
+      animation: 'shift' as const,
+      popToTopOnBlur: false,
+      tabBarPosition: isLargeScreen ? ('left' as const) : ('bottom' as const),
+      headerShown: false,
+      freezeOnBlur: true,
+      tabBarHideOnKeyboard: true,
+    }),
+    [isLargeScreen],
+  );
+  return (
+    <Tab.Navigator
+      detachInactiveScreens={true}
+      tabBar={renderTabBar}
+      screenOptions={screenOptions}>
+      <Tab.Screen
+        name="HomeStack"
+        component={HomeStackScreen}
+        options={homeTabOptions}
+      />
+      <Tab.Screen
+        name="SearchStack"
+        component={SearchStackScreen}
+        options={searchTabOptions}
+      />
+      <Tab.Screen
+        name="WatchListStack"
+        component={WatchListStackScreen}
+        options={watchListTabOptions}
+      />
+      {!hideDownloadsTab && (
+        <Tab.Screen
+          name="DownloadsStack"
+          component={DownloadsStackScreen}
+          options={downloadsTabOptions}
+        />
+      )}
+      <Tab.Screen
+        name="SettingsStack"
+        component={SettingsStackScreen}
+        options={settingsTabOptions}
+      />
+    </Tab.Navigator>
+  );
+}
+
+const App = () => {
+  const [hasFirebase] = useState(
+    () =>
+      Boolean(Constants?.expoConfig?.extra?.hasFirebase) &&
+      isFirebaseNativeReady(),
+  );
 
   // Safety fallback to ensure splash is hidden
   useEffect(() => {
@@ -203,6 +462,7 @@ const App = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Reconcile downloads once the store hydrates, then start shared folder sync.
   useEffect(() => {
     let reconciled = false;
     const reconcile = () => {
@@ -222,6 +482,8 @@ const App = () => {
     return useDownloadsStore.persist.onFinishHydration(reconcile);
   }, []);
 
+  // One AppState listener and one timer. They were registered twice, so every
+  // foreground, background and 30 s tick ran the sync twice.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
       if (state === 'active') {
@@ -237,10 +499,6 @@ const App = () => {
         );
       }
     });
-    return () => subscription.remove();
-  }, []);
-
-  useEffect(() => {
     const interval = setInterval(() => {
       if (AppState.currentState === 'active') {
         syncFromSharedFolder().catch(error =>
@@ -248,7 +506,10 @@ const App = () => {
         );
       }
     }, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      subscription.remove();
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -316,7 +577,7 @@ const App = () => {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [hasFirebase]);
 
   // Initialize update service
   useEffect(() => {
@@ -342,256 +603,30 @@ const App = () => {
     );
   }, []);
 
-  // Initialize shared folder sync
-  useEffect(() => {
-    initializeSyncService().catch(e =>
-      console.warn('[VegaSync] Startup sync failed:', e),
-    );
-
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (nextAppState === 'active') {
-        syncFromSharedFolder().catch(e =>
-          console.warn('[VegaSync] Foreground sync failed:', e),
-        );
-      } else if (nextAppState === 'background' || nextAppState === 'inactive') {
-        publishSyncManifest().catch(e =>
-          console.warn('[VegaSync] Background publish failed:', e),
-        );
-      }
-    });
-
-    const interval = setInterval(() => {
-      if (AppState.currentState === 'active') {
-        syncFromSharedFolder().catch(e =>
-          console.warn('[VegaSync] Periodic sync failed:', e),
-        );
-      }
-    }, 30000);
-
-    return () => {
-      subscription.remove();
-      clearInterval(interval);
-    };
-  }, []);
-
-  function HomeStackScreen() {
-    return (
-      <HomeStack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: 'ios_from_right',
-          animationDuration: 200,
-          freezeOnBlur: true,
-        }}>
-        <HomeStack.Screen name="Home" component={Home} />
-        <HomeStack.Screen name="Info" component={Info} />
-        <HomeStack.Screen name="ScrollList" component={ScrollList} />
-        <HomeStack.Screen name="Webview" component={WebView} />
-      </HomeStack.Navigator>
-    );
-  }
-
-  function SearchStackScreen() {
-    return (
-      <SearchStack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: 'ios_from_right',
-          animationDuration: 200,
-          freezeOnBlur: true,
-        }}>
-        <SearchStack.Screen name="Search" component={Search} />
-        <SearchStack.Screen name="ScrollList" component={ScrollList} />
-        <SearchStack.Screen name="Info" component={Info} />
-        <SearchStack.Screen name="SearchResults" component={SearchResults} />
-        <HomeStack.Screen name="Webview" component={WebView} />
-      </SearchStack.Navigator>
-    );
-  }
-
-  function WatchListStackScreen() {
-    return (
-      <WatchListStack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: 'ios_from_right',
-          animationDuration: 200,
-          freezeOnBlur: true,
-        }}>
-        <WatchListStack.Screen name="WatchList" component={WatchList} />
-        <WatchListStack.Screen name="Info" component={Info} />
-      </WatchListStack.Navigator>
-    );
-  }
-
-  function SettingsStackScreen() {
-    const insets = useSafeAreaInsets();
-    const subpageOptions = {
-      contentStyle: {flex: 1, paddingTop: insets.top},
-    };
-
-    return (
-      <SettingsStack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: 'ios_from_right',
-          animationDuration: 200,
-          freezeOnBlur: true,
-        }}>
-        <SettingsStack.Screen name="Settings" component={Settings} />
-        <SettingsStack.Screen
-          name="Appearance"
-          component={Appearance}
-          options={subpageOptions}
-        />
-        {/* <SettingsStack.Screen
-          name="DisableProviders"
-          component={DisableProviders}
-        /> */}
-        <SettingsStack.Screen
-          name="About"
-          component={About}
-          options={subpageOptions}
-        />
-        <SettingsStack.Screen
-          name="Preferences"
-          component={Preferences}
-          options={subpageOptions}
-        />
-        <SettingsStack.Screen
-          name="Extensions"
-          component={Extensions}
-          options={subpageOptions}
-        />
-        <SettingsStack.Screen
-          name="DownloadsStack"
-          component={DownloadsStackScreen}
-          options={subpageOptions}
-        />
-        <SettingsStack.Screen
-          name="SubTitlesPreferences"
-          component={SubtitlePreference}
-          options={subpageOptions}
-        />
-      </SettingsStack.Navigator>
-    );
-  }
-
-  function DownloadsStackScreen() {
-    return (
-      <DownloadsStack.Navigator
-        screenOptions={{
-          headerShown: false,
-          animation: 'ios_from_right',
-          animationDuration: 200,
-          freezeOnBlur: true,
-        }}>
-        <DownloadsStack.Screen name="Downloads" component={Downloads} />
-        <DownloadsStack.Screen
-          name="DownloadedDetails"
-          component={DownloadedDetails}
-        />
-      </DownloadsStack.Navigator>
-    );
-  }
-  function TabStack() {
-    const hideDownloadsTab = useNavigationPreferencesStore(
-      state => state.hideDownloadsTab,
-    );
-    return (
-      <Tab.Navigator
-        detachInactiveScreens={true}
-        tabBar={props => <StreamingTabBar {...props} />}
-        screenOptions={{
-          animation: 'shift',
-          popToTopOnBlur: false,
-          tabBarPosition: isLargeScreen ? 'left' : 'bottom',
-          headerShown: false,
-          freezeOnBlur: true,
-          tabBarHideOnKeyboard: true,
-        }}>
-        <Tab.Screen
-          name="HomeStack"
-          component={HomeStackScreen}
-          options={{
-            title: 'Home',
-            tabBarIcon: ({focused, color, size}) => (
-              <MaterialCommunityIcons
-                name={focused ? 'home-variant' : 'home-variant-outline'}
-                color={color}
-                size={size}
-              />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="SearchStack"
-          component={SearchStackScreen}
-          options={{
-            title: 'Search',
-            tabBarIcon: ({focused, color, size}) => (
-              <MaterialCommunityIcons
-                name={focused ? 'magnify' : 'magnify'}
-                color={color}
-                size={size}
-              />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="WatchListStack"
-          component={WatchListStackScreen}
-          options={{
-            title: 'Watch List',
-            tabBarIcon: ({focused, color, size}) => (
-              <MaterialCommunityIcons
-                name={focused ? 'bookmark' : 'bookmark-outline'}
-                color={color}
-                size={size}
-              />
-            ),
-          }}
-        />
-        {!hideDownloadsTab && (
-          <Tab.Screen
-            name="DownloadsStack"
-            component={DownloadsStackScreen}
-            options={{
-              title: 'Downloads',
-              tabBarIcon: ({focused, color, size}) => (
-                <MaterialCommunityIcons
-                  name={focused ? 'download' : 'download-outline'}
-                  color={color}
-                  size={size}
-                />
-              ),
-            }}
-          />
-        )}
-        <Tab.Screen
-          name="SettingsStack"
-          component={SettingsStackScreen}
-          options={{
-            title: 'Settings',
-            tabBarIcon: ({focused, color, size}) => (
-              <MaterialCommunityIcons
-                name={focused ? 'cog' : 'cog-outline'}
-                color={color}
-                size={size}
-              />
-            ),
-          }}
-        />
-      </Tab.Navigator>
-    );
-  }
-
   useEffect(() => {
     const isPlayStore = Constants.expoConfig?.extra?.isPlayStore;
     if (!isPlayStore && settingsStorage.isAutoCheckUpdateEnabled()) {
       checkForUpdate(() => {}, settingsStorage.isAutoDownloadEnabled(), false);
     }
   }, []);
+
+  const handleNavigationReady = useCallback(async () => {
+    if (pendingDownloadsNavigation) {
+      openDownloadsScreen();
+    }
+    // Hide bootsplash
+    await BootSplash.hide({fade: true});
+    // Track initial screen
+    if (hasFirebase) {
+      await logScreenView();
+    }
+  }, [hasFirebase]);
+
+  const handleNavigationStateChange = useCallback(async () => {
+    if (hasFirebase) {
+      await logScreenView();
+    }
+  }, [hasFirebase]);
 
   return (
     <SafeAreaProvider>
@@ -601,101 +636,17 @@ const App = () => {
         <GlobalErrorBoundary>
           <QueryClientProvider client={queryClient}>
             <GestureHandlerRootView style={{flex: 1, backgroundColor: 'black'}}>
-                <NavigationContainer
+              <NavigationContainer
                 ref={navigationRef}
-                onReady={async () => {
-                  if (pendingDownloadsNavigation) {
-                    openDownloadsScreen();
-                  }
-                  // Hide bootsplash
-                  await BootSplash.hide({fade: true});
-                  // Track initial screen
-                  if (hasFirebase) {
-                    try {
-                      const route = navigationRef.getCurrentRoute();
-                      if (route?.name) {
-                        const analytics = getAnalytics();
-                        analytics &&
-                          (await analytics().logScreenView({
-                            screen_name: route.name,
-                            screen_class: 'Navigation',
-                          }));
-                      }
-                    } catch {}
-                  }
-                }}
-                onStateChange={async () => {
-                  if (hasFirebase) {
-                    try {
-                      const route = navigationRef.getCurrentRoute();
-                      if (route?.name) {
-                        const analytics = getAnalytics();
-                        analytics &&
-                          (await analytics().logScreenView({
-                            screen_name: route.name,
-                            screen_class: 'Navigation',
-                          }));
-                      }
-                    } catch {}
-                  }
-                }}
-                theme={{
-                  fonts: {
-                    regular: {
-                      fontFamily: 'Inter_400Regular',
-                      fontWeight: '400',
-                    },
-                    medium: {
-                      fontFamily: 'Inter_500Medium',
-                      fontWeight: '500',
-                    },
-                    bold: {
-                      fontFamily: 'Inter_700Bold',
-                      fontWeight: '700',
-                    },
-                    heavy: {
-                      fontFamily: 'Inter_800ExtraBold',
-                      fontWeight: '800',
-                    },
-                  },
-                  dark: true,
-                  colors: {
-                    background: 'transparent',
-                    card: 'black',
-                    primary: '#E4E4E4',
-                    text: 'white',
-                    border: 'black',
-                    notification: '#E4E4E4',
-                  },
-                }}>
-                <Stack.Navigator
-                  screenOptions={{
-                    headerShown: false,
-                    animation: 'ios_from_right',
-                    animationDuration: 200,
-                    freezeOnBlur: true,
-                    contentStyle: {backgroundColor: 'transparent'},
-                  }}>
+                onReady={handleNavigationReady}
+                onStateChange={handleNavigationStateChange}
+                theme={navigationTheme}>
+                <Stack.Navigator screenOptions={rootStackScreenOptions}>
                   <Stack.Screen name="TabStack" component={TabStack} />
                   <Stack.Screen
                     name="Player"
                     component={Player}
-                    options={({route}) => {
-                      const isRemotePortrait =
-                        !isTV &&
-                        (Boolean((route.params as any)?.alwaysCast) ||
-                          settingsStorage.isAlwaysCastMode());
-                      return {
-                        orientation: isTV
-                          ? 'landscape'
-                          : isRemotePortrait
-                            ? 'portrait'
-                            : 'default',
-                        statusBarHidden: isTV || !isRemotePortrait,
-                        navigationBarHidden: isTV || !isRemotePortrait,
-                        autoHideHomeIndicator: isTV || !isRemotePortrait,
-                      };
-                    }}
+                    options={playerScreenOptions}
                   />
                 </Stack.Navigator>
               </NavigationContainer>

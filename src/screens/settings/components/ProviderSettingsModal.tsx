@@ -205,6 +205,7 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
                       source={{ uri: provider.icon }}
                       className="h-full w-full"
                       resizeMode="cover"
+                      resizeMethod="resize"
                     />
                   ) : (
                     <MaterialCommunityIcons
