@@ -130,6 +130,7 @@ import AppText from '../../components/ui/Text';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {showAppDialog} from '../../lib/zustand/appDialogStore';
 import {clearAppCache} from '../../lib/clearAppCache';
+import {exportBackup, pickBackup, restoreBackup} from '../../lib/backup';
 import {TVFocusable, TVFocusGuide} from '../../components/tv';
 import {isTV} from '../../lib/tv';
 type Props = NativeStackScreenProps<SettingsStackParamList, 'Settings'>;
@@ -254,14 +255,62 @@ const Settings = ({navigation}: Props) => {
     ToastAndroid.show('App cache cleared', ToastAndroid.SHORT);
   }, []);
 
-  const eraseAllLocalData = useCallback(async () => {
-    clearAllMMKVStorage();
+  const reloadApp = useCallback(async (reason: string) => {
     if (Updates.isEnabled) {
       await Updates.reloadAsync();
       return;
     }
-    DevSettings.reload('All MMKV storage erased');
+    DevSettings.reload(reason);
   }, []);
+
+  const eraseAllLocalData = useCallback(async () => {
+    clearAllMMKVStorage();
+    await reloadApp('All MMKV storage erased');
+  }, [reloadApp]);
+
+  const exportBackupHandler = useCallback(async () => {
+    try {
+      if (await exportBackup()) {
+        ToastAndroid.show('Backup saved', ToastAndroid.SHORT);
+      }
+    } catch (error) {
+      console.error('Failed to export backup:', error);
+      ToastAndroid.show('Failed to save backup', ToastAndroid.SHORT);
+    }
+  }, []);
+
+  const importBackupHandler = useCallback(async () => {
+    try {
+      const backup = await pickBackup();
+      if (!backup) {
+        return;
+      }
+      showAppDialog({
+        title: 'Restore backup?',
+        message:
+          'This replaces your settings and installed providers with the ones in the backup. Vega will restart after restoring.',
+        actions: [
+          {label: 'Cancel'},
+          {
+            label: 'Restore',
+            variant: 'primary',
+            onPress: async () => {
+              restoreBackup(backup);
+              await reloadApp('Backup restored');
+            },
+          },
+        ],
+      });
+    } catch (error) {
+      showAppDialog({
+        title: 'Could not restore backup',
+        message:
+          error instanceof Error ? error.message : 'Failed to read the file',
+        variant: 'error',
+        actions: [{label: 'OK'}],
+      });
+    }
+  }, [reloadApp]);
 
   const confirmEraseAllLocalData = useCallback(() => {
     showAppDialog({
@@ -420,6 +469,18 @@ const Settings = ({navigation}: Props) => {
               description="Clear temporary cache and images"
               icon="delete-outline"
               onPress={clearCacheHandler}
+            />
+            <SettingsRow
+              title="Export backup"
+              description="Save settings and providers to a file"
+              icon="content-save-outline"
+              onPress={exportBackupHandler}
+            />
+            <SettingsRow
+              title="Import backup"
+              description="Restore settings and providers from a file"
+              icon="backup-restore"
+              onPress={importBackupHandler}
             />
             <SettingsRow
               title="Erase all local data"

@@ -17,6 +17,7 @@ export interface IStorageService {
   setArray<T>(key: string, value: T[]): void;
   delete(key: string): void;
   contains(key: string): boolean;
+  hasKey(key: string): boolean;
   clearAll(): void;
   getKeys(): Promise<string[]>;
 }
@@ -105,6 +106,11 @@ export class StorageService implements IStorageService {
       this.storage.getBool(key) !== undefined ||
       this.storage.getInt(key) !== undefined
     );
+  }
+
+  // Check if a key was saved, whatever its type
+  hasKey(key: string): boolean {
+    return this.storage.indexer.hasKey(key);
   }
 
   // Clear all storage
