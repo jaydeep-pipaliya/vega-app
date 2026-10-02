@@ -31,12 +31,15 @@ const useContinueWatchingStore = create<ContinueWatchingState>()(
       items: [],
       upsertItem: item =>
         set(state => ({
+          // Trim only the other items. A new show starts with updatedAt 0 and
+          // would be cut right away if the list is already full.
           items: [
             item,
-            ...state.items.filter(existing => existing.id !== item.id),
-          ]
-            .sort((a, b) => b.updatedAt - a.updatedAt)
-            .slice(0, 30),
+            ...state.items
+              .filter(existing => existing.id !== item.id)
+              .sort((a, b) => b.updatedAt - a.updatedAt)
+              .slice(0, 29),
+          ].sort((a, b) => b.updatedAt - a.updatedAt),
         })),
       updateProgress: (id, position, duration) =>
         set(state => ({
