@@ -156,8 +156,7 @@ export const useHeroMetadata = (heroLink: string, providerValue: string) => {
     retry: 2,
     // Use cached data as initial data
     initialData: () => {
-      const cached =
-        cacheStorage.getString(cacheKey) || cacheStorage.getString(heroLink);
+      const cached = cacheStorage.getString(cacheKey);
       if (cached) {
         try {
           return JSON.parse(cached);
@@ -174,7 +173,6 @@ export const useHeroMetadata = (heroLink: string, providerValue: string) => {
   useEffect(() => {
     if (query.data && heroLink) {
       cacheStorage.setString(cacheKey, JSON.stringify(query.data));
-      cacheStorage.setString(heroLink, JSON.stringify(query.data));
     }
   }, [cacheKey, heroLink, query.data]);
 
