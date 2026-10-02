@@ -18,6 +18,10 @@ import { useM3Colors } from '../theme/M3PaletteContext';
 import { parseAspectRatio } from '../components/MediaPosterCard';
 import { isTV, useTVRemote } from '../lib/tv';
 import { useTVFocusBorderColor } from '../lib/tv/useTVFocusBorderColor';
+import {
+  useSafeIsNavFocused,
+  useTVNavFocusMemory,
+} from '../lib/tv/useTVNavFocusMemory';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'ScrollList'>;
 
@@ -34,22 +38,35 @@ const GRID_POSTER_ASPECT_RATIO = GRID_POSTER_HEIGHT / GRID_POSTER_WIDTH;
 
 const ScrollListCard = memo(({
   item,
-  index,
   viewType,
   gridPosterWidth,
   dominantRatio,
+  hasTVPreferredFocus,
   onPress,
+  onTVFocus,
 }: {
   item: Post;
-  index: number;
   viewType: number;
   gridPosterWidth: number;
   dominantRatio: number;
+  hasTVPreferredFocus: boolean;
   onPress: () => void;
+  onTVFocus?: () => void;
 }) => {
   const colors = useM3Colors();
   const focusBorderColor = useTVFocusBorderColor();
   const [isFocused, setIsFocused] = useState(false);
+  const pressableRef = useRef<View>(null);
+  const isNavFocused = useSafeIsNavFocused();
+  const {
+    preferredFocus,
+    onFocus: rememberFocus,
+    onBlur: forgetFocus,
+  } = useTVNavFocusMemory({
+    ref: pressableRef,
+    isNavFocused,
+    hasTVPreferredFocus,
+  });
 
   const lastPressTime = useRef<number>(0);
   const handlePress = useCallback(() => {
@@ -90,11 +107,19 @@ const ScrollListCard = memo(({
 
   return (
     <Pressable
+      ref={pressableRef}
       focusable={true}
       isTVSelectable={true}
-      hasTVPreferredFocus={isTV && index === 0}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => setIsFocused(false)}
+      hasTVPreferredFocus={preferredFocus}
+      onFocus={() => {
+        setIsFocused(true);
+        rememberFocus();
+        onTVFocus?.();
+      }}
+      onBlur={() => {
+        setIsFocused(false);
+        forgetFocus();
+      }}
       onPress={handlePress}
       style={{
         zIndex: isFocused ? 999 : 1,
@@ -113,7 +138,8 @@ const ScrollListCard = memo(({
           borderRadius: activeBorderRadius,
           overflow: 'hidden',
           backgroundColor: colors.surfaceContainerHigh,
-          borderWidth: isFocused ? 3 : 1,
+          // Fixed width so focus does not shrink the poster.
+          borderWidth: isTV ? 3 : 1,
           borderColor: isFocused ? focusBorderColor : 'rgba(255, 255, 255, 0.08)',
         }}>
         <Image
@@ -201,6 +227,13 @@ const ScrollList = ({ route }: Props): React.ReactElement => {
   const provider = useContentStore(state => state.provider);
   const [viewType, setViewType] = useState<number>(
     settingsStorage.getListViewType(),
+  );
+  // FlashList recycles cells, so "index === 0" turns true again whenever a
+  // cell is reused for the first item. Only claim focus until a card has it.
+  const [initialCardFocused, setInitialCardFocused] = useState(false);
+  const markInitialCardFocused = useCallback(
+    () => setInitialCardFocused(true),
+    [],
   );
 
   // Compute dominant aspect ratio from posts to size grid columns appropriately
@@ -392,10 +425,11 @@ const ScrollList = ({ route }: Props): React.ReactElement => {
             return (
               <ScrollListCard
                 item={item}
-                index={index}
                 viewType={viewType}
                 gridPosterWidth={gridPosterWidth}
                 dominantRatio={dominantRatio}
+                hasTVPreferredFocus={isTV && index === 0 && !initialCardFocused}
+                onTVFocus={initialCardFocused ? undefined : markInitialCardFocused}
                 onPress={() =>
                   navigation.navigate('Info', {
                     link: item.link,

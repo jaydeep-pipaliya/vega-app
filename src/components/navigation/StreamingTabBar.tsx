@@ -1,11 +1,8 @@
 import type {BottomTabBarProps} from '@react-navigation/bottom-tabs';
 import React, {useState} from 'react';
 import {
-  Platform,
-  Pressable,
   TouchableOpacity,
   StyleSheet,
-  UIManager,
   useWindowDimensions,
   View,
   findNodeHandle,
@@ -17,7 +14,6 @@ import {useM3Colors} from '../../theme/M3PaletteContext';
 import AppText from '../ui/Text';
 import {AnimatedTabIcon, type AnimatedTabIconName} from './AnimatedTabIcon';
 import {isTV} from '../../lib/tv/constants';
-import {useTVRemote} from '../../lib/tv/useTVRemote';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 
 const TAB_ICONS: Record<string, AnimatedTabIconName> = {
@@ -32,7 +28,6 @@ interface TabButtonProps {
   routeKey: string;
   routeName: string;
   isFocused: boolean;
-  hasTVPreferredFocus?: boolean;
   label: string;
   icon: AnimatedTabIconName;
   accessibilityLabel?: string;
@@ -43,16 +38,16 @@ interface TabButtonProps {
   onLongPress: () => void;
 }
 
-import {TVFocusable, TVFocusGuide} from '../tv';
+import {TVFocusable} from '../tv';
 
-import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
-import useContentStore from '../../lib/zustand/contentStore';
+import useTVNavigationStore, {
+  selectRailFocusHandle,
+} from '../../lib/zustand/tvNavigationStore';
 
 const StreamingTabButton = ({
   routeKey,
   routeName,
   isFocused,
-  hasTVPreferredFocus,
   label,
   icon,
   accessibilityLabel,
@@ -63,38 +58,22 @@ const StreamingTabButton = ({
   onLongPress,
 }: TabButtonProps) => {
   const focusBorderColor = useTVFocusBorderColor();
-  const activeScreenFocusHandle = useTVNavigationStore(
-    state => state.activeScreenFocusHandle,
-  );
+  const railFocusHandle = useTVNavigationStore(selectRailFocusHandle);
   const tabRef = React.useRef<View>(null);
-  const railFocusedRef = React.useRef(false);
   const [tabHandle, setTabHandle] = useState<number | null>(null);
-
-  useTVRemote(evt => {
-    if (!railFocusedRef.current || evt.eventType !== 'right' ||
-        (evt.eventKeyAction !== undefined && evt.eventKeyAction !== 0)) return;
-    const handle = useTVNavigationStore.getState().activeScreenFocusHandle;
-    if (handle) {
-      requestAnimationFrame(() => {
-        UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
-      });
-    }
-  }, isTV);
 
   if (isTV) {
     return (
       <TVFocusable
         ref={tabRef}
-        onFocus={() => { railFocusedRef.current = true; }}
-        onBlur={() => { railFocusedRef.current = false; }}
+        registerScreenFocus={false}
         onLayout={() => {
           if (tabRef.current) {
             setTabHandle(findNodeHandle(tabRef.current));
           }
         }}
-        hasTVPreferredFocus={hasTVPreferredFocus}
         nextFocusLeft={tabHandle}
-        nextFocusRight={activeScreenFocusHandle ?? tabHandle ?? undefined}
+        nextFocusRight={railFocusHandle ?? undefined}
         key={routeKey}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel || label}
@@ -231,14 +210,16 @@ const StreamingTabBar = ({
   navigation,
 }: BottomTabBarProps) => {
   const colors = useM3Colors();
-  const hasProvider = useContentStore(state =>
-    Boolean(state.provider?.value && state.installedProviders?.length),
-  );
   const insets = useSafeAreaInsets();
   const {width: windowWidth, height: windowHeight} = useWindowDimensions();
   const isNavigationRail = isTV || Math.min(windowWidth, windowHeight) >= 600;
   const showLabels = settingsStorage.showTabBarLabels();
   const bottomBarPadding = Math.max(insets.bottom, 8);
+  const activeTabKey = state.routes[state.index]?.key ?? null;
+
+  React.useLayoutEffect(() => {
+    useTVNavigationStore.getState().setActiveTabKey(activeTabKey);
+  }, [activeTabKey]);
 
   return (
     <View
@@ -291,15 +272,12 @@ const StreamingTabBar = ({
             }
           };
 
-          const isHomeTab = route.name === 'HomeStack' || index === 0;
-
           return (
             <StreamingTabButton
               key={route.key}
               routeKey={route.key}
               routeName={route.name}
               isFocused={focused}
-              hasTVPreferredFocus={isTV && isHomeTab && hasProvider}
               label={label}
               icon={icon}
               accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}

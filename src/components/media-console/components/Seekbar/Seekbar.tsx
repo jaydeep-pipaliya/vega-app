@@ -4,6 +4,7 @@ import {
   View,
   GestureResponderHandlers,
   Image,
+  Platform,
   Pressable,
   Text,
 } from 'react-native';
@@ -85,6 +86,8 @@ export const Seekbar = ({
       }}>
       <Pressable
         hitSlop={12}
+        // TV uses the Player timeline; this toggle has no focus ring there.
+        focusable={!Platform.isTV}
         accessibilityRole="button"
         accessibilityLabel={
           showTimeRemaining ? 'Show elapsed time' : 'Show remaining time'

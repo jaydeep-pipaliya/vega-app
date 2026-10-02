@@ -5,11 +5,14 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { useM3Colors } from '../theme/M3PaletteContext';
 import useThemeStore from '../lib/zustand/themeStore';
-import { useIsFocused } from '@react-navigation/native';
 import AppText from './ui/Text';
 import { isTV } from '../lib/tv/constants';
 import { useTVFocusBorderColor } from '../lib/tv/useTVFocusBorderColor';
 import { useTVRemote } from '../lib/tv/useTVRemote';
+import {
+  useSafeIsNavFocused,
+  useTVNavFocusMemory,
+} from '../lib/tv/useTVNavFocusMemory';
 
 export const parseAspectRatio = (
   ratio?: number | string,
@@ -98,15 +101,19 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
     const colors = useM3Colors();
     const themePrimary = useThemeStore(state => state.primary);
 
-    let isNavFocused = true;
-    try {
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      isNavFocused = useIsFocused();
-    } catch {
-      isNavFocused = true;
-    }
-
+    const isNavFocused = useSafeIsNavFocused();
     const isCurrentlyFocusable = isNavFocused;
+    const pressableRef = React.useRef<View>(null);
+    React.useImperativeHandle(ref, () => pressableRef.current as View);
+    const {
+      preferredFocus,
+      onFocus: rememberFocus,
+      onBlur: forgetFocus,
+    } = useTVNavFocusMemory({
+      ref: pressableRef,
+      isNavFocused,
+      hasTVPreferredFocus,
+    });
     const [isFocused, setIsFocused] = React.useState(false);
     const activeAspectRatio = parseAspectRatio(aspectRatio, 2 / 3);
     const activeBorderRadius =
@@ -129,6 +136,17 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
       onPress();
     }, [isCurrentlyFocusable, onPress]);
 
+    // A long select can reach both Pressable.onLongPress and the remote
+    // listener. Run once, or selection toggles on and straight back off.
+    const lastLongPressTime = React.useRef<number>(0);
+    const handleLongPress = React.useCallback(() => {
+      if (!onLongPress) return;
+      const now = Date.now();
+      if (now - lastLongPressTime.current < 800) return;
+      lastLongPressTime.current = now;
+      onLongPress();
+    }, [onLongPress]);
+
     useTVRemote(
       evt => {
         if (!isFocused || !isCurrentlyFocusable) return;
@@ -137,7 +155,7 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
           onLongPress &&
           (evt.eventKeyAction === undefined || evt.eventKeyAction === 1)
         ) {
-          onLongPress();
+          handleLongPress();
         }
       },
       isTV && isFocused && isCurrentlyFocusable,
@@ -153,11 +171,11 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
           zIndex: isFocused ? 999 : 1,
         }}>
         <Pressable
-          ref={ref as any}
+          ref={pressableRef as any}
           onLayout={onLayout}
           focusable={isCurrentlyFocusable}
           isTVSelectable={isCurrentlyFocusable}
-          hasTVPreferredFocus={hasTVPreferredFocus && isCurrentlyFocusable}
+          hasTVPreferredFocus={preferredFocus}
           nextFocusUp={nextFocusUp ?? undefined}
           nextFocusDown={nextFocusDown ?? undefined}
           nextFocusLeft={nextFocusLeft ?? undefined}
@@ -165,12 +183,16 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
           onFocus={() => {
             if (isCurrentlyFocusable) {
               setIsFocused(true);
+              rememberFocus();
               onFocus?.();
             }
           }}
-          onBlur={() => setIsFocused(false)}
+          onBlur={() => {
+            setIsFocused(false);
+            forgetFocus();
+          }}
           onPress={isCurrentlyFocusable ? handlePress : undefined}
-          onLongPress={isCurrentlyFocusable ? onLongPress : undefined}
+          onLongPress={isCurrentlyFocusable && onLongPress ? handleLongPress : undefined}
           delayLongPress={350}
         style={({ pressed, focused }: any) => {
           const activeFocused = isTV ? isFocused : focused || isFocused;
@@ -204,12 +226,8 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
                   overflow: 'hidden',
                   width: selected ? width - 8 : width,
                   position: 'relative',
-                  borderWidth: activeFocused ? 2.5 : selected ? 2 : 0,
-                  borderColor: activeFocused
-                    ? focusBorderColor
-                    : selected
-                      ? colors.primary
-                      : 'transparent',
+                  borderWidth: selected ? 2 : 0,
+                  borderColor: selected ? colors.primary : 'transparent',
                 }}>
                 {badge != null ? (
                   <View
@@ -326,6 +344,23 @@ const MediaPosterCard = React.forwardRef<View, MediaPosterCardProps>(
                     </AppText>
                   </View>
                 )}
+                {activeFocused ? (
+                  // Drawn over the poster, so focus does not resize the card.
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      borderRadius: activeBorderRadius,
+                      borderWidth: 2.5,
+                      borderColor: focusBorderColor,
+                      zIndex: 10,
+                    }}
+                  />
+                ) : null}
               </View>
               <AppText
                 role="labelMediumEmphasized"

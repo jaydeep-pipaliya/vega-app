@@ -61,7 +61,6 @@ const Downloads = () => {
   const firstCardRef = useRef<View>(null);
   const currentDownloadActionRef = useRef<View>(null);
   const exploreButtonRef = useRef<View>(null);
-  const returningFromDetailsRef = useRef(false);
   const [selectButtonNode, setSelectButtonNode] = useState<number | null>(null);
   const [firstCardNode, setFirstCardNode] = useState<number | null>(null);
   const [currentDownloadActionNode, setCurrentDownloadActionNode] = useState<number | null>(null);
@@ -157,21 +156,7 @@ const Downloads = () => {
       } else if (exploreButtonNode) {
         useTVNavigationStore.getState().setActiveScreenFocusHandle(exploreButtonNode);
       }
-      const restoreFocus = isTV && returningFromDetailsRef.current
-        ? setTimeout(() => {
-            returningFromDetailsRef.current = false;
-            const target = currentDownloads.length > 0
-              ? currentDownloadActionRef.current
-              : groups.length > 0 ? firstCardRef.current : exploreButtonRef.current;
-            (target as any)?.setNativeProps?.({hasTVPreferredFocus: false});
-            requestAnimationFrame(() => {
-              (target as any)?.setNativeProps?.({hasTVPreferredFocus: true});
-            });
-          }, 400)
-        : null;
-      return () => {
-        if (restoreFocus) clearTimeout(restoreFocus);
-      };
+      // The card focused before opening details restores itself on return.
     }, [groups.length, firstCardNode, exploreButtonNode, currentDownloads.length, currentDownloadActionNode]),
   );
 
@@ -208,7 +193,6 @@ const Downloads = () => {
         return next;
       });
     } else {
-      returningFromDetailsRef.current = true;
       navigation.navigate('DownloadedDetails', {groupId});
     }
   };

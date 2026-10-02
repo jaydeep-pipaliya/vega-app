@@ -76,22 +76,16 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
 
   useFocusEffect(useCallback(() => {
     if (!isTV) return;
-    const timer = setTimeout(() => {
-      registerBackFocus();
-      const handle = findNodeHandle(backButtonRef.current);
-      if (handle) {
-        UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
-      }
-    }, 200);
+    // The back button takes first focus through hasTVPreferredFocus. On return
+    // from Player, the focused episode restores itself, so do not move focus.
     return () => {
-      clearTimeout(timer);
       const handle = findNodeHandle(backButtonRef.current);
       const store = useTVNavigationStore.getState();
       if (handle && store.activeScreenFocusHandle === handle) {
         store.setActiveScreenFocusHandle(null);
       }
     };
-  }, [registerBackFocus]));
+  }, []));
   const exploreRef = useRef<View>(null);
   const closeStory = useCallback(() => {
     setStoryVisible(false);

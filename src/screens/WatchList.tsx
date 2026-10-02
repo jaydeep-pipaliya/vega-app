@@ -9,7 +9,6 @@ import {
   Dimensions,
   FlatList,
   Platform,
-  UIManager,
   View,
   findNodeHandle,
 } from 'react-native';
@@ -42,7 +41,9 @@ const WatchList = () => {
 
   const selectButtonRef = React.useRef<View>(null);
   const firstCardRef = React.useRef<View>(null);
-  const returningFromInfoRef = React.useRef(false);
+  // Claim focus for the first card only until a card has had focus, so
+  // leaving selection mode or a list remount does not pull focus back.
+  const [initialCardFocused, setInitialCardFocused] = useState(false);
   const [selectButtonNode, setSelectButtonNode] = useState<number | null>(null);
   const [firstCardNode, setFirstCardNode] = useState<number | null>(null);
 
@@ -87,18 +88,8 @@ const WatchList = () => {
         ? firstCardNode ?? selectButtonNode
         : null;
       useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
-      const restoreTimer = returningFromInfoRef.current
-        ? setTimeout(() => {
-            returningFromInfoRef.current = false;
-            const target = findNodeHandle(firstCardRef.current) ??
-              findNodeHandle(selectButtonRef.current);
-            if (target) {
-              UIManager.dispatchViewManagerCommand(target, 'requestTVFocus', []);
-            }
-          }, 250)
-        : null;
+      // The card focused before opening Info restores itself on return.
       return () => {
-        if (restoreTimer) clearTimeout(restoreTimer);
         const store = useTVNavigationStore.getState();
         if (store.activeScreenFocusHandle === handle) {
           store.setActiveScreenFocusHandle(null);
@@ -148,7 +139,6 @@ const WatchList = () => {
         return next;
       });
     } else {
-      if (isTV) returningFromInfoRef.current = true;
       navigation.navigate('Info', {
         link: item.link,
         provider: item.provider,
@@ -428,7 +418,14 @@ const WatchList = () => {
                   width={itemWidth}
                   selected={selectedLinks.has(item.link)}
                   selectionMode={isSelectionMode}
-                  hasTVPreferredFocus={isTV && !isSelectionMode && index === 0}
+                  hasTVPreferredFocus={
+                    isTV && !isSelectionMode && index === 0 && !initialCardFocused
+                  }
+                  onFocus={
+                    initialCardFocused
+                      ? undefined
+                      : () => setInitialCardFocused(true)
+                  }
                   nextFocusUp={
                     isTopRow ? (selectButtonNode ?? undefined) : undefined
                   }

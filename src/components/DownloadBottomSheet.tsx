@@ -95,14 +95,16 @@ const SheetRow = ({children, style, onPress}: {
   </NativeTouchableOpacity>
 );
 
-const SheetRowMain = ({children, style, onPress, label, preferred}: {
+const SheetRowMain = ({children, style, onPress, label, preferred, focusRef}: {
   children: React.ReactNode;
   style: StyleProp<ViewStyle>;
   onPress: () => void;
   label: string;
   preferred: boolean;
+  focusRef?: React.Ref<View>;
 }) => isTV ? (
   <TVFocusable
+    ref={focusRef}
     accessibilityRole="button"
     accessibilityLabel={label}
     hasTVPreferredFocus={preferred}
@@ -175,6 +177,7 @@ const DownloadBottomSheet = ({
 }: Props) => {
   const bottomSheetRef = useRef<BottomSheet>(null);
   const tvCloseRef = useRef<View>(null);
+  const tvFirstRowRef = useRef<View>(null);
   const closeSheet = () => {
     if (isTV) setModal(false);
     else bottomSheetRef.current?.close?.();
@@ -379,6 +382,7 @@ const DownloadBottomSheet = ({
         <SheetRowMain
           label={`Download ${item.server || 'Unknown Server'}${item.quality ? `, ${formatQualityLabel(item.quality)}` : ''}`}
           preferred={!hasSubtitles && index === 0}
+          focusRef={index === 0 ? tvFirstRowRef : undefined}
           onPress={() => {
             if (isAlwaysExternal) {
               onPressExternalVideo?.(item);
@@ -854,6 +858,7 @@ const DownloadBottomSheet = ({
   }
 
   if (isTV) {
+    const closePreferred = hasSubtitles || loading || streams.length === 0;
     return (
       <Modal
         visible
@@ -862,7 +867,10 @@ const DownloadBottomSheet = ({
         onRequestClose={() => setModal(false)}
         onShow={() => {
           setTimeout(() => {
-            const handle = findNodeHandle(tvCloseRef.current);
+            // Same target as hasTVPreferredFocus: the first source, else Close.
+            const handle =
+              findNodeHandle(closePreferred ? null : tvFirstRowRef.current) ??
+              findNodeHandle(tvCloseRef.current);
             if (handle) UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
           }, 250);
         }}>
@@ -887,7 +895,7 @@ const DownloadBottomSheet = ({
               ref={tvCloseRef}
               accessibilityRole="button"
               accessibilityLabel="Close downloads"
-              hasTVPreferredFocus
+              hasTVPreferredFocus={closePreferred}
               focusScale={1}
               onPress={() => setModal(false)}
               style={{alignSelf: 'flex-end', alignItems: 'center', justifyContent: 'center', minHeight: 48, minWidth: 100, marginBottom: 12}}>

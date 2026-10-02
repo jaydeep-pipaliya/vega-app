@@ -2,12 +2,12 @@ import React from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   ScrollView,
   Dimensions,
   Clipboard,
 } from 'react-native';
 import useThemeStore from '../lib/zustand/themeStore';
+import TVTouchable from './tv/TVTouchable';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Application from 'expo-application';
 import * as Updates from 'expo-updates';
@@ -254,7 +254,8 @@ const ErrorFallbackUI: React.FC<ErrorFallbackUIProps> = ({
         )}
 
         <View className="space-y-3">
-          <TouchableOpacity
+          <TVTouchable
+            hasTVPreferredFocus
             onPress={onRestart}
             className="bg-red-600 rounded-lg py-4 px-6 items-center"
             activeOpacity={0.8}>
@@ -264,9 +265,9 @@ const ErrorFallbackUI: React.FC<ErrorFallbackUIProps> = ({
                 Restart App
               </Text>
             </View>
-          </TouchableOpacity>
+          </TVTouchable>
 
-          <TouchableOpacity
+          <TVTouchable
             onPress={onReset}
             className="rounded-lg py-4 px-6 items-center border border-gray-600"
             style={{backgroundColor: `${primary}20`}}
@@ -279,10 +280,10 @@ const ErrorFallbackUI: React.FC<ErrorFallbackUIProps> = ({
                 Try Again
               </Text>
             </View>
-          </TouchableOpacity>
+          </TVTouchable>
 
           <View className="flex-row space-x-3">
-            <TouchableOpacity
+            <TVTouchable
               onPress={onToggleDetails}
               className="flex-1 bg-gray-800 rounded-lg py-3 px-4 items-center"
               activeOpacity={0.8}>
@@ -296,9 +297,9 @@ const ErrorFallbackUI: React.FC<ErrorFallbackUIProps> = ({
                   {showDetails ? 'Hide' : 'Show'} Details
                 </Text>
               </View>
-            </TouchableOpacity>
+            </TVTouchable>
 
-            <TouchableOpacity
+            <TVTouchable
               onPress={onShowReport}
               className="flex-1 bg-gray-800 rounded-lg py-3 px-4 items-center"
               activeOpacity={0.8}>
@@ -306,7 +307,7 @@ const ErrorFallbackUI: React.FC<ErrorFallbackUIProps> = ({
                 <Ionicons name="bug" size={16} color="#9ca3af" />
                 <Text className="text-gray-400 text-sm ml-2">Report</Text>
               </View>
-            </TouchableOpacity>
+            </TVTouchable>
           </View>
         </View>
 

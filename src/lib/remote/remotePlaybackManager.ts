@@ -19,6 +19,7 @@ import {
 import {isTV} from '../tv';
 import {getCookieHeader} from '../services/cookieManager';
 import {mainStorage} from '../storage/StorageService';
+import {torrentManager} from '../torrentManager';
 
 const CAST_HLS_KEY = 'remote.castHlsOutput';
 
@@ -61,6 +62,11 @@ function sanitizeUrlForLog(url?: string): string {
   return url || '';
 }
 
+// Servers on the phone's loopback, such as the torrent stream server.
+function isLoopbackUrl(url: string): boolean {
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i.test(url);
+}
+
 class RemotePlaybackManager {
   private activePayload: RemoteMediaPayload | null = null;
   private currentSessionId = '';
@@ -94,6 +100,8 @@ class RemotePlaybackManager {
   private lastSupportedMediaCommands: number | null = null;
   private playbackGeneration = 0;
   private loadGeneration = 0;
+  // Torrent kept running for the receiver after the player that added it closed.
+  private ownedTorrentHash: string | null = null;
 
   private operationSessions = new Map<number, Set<string>>();
 
@@ -457,6 +465,7 @@ class RemotePlaybackManager {
     const previousPayload = this.activePayload;
     const previousSessionId = this.currentSessionId;
     this.activePayload = payload;
+    this.releaseOwnedTorrent(payload.sourceUrl);
     const operationSessionId = `session_${Crypto.randomUUID()}`;
     useRemoteStore.getState().setConnectedDevice(device);
     useRemoteStore.getState().setStatus('loading');
@@ -469,6 +478,9 @@ class RemotePlaybackManager {
         payload.sourceUrl.startsWith('content://') ||
         payload.sourceUrl.startsWith('/'),
       );
+      // Only the phone can reach a loopback server, so the receiver gets it
+      // through the delivery server.
+      const isLoopbackSource = isLoopbackUrl(payload.sourceUrl);
       let resolvedHeaders: Record<string, string> = {};
       if (payload.headers) {
         if (Array.isArray(payload.headers)) {
@@ -487,6 +499,7 @@ class RemotePlaybackManager {
       }
       if (
         !isLocalFile &&
+        !isLoopbackSource &&
         !Object.keys(resolvedHeaders).some(k => k.toLowerCase() === 'cookie')
       ) {
         try {
@@ -599,7 +612,7 @@ class RemotePlaybackManager {
       const mediaDuration = inspected.durationSeconds || payload.duration || 0;
       if (device.type === 'cast') {
         let usedEngine: 'hls' | 'ffmpeg' | null = null;
-        if (needsRemux || isLocalFile || hasCustomHeaders) {
+        if (needsRemux || isLocalFile || isLoopbackSource || hasCustomHeaders) {
           const preferredMode: 'hls' | 'ffmpeg' =
             this.isCastHlsEnabled() && !isManifest ? 'hls' : 'ffmpeg';
 
@@ -2426,6 +2439,26 @@ class RemotePlaybackManager {
   }
 
   /** Ends remote playback: stops the receiver, the phone server, and clears state. */
+  /**
+   * Keeps a torrent running after its player closes while the receiver still
+   * streams it. Returns false when the active media is not that torrent.
+   */
+  adoptTorrent(infoHash: string): boolean {
+    if (!this.activePayload?.sourceUrl.includes(`/stream/${infoHash}/`)) {
+      return false;
+    }
+    this.ownedTorrentHash = infoHash;
+    return true;
+  }
+
+  // Deletes the adopted torrent unless [nextSourceUrl] still streams it.
+  private releaseOwnedTorrent(nextSourceUrl?: string): void {
+    const hash = this.ownedTorrentHash;
+    if (!hash || nextSourceUrl?.includes(`/stream/${hash}/`)) return;
+    this.ownedTorrentHash = null;
+    torrentManager.deleteTorrent(hash, true).catch(() => {});
+  }
+
   stop(): Promise<void> {
     this.cancelQueuedSeek();
     this.ending = true;
@@ -2475,6 +2508,7 @@ class RemotePlaybackManager {
     await remoteDeliveryService.stopServer().catch(() => {});
     useRemoteStore.getState().resetSession();
     this.activePayload = null;
+    this.releaseOwnedTorrent();
     this.castClient = null;
     this.activePlayUrl = '';
     this.activeMimeType = undefined;

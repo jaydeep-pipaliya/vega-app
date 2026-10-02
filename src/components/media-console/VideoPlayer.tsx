@@ -624,29 +624,25 @@ const AnimatedVideoPlayer = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seeking, seekerPosition]);
 
+  const animationsRef = useRef(animations);
+  animationsRef.current = animations;
   const eventsRef = useRef(events);
   eventsRef.current = events;
 
 
   useEffect(() => {
-    // The external visibility may have changed one render before the local
-    // state catches up. Never report that stale value back to the parent.
-    if (typeof props.showControls === 'boolean' && props.showControls !== showControls) {
-      clearControlTimeout();
-      return;
-    }
     if (showControls) {
-      animations.showControlAnimation();
+      animationsRef.current.showControlAnimation();
       setControlTimeout();
       typeof eventsRef.current.onShowControls === 'function' &&
         eventsRef.current.onShowControls();
     } else {
-      animations.hideControlAnimation();
+      animationsRef.current.hideControlAnimation();
       clearControlTimeout();
       typeof eventsRef.current.onHideControls === 'function' &&
         eventsRef.current.onHideControls();
     }
-  }, [props.showControls, showControls, animations, setControlTimeout, clearControlTimeout]);
+  }, [showControls, setControlTimeout, clearControlTimeout]);
 
   useEffect(() => {
     setMuted(muted);

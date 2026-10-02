@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import {Text, View} from 'react-native';
+import {Animated as NativeAnimated, Text, View} from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -299,7 +299,8 @@ export const SeekButton = ({
     : `${seekSeconds}`;
 
   return (
-    <Animated.View style={[wrapperAnimatedStyle, displaySkip === 0 && activeSkip === 0 ? controlOpacityStyle : undefined]}>
+    <NativeAnimated.View style={displaySkip === 0 && activeSkip === 0 ? controlOpacityStyle : undefined}>
+    <Animated.View style={controlOpacityStyle && displaySkip === 0 && activeSkip === 0 ? undefined : wrapperAnimatedStyle}>
       <Control
         disabled={disabled}
         callback={handlePress}
@@ -322,6 +323,7 @@ export const SeekButton = ({
         </View>
       </Control>
     </Animated.View>
+    </NativeAnimated.View>
   );
 };
 

@@ -7,6 +7,7 @@ import {TVFocusable} from '../tv';
 import AppText from './Text';
 
 import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
+import {useSafeIsNavFocused} from '../../lib/tv/useTVNavFocusMemory';
 
 interface SettingsRowProps {
   title: string;
@@ -33,16 +34,17 @@ const SettingsRow = React.forwardRef<View, SettingsRowProps>(({
   const internalRowRef = React.useRef<View>(null);
   const rowRef = (ref as React.RefObject<View>) || internalRowRef;
   const [rowHandle, setRowHandle] = React.useState<number | null>(null);
+  const isNavFocused = useSafeIsNavFocused();
 
   const onLayout = React.useCallback(() => {
     if (rowRef.current) {
       const handle = findNodeHandle(rowRef.current);
       setRowHandle(handle);
-      if (hasTVPreferredFocus && handle) {
+      if (hasTVPreferredFocus && handle && isNavFocused) {
         useTVNavigationStore.getState().setActiveScreenFocusHandle(handle);
       }
     }
-  }, [rowRef, hasTVPreferredFocus]);
+  }, [rowRef, hasTVPreferredFocus, isNavFocused]);
 
   const handleFocus = React.useCallback(() => {
     if (rowRef.current) {

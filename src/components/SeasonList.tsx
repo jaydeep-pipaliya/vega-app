@@ -55,8 +55,19 @@ import {LEGACY_TERTIARY_BACKGROUND} from '../theme/seeds';
 import Text from './ui/Text';
 import EpisodeRowContent, {getValidImageUri} from './EpisodeRowContent';
 import {setSyncedEpisodeProgress} from '../lib/sync/syncService';
-import {TVFocusable, TVFocusGuide} from './tv';
+import {TVFocusable, TVFocusGuide, TVTouchable} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
+import useContinueWatchingStore from '../lib/zustand/continueWatchingStore';
+import {
+  EpisodeRange,
+  buildEpisodeRanges,
+  rangeForIndex,
+} from '../lib/utils/episodeRanges';
+import {
+  EpisodeRangeChips,
+  EpisodeResumeCard,
+  ResumeTarget,
+} from './EpisodeResumeCard';
 import SeasonSearchSortBar from './season/SeasonSearchSortBar';
 
 const CONTROL_TEXT = '#F5F0EF';
@@ -95,6 +106,20 @@ interface PlayHandlerProps {
   cast?: boolean;
 }
 
+interface LastPlayed {
+  season: string;
+  link: string;
+  title?: string;
+}
+
+const readProgress = (link: string): {position?: number; duration?: number} => {
+  try {
+    return JSON.parse(cacheStorage.getString(link) || '{}');
+  } catch {
+    return {};
+  }
+};
+
 interface StickyMenuState {
   active: boolean;
   link?: string;
@@ -125,6 +150,7 @@ interface EpisodeCardRowProps {
   isSticky: boolean;
   onPress: () => void;
   onBeforePlay?: (control: View | null) => void;
+  onPlayControlRef?: (link: string, control: View | null) => void;
   onLongPress: () => void;
   displayTitle: string;
   primary: string;
@@ -142,6 +168,7 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
   isSticky,
   onPress,
   onBeforePlay,
+  onPlayControlRef,
   onLongPress,
   displayTitle,
   primary,
@@ -152,6 +179,12 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
 }) => {
   const focusBorderColor = useTVFocusBorderColor();
   const playControlRef = useRef<View>(null);
+  const itemLink: string = item.link;
+  useEffect(() => {
+    if (!isTV || !onPlayControlRef) return;
+    onPlayControlRef(itemLink, playControlRef.current);
+    return () => onPlayControlRef(itemLink, null);
+  }, [itemLink, onPlayControlRef]);
 
   if (!isTV) {
     return (
@@ -359,11 +392,31 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   const playerReturnFocusRef = useRef<View | null>(null);
   const restorePlayerFocusRef = useRef(false);
 
+  // Play controls by episode link. Player can auto-advance, so on return the
+  // last played episode may not be the one that opened Player.
+  const playControlsRef = useRef(new Map<string, View>());
+  const registerPlayControl = useCallback(
+    (link: string, control: View | null) => {
+      if (control) playControlsRef.current.set(link, control);
+      else playControlsRef.current.delete(link);
+    },
+    [],
+  );
+  const lastPlayedKeyRef = useRef('');
+
   useFocusEffect(
     useCallback(() => {
       if (!isTV || !restorePlayerFocusRef.current) return;
       const timer = setTimeout(() => {
-        const handle = findNodeHandle(playerReturnFocusRef.current);
+        let lastPlayedLink: string | undefined;
+        try {
+          const stored = cacheStorage.getString(lastPlayedKeyRef.current);
+          lastPlayedLink = stored ? JSON.parse(stored)?.link : undefined;
+        } catch {}
+        const target =
+          (lastPlayedLink && playControlsRef.current.get(lastPlayedLink)) ||
+          playerReturnFocusRef.current;
+        const handle = findNodeHandle(target);
         if (handle) {
           UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
         }
@@ -379,6 +432,8 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     restorePlayerFocusRef.current = true;
   }, []);
   const episodeSortOrderKey = `episodeSortOrder:${providerValue}:${routeParams.link}`;
+  const lastPlayedKey = `LastPlayed:${providerValue}:${routeParams.link}`;
+  lastPlayedKeyRef.current = lastPlayedKey;
 
   // Memoized initial active season
   const [activeSeason, setActiveSeason] = useState<Link>(() => {
@@ -493,58 +548,81 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     transform: [{rotate: `${vlcRotation.value}deg`}],
   }));
 
-  // Memoized filtering and sorting logic for episodes
-  const filteredAndSortedEpisodes = useMemo(() => {
-    if (!episodeList || !Array.isArray(episodeList)) {
-      return [];
-    }
+  const validEpisodes = useMemo(
+    () =>
+      Array.isArray(episodeList)
+        ? episodeList.filter(episode => episode && episode.title && episode.link)
+        : [],
+    [episodeList],
+  );
+  const validDirectLinks = useMemo(
+    () =>
+      Array.isArray(activeSeason?.directLinks)
+        ? activeSeason.directLinks.filter(link => link && link.title && link.link)
+        : [],
+    [activeSeason?.directLinks],
+  );
 
-    let episodes = episodeList.filter(
-      episode => episode && episode.title && episode.link,
-    );
+  // Long seasons are shown in blocks of 50; the chosen block is remembered per season.
+  const rangesOnEpisodes = validEpisodes.length > 0;
+  const episodeRanges = useMemo(
+    () =>
+      buildEpisodeRanges(
+        rangesOnEpisodes ? validEpisodes.length : validDirectLinks.length,
+      ),
+    [rangesOnEpisodes, validEpisodes.length, validDirectLinks.length],
+  );
+  const rangeKey = `EpisodeRange:${providerValue}:${routeParams.link}:${activeSeason?.title}`;
+  const [rangeStart, setRangeStart] = useState(
+    () => Number(cacheStorage.getString(rangeKey)) || 0,
+  );
+  useEffect(() => {
+    setRangeStart(Number(cacheStorage.getString(rangeKey)) || 0);
+  }, [rangeKey]);
+  const selectedRange: EpisodeRange | undefined = episodeRanges.length
+    ? episodeRanges.find(r => r.start === rangeStart) ?? episodeRanges[0]
+    : undefined;
+  const selectRange = useCallback(
+    (range: EpisodeRange) => {
+      setRangeStart(range.start);
+      cacheStorage.setString(rangeKey, String(range.start));
+    },
+    [rangeKey],
+  );
 
-    // Apply search filter
-    if (searchText.trim()) {
-      episodes = episodes.filter(episode =>
-        episode?.title?.toLowerCase().includes(searchText.toLowerCase()),
-      );
-    }
+  // What the list shows: search covers every range; otherwise the chosen range.
+  const visibleItems = useCallback(
+    <T extends {title?: string}>(items: T[], ranged: boolean): T[] => {
+      let result = items;
+      if (searchText.trim()) {
+        const query = searchText.toLowerCase();
+        result = result.filter(item => item?.title?.toLowerCase().includes(query));
+      } else if (ranged && selectedRange) {
+        result = result.slice(selectedRange.start, selectedRange.end);
+      }
+      return sortOrder === 'desc' ? [...result].reverse() : result;
+    },
+    [searchText, selectedRange, sortOrder],
+  );
+  const filteredAndSortedEpisodes = useMemo(
+    () => visibleItems(validEpisodes, true),
+    [visibleItems, validEpisodes],
+  );
+  const filteredAndSortedDirectLinks = useMemo(
+    () => visibleItems(validDirectLinks, !rangesOnEpisodes),
+    [visibleItems, validDirectLinks, rangesOnEpisodes],
+  );
 
-    // Apply sorting
-    if (sortOrder === 'desc') {
-      episodes = [...episodes].reverse();
-    }
-
-    return episodes;
-  }, [episodeList, searchText, sortOrder]);
-
-  // Memoized direct links processing
-  const filteredAndSortedDirectLinks = useMemo(() => {
-    if (
-      !activeSeason?.directLinks ||
-      !Array.isArray(activeSeason.directLinks)
-    ) {
-      return [];
-    }
-
-    let links = activeSeason.directLinks.filter(
-      link => link && link.title && link.link,
-    );
-
-    // Apply search filter
-    if (searchText.trim()) {
-      links = links.filter(link =>
-        link?.title?.toLowerCase().includes(searchText.toLowerCase()),
-      );
-    }
-
-    // Apply sorting
-    if (sortOrder === 'desc') {
-      links = [...links].reverse();
-    }
-
-    return links;
-  }, [activeSeason?.directLinks, searchText, sortOrder]);
+  // The player gets the whole season so next-episode crosses range borders.
+  const playableEpisodes = useMemo(
+    () => (sortOrder === 'desc' ? [...validEpisodes].reverse() : validEpisodes),
+    [validEpisodes, sortOrder],
+  );
+  const playableDirectLinks = useMemo(
+    () =>
+      sortOrder === 'desc' ? [...validDirectLinks].reverse() : validDirectLinks,
+    [validDirectLinks, sortOrder],
+  );
 
   // Memoized completion checker
   const isCompleted = useCallback((link: string) => {
@@ -686,6 +764,12 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       }
 
       const link = episodeData[linkIndex].link;
+      const lastPlayed: LastPlayed = {
+        season: seasonTitle,
+        link,
+        title: episodeData[linkIndex]?.title,
+      };
+      cacheStorage.setString(lastPlayedKey, JSON.stringify(lastPlayed));
       const file = (
         metaTitle +
         seasonTitle +
@@ -741,6 +825,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       metaTitle,
       handleExternalPlayer,
       navigation,
+      lastPlayedKey,
     ],
   );
 
@@ -852,14 +937,12 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   const handleStickyMenuCast = useCallback(() => {
     setStickyMenu({active: false});
     if (!stickyMenu.link) return;
-    const episodeIndex = filteredAndSortedEpisodes.findIndex(
+    const episodeIndex = playableEpisodes.findIndex(
       item => item.link === stickyMenu.link,
     );
     const directIndex =
       episodeIndex < 0
-        ? (filteredAndSortedDirectLinks || []).findIndex(
-            item => item.link === stickyMenu.link,
-          )
+        ? playableDirectLinks.findIndex(item => item.link === stickyMenu.link)
         : -1;
     if (episodeIndex < 0 && directIndex < 0) return;
     playHandler({
@@ -867,14 +950,13 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       type,
       primaryTitle: metaTitle,
       seasonTitle: activeSeason?.title || '',
-      episodeData:
-        episodeIndex >= 0 ? filteredAndSortedEpisodes : filteredAndSortedDirectLinks,
+      episodeData: episodeIndex >= 0 ? playableEpisodes : playableDirectLinks,
       cast: true,
     });
   }, [
     stickyMenu.link,
-    filteredAndSortedEpisodes,
-    filteredAndSortedDirectLinks,
+    playableEpisodes,
+    playableDirectLinks,
     playHandler,
     type,
     metaTitle,
@@ -897,11 +979,14 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       );
       const handleEpisodePress = () => {
         playHandler({
-          linkIndex: index,
+          linkIndex: Math.max(
+            0,
+            playableEpisodes.findIndex(episode => episode.link === item.link),
+          ),
           type,
           primaryTitle: metaTitle,
           seasonTitle: activeSeason?.title || '',
-          episodeData: filteredAndSortedEpisodes,
+          episodeData: playableEpisodes,
         });
       };
 
@@ -924,6 +1009,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
             handleEpisodePress();
           }}
           onBeforePlay={rememberPlayerFocus}
+          onPlayControlRef={registerPlayControl}
           onLongPress={() =>
             onLongPressHandler(true, item.link, 'series')
           }
@@ -992,7 +1078,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       metaTitle,
       activeSeason?.title,
       episodeList,
-      filteredAndSortedEpisodes,
+      playableEpisodes,
       onLongPressHandler,
       primary,
       providerValue,
@@ -1029,11 +1115,14 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
           : 'Play');
       const handleEpisodePress = () => {
         playHandler({
-          linkIndex: index,
+          linkIndex: Math.max(
+            0,
+            playableDirectLinks.findIndex(link => link.link === item.link),
+          ),
           type,
           primaryTitle: metaTitle,
           seasonTitle: activeSeason?.title || '',
-          episodeData: filteredAndSortedDirectLinks,
+          episodeData: playableDirectLinks,
         });
       };
 
@@ -1056,6 +1145,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
             handleEpisodePress();
           }}
           onBeforePlay={rememberPlayerFocus}
+          onPlayControlRef={registerPlayControl}
           onLongPress={() =>
             onLongPressHandler(true, item.link, item?.type || 'series')
           }
@@ -1130,7 +1220,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       metaTitle,
       activeSeason?.title,
       activeSeason?.directLinks,
-      filteredAndSortedDirectLinks,
+      playableDirectLinks,
       onLongPressHandler,
       primary,
       providerValue,
@@ -1159,6 +1249,149 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     ),
     [primary, openExternalPlayer, metaTitle],
   );
+
+  // Last played episode of this title, re-read whenever the screen regains focus.
+  const continueItems = useContinueWatchingStore(state => state.items);
+  const readLastPlayed = useCallback((): LastPlayed | null => {
+    try {
+      const stored = cacheStorage.getString(lastPlayedKey);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    const item = continueItems.find(
+      entry =>
+        entry.infoUrl === routeParams.link &&
+        entry.providerValue === providerValue &&
+        entry.episode?.link,
+    );
+    return item
+      ? {season: '', link: item.episode.link, title: item.episode.title}
+      : null;
+  }, [lastPlayedKey, continueItems, routeParams.link, providerValue]);
+  const [lastPlayed, setLastPlayed] = useState<LastPlayed | null>(readLastPlayed);
+  useFocusEffect(
+    useCallback(() => {
+      setLastPlayed(readLastPlayed());
+    }, [readLastPlayed]),
+  );
+  const [pendingResume, setPendingResume] = useState<string | null>(null);
+  const resumeCardRef = useRef<View | null>(null);
+
+  const seasonItems: EpisodeLink[] = rangesOnEpisodes
+    ? validEpisodes
+    : validDirectLinks;
+  const seasonPlayable: EpisodeLink[] = rangesOnEpisodes
+    ? playableEpisodes
+    : playableDirectLinks;
+  const lastSeason =
+    lastPlayed?.season && lastPlayed.season !== activeSeason?.title
+      ? LinkList.find(link => link.title === lastPlayed.season)
+      : undefined;
+
+  const resumeTarget = useMemo((): (ResumeTarget & {link?: string}) | null => {
+    if (lastPlayed && lastSeason) {
+      // Last episode is in another season: switch to it on press.
+      return {
+        mode: 'resume',
+        seasonTitle: lastSeason.title,
+        title: lastPlayed.title || 'Last episode',
+      };
+    }
+    const index = lastPlayed
+      ? seasonItems.findIndex(item => item.link === lastPlayed.link)
+      : -1;
+    if (index >= 0) {
+      const item = seasonItems[index];
+      const {position = 0, duration = 0} = readProgress(item.link);
+      const fraction = duration > 0 ? position / duration : 0;
+      if (fraction > 0.85) {
+        const next = seasonItems[index + 1];
+        return next ? {mode: 'next', title: next.title, link: next.link} : null;
+      }
+      return {
+        mode: 'resume',
+        title: item.title,
+        link: item.link,
+        progress: fraction || undefined,
+        remainingSeconds: duration > 0 ? duration - position : undefined,
+      };
+    }
+    if (seasonItems.length > 1) {
+      return {mode: 'start', title: seasonItems[0].title, link: seasonItems[0].link};
+    }
+    return null;
+  }, [lastPlayed, lastSeason, seasonItems]);
+
+  const playLink = useCallback(
+    (link: string) => {
+      const index = seasonItems.findIndex(item => item.link === link);
+      if (index < 0) return;
+      const range = rangeForIndex(episodeRanges, index);
+      if (range) selectRange(range);
+      playHandler({
+        linkIndex: Math.max(
+          0,
+          seasonPlayable.findIndex(item => item.link === link),
+        ),
+        type,
+        primaryTitle: metaTitle,
+        seasonTitle: activeSeason?.title || '',
+        episodeData: seasonPlayable,
+      });
+    },
+    [
+      seasonItems,
+      seasonPlayable,
+      episodeRanges,
+      selectRange,
+      playHandler,
+      type,
+      metaTitle,
+      activeSeason?.title,
+    ],
+  );
+
+  const handleResume = useCallback(() => {
+    if (!resumeTarget) return;
+    // On TV, focus returns to this button after the player closes.
+    rememberPlayerFocus(resumeCardRef.current);
+    if (lastSeason && lastPlayed) {
+      setPendingResume(lastPlayed.link);
+      handleSeasonChange(lastSeason);
+      return;
+    }
+    if (resumeTarget.link) playLink(resumeTarget.link);
+  }, [
+    resumeTarget,
+    lastSeason,
+    lastPlayed,
+    handleSeasonChange,
+    playLink,
+    rememberPlayerFocus,
+  ]);
+
+  // After switching season for a resume, play once its episodes arrive.
+  useEffect(() => {
+    if (!pendingResume || episodeLoading) return;
+    if (lastPlayed?.season && lastPlayed.season !== activeSeason?.title) return;
+    setPendingResume(null);
+    const index = seasonItems.findIndex(item => item.link === pendingResume);
+    if (index < 0) {
+      ToastAndroid.show('Episode not found in this season', ToastAndroid.SHORT);
+      return;
+    }
+    const {position = 0, duration = 0} = readProgress(pendingResume);
+    const next = seasonItems[index + 1];
+    playLink(
+      duration > 0 && position / duration > 0.85 && next ? next.link : pendingResume,
+    );
+  }, [
+    pendingResume,
+    episodeLoading,
+    lastPlayed,
+    activeSeason?.title,
+    seasonItems,
+    playLink,
+  ]);
 
   // Show loading skeleton while episodes are loading
   if (episodeLoading) {
@@ -1200,11 +1433,12 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
         <Text className="text-red-500 text-center">
           {episodeError.message || 'Failed to load episodes. Please try again.'}
         </Text>
-        <TouchableOpacity
+        <TVTouchable
           className="mt-2 bg-red-600 p-2 rounded-md"
+          focusBorderRadius={6}
           onPress={() => refetchEpisodes()}>
           <Text className="text-white text-center">Retry</Text>
-        </TouchableOpacity>
+        </TVTouchable>
       </View>
     );
   }
@@ -1212,6 +1446,14 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   return (
     <View>
       <TVFocusGuide autoFocus={false}>
+        {resumeTarget && (
+          <EpisodeResumeCard
+            ref={resumeCardRef}
+            target={resumeTarget}
+            onPress={handleResume}
+          />
+        )}
+
         {/* Season Selector */}
         <DropdownField
           options={LinkList}
@@ -1236,6 +1478,14 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
             sortOrder={sortOrder}
             toggleSortOrder={toggleSortOrder}
             focusBorderColor={focusBorderColor}
+          />
+        )}
+
+        {episodeRanges.length > 0 && !searchText.trim() && selectedRange && (
+          <EpisodeRangeChips
+            ranges={episodeRanges}
+            selectedStart={selectedRange.start}
+            onSelect={selectRange}
           />
         )}
       </TVFocusGuide>

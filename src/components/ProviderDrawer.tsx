@@ -11,6 +11,9 @@ const ProviderDrawer = ({onClose}: {onClose: () => void}) => {
   const {provider, setProvider, installedProviders} = useContentStore(
     state => state,
   );
+  const hasSelectedProvider = installedProviders.some(
+    item => item.value === provider.value,
+  );
   const primary = useM3Colors().primary;
   const focusBorderColor = useTVFocusBorderColor(primary);
   const mountTimeRef = React.useRef<number>(Date.now());
@@ -86,12 +89,14 @@ const ProviderDrawer = ({onClose}: {onClose: () => void}) => {
         <ScrollView showsVerticalScrollIndicator={false} className="flex-1 px-2">
           {installedProviders.map((item, index) => {
             const isSelected = provider.value === item.value;
+            // One preferred item only: the selected provider, else the first.
+            const isPreferred = hasSelectedProvider ? isSelected : index === 0;
 
             if (isTV) {
               return (
                 <TVFocusable
                   key={item.value}
-                  hasTVPreferredFocus={isSelected || index === 0}
+                  hasTVPreferredFocus={isPreferred}
                   onPress={() => handleSelectProvider(item)}
                   borderRadius={12}
                   focusScale={1.03}

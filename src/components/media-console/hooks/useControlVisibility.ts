@@ -1,11 +1,12 @@
-import {useEffect, useState} from 'react';
-
+import {useState} from 'react';
 export function useControlVisibility(external: boolean | undefined, initial: boolean) {
   const [visible, setVisible] = useState(external ?? initial);
-  // Only a new parent value overrides local taps/timeouts. Watching visible
-  // here would undo auto-hide before the parent receives onHideControls.
-  useEffect(() => {
+  const [previousExternal, setPreviousExternal] = useState(external);
+  // Apply parent changes before children commit; local timeouts still notify
+  // the parent when its external value has not changed.
+  if (external !== previousExternal) {
+    setPreviousExternal(external);
     if (typeof external === 'boolean') setVisible(external);
-  }, [external]);
+  }
   return [visible, setVisible] as const;
 }

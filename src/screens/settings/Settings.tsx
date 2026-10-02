@@ -8,7 +8,6 @@ import {
   Keyboard,
   TextInput,
   BackHandler,
-  UIManager,
 } from 'react-native';
 
 interface ProviderItemProps {
@@ -156,7 +155,6 @@ const AnimatedSection = ({
 
 const Settings = ({navigation}: Props) => {
   const providerManagerRowRef = React.useRef<View>(null);
-  const lastSettingsFocusHandle = React.useRef<number | null>(null);
   const tabNavigation =
     useNavigation<NativeStackNavigationProp<TabStackParamList>>();
   const colors = useM3Colors();
@@ -165,24 +163,6 @@ const Settings = ({navigation}: Props) => {
   const installedProviders = useContentStore(state => state.installedProviders);
   const hideDownloadsTab = useNavigationPreferencesStore(
     state => state.hideDownloadsTab,
-  );
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!isTV) return;
-      const timer = setTimeout(() => {
-        const handle = lastSettingsFocusHandle.current ??
-          findNodeHandle(providerManagerRowRef.current);
-        if (handle) {
-          UIManager.dispatchViewManagerCommand(handle, 'requestTVFocus', []);
-        }
-      }, 400);
-      return () => {
-        clearTimeout(timer);
-        lastSettingsFocusHandle.current =
-          useTVNavigationStore.getState().activeScreenFocusHandle;
-      };
-    }, []),
   );
 
   const handleProviderSelect = useCallback(

@@ -3,6 +3,15 @@ import {isTV} from './constants';
 import {useTVRemote} from './useTVRemote';
 import {useTVFocusBorderColor} from './useTVFocusBorderColor';
 
+// Focused and idle controls share border width and padding, so focus only
+// changes the color and the control row does not reflow.
+const TV_CONTROL_IDLE_STYLE = {
+  borderWidth: 2.5,
+  borderColor: 'transparent',
+  borderRadius: 12,
+  padding: 4,
+};
+
 interface UsePlayerTVControlsOptions {
   playerRef: React.RefObject<any>;
   videoPositionRef: React.RefObject<{position: number; duration: number}>;
@@ -279,6 +288,7 @@ export const usePlayerTVControls = ({
         return {
           focusable: false,
           isTVSelectable: false,
+          style: TV_CONTROL_IDLE_STYLE,
         };
       }
       const isFocused = tvFocusedControl === controlId;
@@ -294,13 +304,8 @@ export const usePlayerTVControls = ({
           if (controlId === 'timeline') setScrubPosition(null);
         },
         style: isFocused
-          ? {
-              borderWidth: 2.5,
-              borderColor: focusBorderColor,
-              borderRadius: 12,
-              padding: 4,
-            }
-          : undefined,
+          ? {...TV_CONTROL_IDLE_STYLE, borderColor: focusBorderColor}
+          : TV_CONTROL_IDLE_STYLE,
       };
     },
     [tvFocusedControl, focusBorderColor, showTVControls, showSettings, showEpisodeSidebar, showControls],

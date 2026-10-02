@@ -1,7 +1,9 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React from 'react';
-import {Pressable, View} from 'react-native';
+import {View} from 'react-native';
 import SkeletonLoader from '../../../components/Skeleton';
+import {TVFocusable} from '../../../components/tv';
+import {isTV} from '../../../lib/tv/constants';
 
 const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
   <View style={{backgroundColor: '#000000', flex: 1}}>
@@ -12,12 +14,14 @@ const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
       marginVertical={0}
       style={{borderRadius: 0}}
     />
-    <Pressable
+    <TVFocusable
       accessibilityLabel="Go back"
       accessibilityRole="button"
-      hitSlop={8}
+      hasTVPreferredFocus={isTV}
+      borderRadius={24}
       onPress={onBack}
       style={{
+        borderRadius: 24,
         alignItems: 'center',
         height: 48,
         justifyContent: 'center',
@@ -27,7 +31,7 @@ const InfoSkeleton = ({onBack}: {onBack: () => void}) => (
         width: 48,
       }}>
       <MaterialCommunityIcons name="arrow-left" color="#FFFFFF" size={28} />
-    </Pressable>
+    </TVFocusable>
     <View style={{gap: 14, paddingHorizontal: 20, paddingTop: 22}}>
       <SkeletonLoader show height={38} width={190} marginVertical={0} />
       <View style={{flexDirection: 'row', gap: 8}}>

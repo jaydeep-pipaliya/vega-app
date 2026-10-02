@@ -62,6 +62,10 @@ jest.mock('../src/lib/zustand/downloadsStore', () => ({
   __esModule: true,
   default: (selector: (state: object) => unknown) => selector({downloads: {}}),
 }));
+jest.mock('../src/lib/zustand/continueWatchingStore', () => ({
+  __esModule: true,
+  default: (selector: (state: object) => unknown) => selector({items: []}),
+}));
 jest.mock('../src/theme/M3PaletteContext', () => ({
   useM3Colors: () => ({}),
 }));

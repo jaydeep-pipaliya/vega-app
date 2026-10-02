@@ -2,6 +2,7 @@ import {usePlayerControlAnimations} from '../../components/media-console/hooks/u
 import {isRemotePlaybackCanceled} from '../../lib/remote/remotePlaybackErrors';
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
+  Animated as NativeAnimated,
   AppState,
   AppStateStatus,
   BackHandler,
@@ -213,7 +214,14 @@ const getQualityIconName = (
   return 'video-settings';
 };
 
+// URL of the phone's torrent stream server, which only listens on loopback.
+const TORRENT_STREAM_URL = /^http:\/\/127\.0\.0\.1:\d+\/stream\//i;
+
 const isCastableStreamUrl = (streamUrl: string, streamType?: string) => {
+  // The delivery server relays the torrent stream to the receiver.
+  if (TORRENT_STREAM_URL.test(streamUrl)) {
+    return true;
+  }
   if (streamType === 'torrent') {
     return false;
   }
@@ -384,7 +392,8 @@ const SidebarEpisodeRow = React.memo<SidebarEpisodeRowProps>(
               : isActive
                 ? 'rgba(255, 255, 255, 0.12)'
                 : 'rgba(255, 255, 255, 0.03)',
-            borderWidth: tvFocused ? 2.5 : 1,
+            // Fixed width so focus does not shift the row content.
+            borderWidth: 2.5,
             borderColor: tvFocused
               ? focusBorderColor
               : isActive
@@ -513,7 +522,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
   const lockButtonOpacity = useSharedValue(0);
   const textVisibility = useSharedValue(0);
   const speedIconOpacity = useSharedValue(1);
-  const {progress: controlsProgress, bottomStyle: controlsStyle, opacityStyle: controlsOpacityStyle, animations: sharedControlAnimations} = usePlayerControlAnimations(showControls, 350);
+  const {topStyle: controlsTopStyle, bottomStyle: controlsStyle, opacityStyle: controlsOpacityStyle, animations: sharedControlAnimations} = usePlayerControlAnimations(showControls, 350);
   const useSharedControlAnimations = useCallback(() => sharedControlAnimations, [sharedControlAnimations]);
   const toastOpacity = useSharedValue(0);
   const settingsTranslateY = useSharedValue(10000);
@@ -523,10 +532,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
   const [showEpisodeSidebar, setShowEpisodeSidebar] = useState(false);
   const episodeListRef = useRef<FlatList>(null);
-  const showEpisodeSidebarSetting = useMemo(
-    () => settingsStorage.showPlayerEpisodeSidebar(),
-    [],
-  );
+  const showEpisodeSidebarSetting = settingsStorage.showPlayerEpisodeSidebar();
   const hasMultipleEpisodes = useMemo(
     () =>
       Array.isArray(route.params?.episodeList) &&
@@ -540,9 +546,10 @@ const Player = ({ route }: Props): React.JSX.Element => {
     transform: [{ scale: loadingScale.value }],
   }));
 
+  const LockAnimatedView = isPlayerLocked ? Animated.View : NativeAnimated.View;
   const lockButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: isPlayerLocked ? lockButtonTranslateY.value : -150 * (1 - controlsProgress.value) }],
-    opacity: isPlayerLocked ? lockButtonOpacity.value : controlsProgress.value,
+    transform: [{ translateY: lockButtonTranslateY.value }],
+    opacity: lockButtonOpacity.value,
   }));
 
   const toastStyle = useAnimatedStyle(() => ({
@@ -1194,6 +1201,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
       const hash = activeTorrentRef.current;
       if (hash) {
         activeTorrentRef.current = null;
+        // A receiver still streaming this torrent keeps it until casting stops.
+        if (remotePlaybackManager.adoptTorrent(hash)) return;
         try {
           torrentManager.deleteTorrent(hash, true);
         } catch (e) {
@@ -2595,8 +2604,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: 40,
-                borderWidth: tvFocusedControl === 'play_pause' ? 3 : 0,
-                borderColor: primary,
+                borderWidth: 3,
+                borderColor: tvFocusedControl === 'play_pause' ? primary : 'transparent',
                 backgroundColor: 'rgba(0,0,0,0.45)',
                 zIndex: 65,
               }}>
@@ -2619,8 +2628,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 bottom: 62,
                 padding: 12,
                 borderRadius: 12,
-                borderWidth: tvFocusedControl === 'timeline' ? 2 : 0,
-                borderColor: primary,
+                borderWidth: 2,
+                borderColor: tvFocusedControl === 'timeline' ? primary : 'transparent',
                 backgroundColor: 'rgba(20,20,20,0.65)',
                 zIndex: 65,
               }}>
@@ -2650,7 +2659,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
         !streamLoading &&
         torrentState !== 'seeding' &&
         torrentState !== 'finished' && (
-          <Animated.View
+          <NativeAnimated.View
             className="absolute top-4 self-center px-3 py-1.5 rounded-full items-center"
             style={controlsOpacityStyle}
             pointerEvents="none">
@@ -2670,7 +2679,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                   : ''}
               </Text>
             )}
-          </Animated.View>
+          </NativeAnimated.View>
         )}
 
       {/* Full-screen overlay to detect taps when locked */}
@@ -2684,8 +2693,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
       {/* Lock/Unlock button */}
       {!isCasting && !streamLoading && !Platform.isTV && (
-        <Animated.View
-          style={[lockButtonStyle]}
+        <LockAnimatedView
+          style={isPlayerLocked ? lockButtonStyle : [controlsTopStyle, controlsOpacityStyle]}
           className="absolute top-5 right-5 flex-row items-center gap-2 z-50"
           pointerEvents="box-none">
           <TouchableOpacity
@@ -2725,51 +2734,12 @@ const Player = ({ route }: Props): React.JSX.Element => {
               />
             </TouchableOpacity>
           )}
-        </Animated.View>
+        </LockAnimatedView>
       )}
-
-      {/* Episode Sidebar Toggle Button (Center Right) */}
-      {!isCasting &&
-        !streamLoading &&
-        !isPlayerLocked &&
-        showEpisodeSidebarSetting &&
-        hasMultipleEpisodes && (
-          <Animated.View
-            style={[
-              controlsOpacityStyle,
-              {
-                position: 'absolute',
-                right: 2,
-                top: '50%',
-                transform: [{ translateY: -20 }],
-                zIndex: 60,
-              },
-            ]}
-            pointerEvents={
-              showControls && !showEpisodeSidebar && !showSettings
-                ? 'auto'
-                : 'none'
-            }>
-            <TouchableOpacity
-              onPress={() => {
-                setShowEpisodeSidebar(true);
-              }}
-              {...getTVFocusProps('sidebar_chevron')}
-              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-              className="p-2 rounded-full justify-center items-center">
-              <MaterialIcons
-                activeOpacity={0.6}
-                name="chevron-left"
-                size={28}
-                color={BOTTOM_CONTROL_ICON_COLOR}
-              />
-            </TouchableOpacity>
-          </Animated.View>
-        )}
 
       {/* Bottom controls */}
       {!isCasting && !isPlayerLocked && !showSettings && !showEpisodeSidebar && (
-        <Animated.View
+        <NativeAnimated.View
           pointerEvents={showControls ? 'auto' : 'none'}
           style={[controlsStyle, { left: '10%', right: '10%', bottom: 15 }]}
           className="absolute flex-row items-center">
@@ -2903,7 +2873,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
           </BottomControlButton>
 
           {/* Episodes button */}
-          {hasMultipleEpisodes && (
+          {hasMultipleEpisodes && showEpisodeSidebarSetting && (
             <BottomControlButton
               className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
               {...getTVFocusProps('episodes')}
@@ -2946,7 +2916,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 />
               </BottomControlButton>
             )}
-        </Animated.View>
+        </NativeAnimated.View>
       )}
 
       {/* Floating Skip Button (Intro/Outro/Recap) */}
@@ -2954,7 +2924,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
         !isCasting &&
         !streamLoading &&
         !isPlayerLocked && (
-          <Animated.View
+          <NativeAnimated.View
             pointerEvents={showControls ? 'auto' : 'none'}
             style={[controlsOpacityStyle, {
               position: 'absolute',
@@ -2964,8 +2934,10 @@ const Player = ({ route }: Props): React.JSX.Element => {
             }]}>
             <Pressable
               accessibilityRole="button"
-              focusable={true}
-              isTVSelectable={true}
+              // The button fades out with the controls. On TV it must not
+              // stay focusable while invisible.
+              focusable={!isTV || showControls}
+              isTVSelectable={!isTV || showControls}
               onPress={handleSkip}
               style={({ pressed, focused }) => ({
                 flexDirection: 'row',
@@ -3002,7 +2974,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 color="rgba(255, 255, 255, 0.95)"
               />
             </Pressable>
-          </Animated.View>
+          </NativeAnimated.View>
         )}
 
       {/* Toast message */}

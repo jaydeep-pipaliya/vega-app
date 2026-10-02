@@ -1,5 +1,6 @@
 import React from 'react';
-import {View, Text, TouchableOpacity} from 'react-native';
+import {View, Text} from 'react-native';
+import TVTouchable from './tv/TVTouchable';
 import useThemeStore from '../lib/zustand/themeStore';
 
 interface ErrorFallbackProps {
@@ -20,12 +21,13 @@ export const ErrorFallback: React.FC<ErrorFallbackProps> = ({
       <Text className="text-gray-400 text-sm mb-6 text-center">
         {error.message || 'An unexpected error occurred'}
       </Text>
-      <TouchableOpacity
+      <TVTouchable
+        hasTVPreferredFocus
         onPress={resetError}
         className="px-6 py-3 rounded-lg"
         style={{backgroundColor: primary}}>
         <Text className="text-white font-semibold">Try Again</Text>
-      </TouchableOpacity>
+      </TVTouchable>
     </View>
   );
 };

@@ -6,7 +6,7 @@ import Player from './screens/home/Player';
 import Settings from './screens/settings/Settings';
 import WatchList from './screens/WatchList';
 import Search from './screens/Search';
-import {isTV, TVFocusProvider} from './lib/tv';
+import {isTV} from './lib/tv';
 import ScrollList from './screens/ScrollList';
 import {
   NavigationContainer,
@@ -601,7 +601,6 @@ const App = () => {
         <GlobalErrorBoundary>
           <QueryClientProvider client={queryClient}>
             <GestureHandlerRootView style={{flex: 1, backgroundColor: 'black'}}>
-              <TVFocusProvider>
                 <NavigationContainer
                 ref={navigationRef}
                 onReady={async () => {
@@ -700,7 +699,6 @@ const App = () => {
                   />
                 </Stack.Navigator>
               </NavigationContainer>
-            </TVFocusProvider>
               {/* Global WAF / captcha solving dialog, triggered by providers via
                 providerContext.openWebView */}
               <WafWebViewDialog />

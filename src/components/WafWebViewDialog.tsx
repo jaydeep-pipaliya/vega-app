@@ -2,7 +2,6 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Modal,
   View,
-  TouchableOpacity,
   ActivityIndicator,
   BackHandler,
   StyleSheet,
@@ -21,6 +20,7 @@ import {
 import {updateGlobalCookies} from '../lib/services/cookieStore';
 import {useM3Colors} from '../theme/M3PaletteContext';
 import AppText from './ui/Text';
+import TVTouchable from './tv/TVTouchable';
 
 const GRAB_HTML_JS =
   '(function(){try{window.ReactNativeWebView.postMessage(JSON.stringify({__waf:true,html:document.documentElement.outerHTML}));}catch(e){}})(); true;';
@@ -250,9 +250,9 @@ const WafWebViewDialog = () => {
                   'Complete the challenge below, then tap Done.'}
               </AppText>
             </View>
-            <TouchableOpacity onPress={cancel} className="p-1">
+            <TVTouchable onPress={cancel} className="p-1">
               <MaterialIcons name="close" size={22} color="#c1c4c9" />
-            </TouchableOpacity>
+            </TVTouchable>
           </View>
 
           {/* WebView */}
@@ -293,12 +293,13 @@ const WafWebViewDialog = () => {
 
           {/* Footer */}
           <View className="flex-row items-center gap-3 px-4 py-3">
-            <TouchableOpacity
+            <TVTouchable
               onPress={() => webViewRef.current?.reload()}
               className="px-4 py-2 rounded-md bg-white/10">
               <AppText className="text-white text-sm">Reload</AppText>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </TVTouchable>
+            <TVTouchable
+              hasTVPreferredFocus
               onPress={resolveWithPage}
               className="flex-1 px-4 py-2 rounded-md items-center"
               style={{backgroundColor: primary}}>
@@ -307,7 +308,7 @@ const WafWebViewDialog = () => {
                 className="text-sm font-semibold">
                 Done
               </AppText>
-            </TouchableOpacity>
+            </TVTouchable>
           </View>
         </View>
       </View>

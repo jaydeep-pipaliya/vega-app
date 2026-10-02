@@ -17,14 +17,15 @@ import Animated, {
 } from 'react-native-reanimated';
 import {
   isTV,
-  TV_FOCUS_SCALE,
   TV_FOCUS_BORDER_WIDTH,
   TV_FOCUS_ANIMATION_DURATION,
 } from '../../lib/tv/constants';
-import {useM3Colors} from '../../theme/M3PaletteContext';
 
-import {useIsFocused} from '@react-navigation/native';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
+import {
+  useSafeIsNavFocused,
+  useTVNavFocusMemory,
+} from '../../lib/tv/useTVNavFocusMemory';
 
 const TVFocusGuideView = (RN as any).TVFocusGuideView;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -47,6 +48,8 @@ export interface TVFocusableProps {
   focusBorderColor?: string;
   showFocusBorder?: boolean;
   borderRadius?: number;
+  /** Save this element as the navigation rail's D-pad right target. */
+  registerScreenFocus?: boolean;
   testID?: string;
   accessibilityLabel?: string;
   accessibilityRole?: RN.AccessibilityRole | string;
@@ -70,10 +73,10 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
     nextFocusDown,
     nextFocusLeft,
     nextFocusRight,
-    focusScale = TV_FOCUS_SCALE,
     focusBorderColor,
     showFocusBorder = true,
     borderRadius = 8,
+    registerScreenFocus = true,
     testID,
     accessibilityLabel,
     accessibilityRole,
@@ -83,18 +86,21 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
 ) => {
   const effectiveFocusBorderColor = useTVFocusBorderColor(focusBorderColor);
 
-  let isNavFocused = true;
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    isNavFocused = useIsFocused();
-  } catch {
-    isNavFocused = true;
-  }
-
+  const isNavFocused = useSafeIsNavFocused();
   const isCurrentlyFocusable = !disabled && isNavFocused;
 
   const buttonRef = useRef<View>(null);
   React.useImperativeHandle(forwardedRef, () => buttonRef.current as View);
+  const {
+    preferredFocus,
+    onFocus: rememberFocus,
+    onBlur: forgetFocus,
+  } = useTVNavFocusMemory({
+    ref: buttonRef,
+    isNavFocused,
+    hasTVPreferredFocus,
+    registerScreenFocus,
+  });
 
   const [isFocused, setIsFocused] = React.useState(false);
   const lastPressTime = useRef<number>(0);
@@ -122,6 +128,7 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
   const handleFocus = useCallback(() => {
     if (!isCurrentlyFocusable) return;
     setIsFocused(true);
+    rememberFocus();
     // Keep the TV focus ring within the control's layout bounds.
     scale.value = withTiming(1, {
       duration: TV_FOCUS_ANIMATION_DURATION,
@@ -131,17 +138,18 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
       duration: TV_FOCUS_ANIMATION_DURATION,
     });
     onFocus?.();
-  }, [focusScale, onFocus, scale, borderOpacity, isCurrentlyFocusable]);
+  }, [onFocus, scale, borderOpacity, isCurrentlyFocusable, rememberFocus]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
+    forgetFocus();
     scale.value = withTiming(1, {
       duration: TV_FOCUS_ANIMATION_DURATION,
       easing: Easing.out(Easing.ease),
     });
     borderOpacity.value = 0;
     onBlur?.();
-  }, [onBlur, scale, borderOpacity]);
+  }, [onBlur, scale, borderOpacity, forgetFocus]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{scale: scale.value}],
@@ -185,7 +193,7 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
       onFocus={handleFocus}
       onBlur={handleBlur}
       disabled={!isCurrentlyFocusable}
-      hasTVPreferredFocus={hasTVPreferredFocus && isCurrentlyFocusable}
+      hasTVPreferredFocus={preferredFocus && !disabled}
       nextFocusUp={nextFocusUp ?? undefined}
       nextFocusDown={nextFocusDown ?? undefined}
       nextFocusLeft={nextFocusLeft ?? undefined}
@@ -219,76 +227,6 @@ export const TVFocusable = React.forwardRef<View, TVFocusableProps>((
     </AnimatedPressable>
   );
 });
-
-export interface TVFocusableCardProps extends TVFocusableProps {
-  width?: number;
-  height?: number;
-  borderRadius?: number;
-}
-
-export const TVFocusableCard: React.FC<TVFocusableCardProps> = ({
-  children,
-  width = 180,
-  height = 270,
-  borderRadius = 8,
-  style,
-  ...props
-}) => {
-  const cardStyle: ViewStyle = {
-    width,
-    height,
-    borderRadius,
-    overflow: 'hidden',
-    ...(style as object),
-  };
-
-  return (
-    <TVFocusable style={cardStyle} {...props}>
-      {state => (
-        <View style={{width, height, borderRadius, overflow: 'hidden'}}>
-          {typeof children === 'function' ? children(state) : children}
-        </View>
-      )}
-    </TVFocusable>
-  );
-};
-
-export interface TVFocusableButtonProps extends TVFocusableProps {
-  variant?: 'primary' | 'secondary' | 'outline';
-}
-
-export const TVFocusableButton: React.FC<TVFocusableButtonProps> = ({
-  children,
-  variant = 'primary',
-  style,
-  focusBorderColor,
-  ...props
-}) => {
-  const colors = useM3Colors();
-  const buttonStyles: Record<'primary' | 'secondary' | 'outline', ViewStyle> = {
-    primary: {
-      ...styles.primaryButton,
-      backgroundColor: colors.primary,
-    },
-    secondary: styles.secondaryButton,
-    outline: styles.outlineButton,
-  };
-
-  const combinedStyle: ViewStyle = {
-    ...buttonStyles[variant],
-    ...(style as object),
-  };
-
-  return (
-    <TVFocusable
-      style={combinedStyle}
-      focusBorderColor={focusBorderColor}
-      focusScale={1.05}
-      {...props}>
-      {children}
-    </TVFocusable>
-  );
-};
 
 export interface TVFocusGuideProps {
   children: React.ReactNode;
@@ -346,32 +284,6 @@ const styles = StyleSheet.create({
     borderWidth: TV_FOCUS_BORDER_WIDTH,
     borderRadius: 8,
     backgroundColor: 'transparent',
-  },
-  primaryButton: {
-    backgroundColor: 'transparent',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryButton: {
-    backgroundColor: 'rgba(109, 109, 110, 0.7)',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  outlineButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    borderColor: '#ffffff',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });
 
