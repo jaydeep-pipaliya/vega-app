@@ -553,4 +553,18 @@ describe('download manager foreground lifecycle', () => {
     resolveStart?.();
     await start;
   });
+
+  it('keeps a completed download when a stale cancel arrives', async () => {
+    enqueueDownload();
+    await startDownload('movie_direct_0', location);
+    mockBackendCleanup.mockClear();
+
+    await cancelDownload('movie_direct_0');
+
+    expect(mockBackendCancel).not.toHaveBeenCalled();
+    expect(mockBackendCleanup).not.toHaveBeenCalled();
+    expect(useDownloadsStore.getState().downloads.movie_direct_0?.status).toBe(
+      'completed',
+    );
+  });
 });

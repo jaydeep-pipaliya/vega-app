@@ -8,7 +8,10 @@ import {
   isSafDownloadLocation,
 } from './downloadLocation';
 import {notificationService} from './services/Notification';
-import useDownloadsStore, {DownloadItem} from './zustand/downloadsStore';
+import useDownloadsStore, {
+  CURRENT_DOWNLOAD_STATUSES,
+  DownloadItem,
+} from './zustand/downloadsStore';
 import {getDownloadBackend} from './downloadBackends/registry';
 import {
   DownloadBackend,
@@ -498,7 +501,9 @@ export const resumeDownload = async (downloadId: string): Promise<void> => {
 
 export const cancelDownload = async (downloadId: string): Promise<void> => {
   const record = useDownloadsStore.getState().getDownload(downloadId);
-  if (!record) {
+  // A finished download can still get a cancel from a dialog or notification
+  // opened before it completed. Cleanup would delete the saved file.
+  if (!record || !CURRENT_DOWNLOAD_STATUSES.has(record.status)) {
     return;
   }
 
