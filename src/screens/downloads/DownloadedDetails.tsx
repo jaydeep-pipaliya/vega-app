@@ -97,13 +97,17 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
   const [searchText, setSearchText] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  useEffect(() => {
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      navigation.goBack();
-      return true;
-    });
-    return () => backSub.remove();
-  }, [navigation]);
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.goBack();
+        return true;
+      });
+      return () => backSub.remove();
+    }, [navigation]),
+  );
 
   const items = useMemo(() => {
     if (!group) {

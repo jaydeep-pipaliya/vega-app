@@ -82,9 +82,33 @@ class TorrentManager {
     return await TorrentModule.getFiles(infoHash);
   }
 
-  async prepareVideoFile(infoHash: string, fileIndex = 0): Promise<boolean> {
+  /**
+   * Prioritizes the pieces a player reads first. [resuming] skips the opening
+   * minutes, since playback starts mid-file. Without [fullDownload], only about
+   * a minute ahead of playback downloads.
+   */
+  async prepareVideoFile(
+    infoHash: string,
+    fileIndex = 0,
+    resuming = false,
+    fullDownload = true,
+  ): Promise<boolean> {
     await this.init();
-    return await TorrentModule.prepareVideoFile(infoHash, fileIndex);
+    return await TorrentModule.prepareVideoFile(
+      infoHash,
+      fileIndex,
+      resuming,
+      fullDownload,
+    );
+  }
+
+  /** Lets the stream server size its one-minute buffer from the video bitrate. */
+  async setStreamDuration(
+    infoHash: string,
+    durationSeconds: number,
+  ): Promise<void> {
+    await this.init();
+    await TorrentModule.setStreamDuration(infoHash, durationSeconds);
   }
 
   async getStreamUrl(infoHash: string, fileIndex = 0): Promise<string> {

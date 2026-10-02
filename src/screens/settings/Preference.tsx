@@ -1,5 +1,6 @@
+import {useFocusEffect} from '@react-navigation/native';
 import {View, ScrollView, Pressable, ToastAndroid, BackHandler} from 'react-native';
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import {settingsStorage} from '../../lib/storage';
 import RNReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import Constants from 'expo-constants';
@@ -27,19 +28,23 @@ const Preferences = ({navigation}: any) => {
     isFirebaseNativeReady();
   const colors = useM3Colors();
 
-  useEffect(() => {
-    if (!isTV) {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (navigation?.canGoBack?.()) {
-        navigation.goBack();
-        return true;
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV) {
+        return;
       }
-      return false;
-    });
-    return () => sub.remove();
-  }, [navigation]);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (navigation?.canGoBack?.()) {
+          navigation.goBack();
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [navigation]),
+  );
   // const [showRecentlyWatched, setShowRecentlyWatched] = useState(
   //   settingsStorage.getBool('showRecentlyWatched') || false,
   // );
@@ -89,6 +94,9 @@ const Preferences = ({navigation}: any) => {
     settingsStorage.getBool('useExternalPlayer', false),
   );
 
+  const [torrentFullDownload, setTorrentFullDownload] = useState<boolean>(() =>
+    settingsStorage.isTorrentFullDownload(),
+  );
   const [alwaysCastMode, setAlwaysCastMode] = useState<boolean>(() =>
     settingsStorage.isAlwaysCastMode(),
   );
@@ -309,10 +317,23 @@ const Preferences = ({navigation}: any) => {
             title="Swipe gestures"
             description="Adjust playback with gestures over the video"
             value={enableSwipeGesture}
-            divider={false}
             onValueChange={next => {
               settingsStorage.setSwipeGestureEnabled(next);
               setEnableSwipeGesture(next);
+            }}
+          />
+          <SettingsSwitchRow
+            title="Download full torrent"
+            description={
+              torrentFullDownload
+                ? 'Keep downloading the whole video while it plays'
+                : 'Download only about 1 minute ahead of playback'
+            }
+            value={torrentFullDownload}
+            divider={false}
+            onValueChange={next => {
+              settingsStorage.setTorrentFullDownload(next);
+              setTorrentFullDownload(next);
             }}
           />
         </SettingsSection>

@@ -4,6 +4,7 @@ import android.util.Log
 import com.facebook.react.bridge.*
 import org.libtorrent4j.*
 import org.libtorrent4j.alerts.*
+import org.libtorrent4j.swig.settings_pack
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -13,6 +14,22 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     companion object {
         private const val TAG = "TorrentModule"
         private const val STREAM_STARTUP_BYTES = 8L * 1024L * 1024L
+        // When resuming, only the container header is needed from the start of the file.
+        private const val RESUME_HEADER_BYTES = 2L * 1024L * 1024L
+        // MKV Cues and a trailing MP4 moov live here; players read them before playing.
+        private const val STREAM_TAIL_BYTES = 2L * 1024L * 1024L
+        // Many magnets from providers carry no trackers, which leaves peer discovery to
+        // the DHT alone. These public trackers find peers in a few seconds.
+        private val PUBLIC_TRACKERS = listOf(
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://open.demonii.com:1337/announce",
+            "udp://open.stealth.si:80/announce",
+            "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://explodie.org:6969/announce",
+            "udp://tracker.tiny-vps.com:6969/announce",
+            "udp://tracker.openbittorrent.com:6969/announce"
+        )
         private var sessionManager: SessionManager? = null
         private var streamServer: TorrentStreamServer? = null
         private val torrentHandles = mutableMapOf<String, TorrentHandle>()
@@ -31,6 +48,17 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         sp.setEnableLsd(true)
         sp.listenInterfaces("0.0.0.0:6881,0.0.0.0:6891")
         sp.setDhtBootstrapNodes("router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,dht.aelitis.com:6881")
+        // Streaming waits on single pieces, so a slow peer must not hold a block for
+        // libtorrent's default 20 s (piece) or 60 s (request) before it is re-requested.
+        sp.setInteger(settings_pack.int_types.piece_timeout.swigValue(), 6)
+        sp.setInteger(settings_pack.int_types.request_timeout.swigValue(), 12)
+        sp.setInteger(settings_pack.int_types.peer_connect_timeout.swigValue(), 7)
+        // Connect to more peers right after adding, so the first pieces arrive sooner.
+        sp.setInteger(settings_pack.int_types.torrent_connect_boost.swigValue(), 60)
+        sp.setInteger(settings_pack.int_types.connection_speed.swigValue(), 60)
+        sp.setBoolean(settings_pack.bool_types.strict_end_game_mode.swigValue(), false)
+        sp.setBoolean(settings_pack.bool_types.announce_to_all_trackers.swigValue(), true)
+        sp.setBoolean(settings_pack.bool_types.announce_to_all_tiers.swigValue(), true)
         
         sm.start(SessionParams(sp))
         sessionManager = sm
@@ -46,6 +74,17 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         streamServer = server
         Log.d(TAG, "Stream server started on port ${server.listeningPort}")
         return server
+    }
+
+    private fun withPublicTrackers(magnet: String): String {
+        val builder = StringBuilder(magnet)
+        for (tracker in PUBLIC_TRACKERS) {
+            val encoded = java.net.URLEncoder.encode(tracker, "UTF-8")
+            if (!magnet.contains(encoded) && !magnet.contains(tracker)) {
+                builder.append("&tr=").append(encoded)
+            }
+        }
+        return builder.toString()
     }
 
     @ReactMethod
@@ -163,7 +202,8 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 if (magnetOrUrl.startsWith("magnet:") ||
                     magnetOrUrl.startsWith("http://") ||
                     magnetOrUrl.startsWith("https://")) {
-                    sm.download(magnetOrUrl, File(downloadDir), TorrentFlags.AUTO_MANAGED)
+                    val source = if (magnetOrUrl.startsWith("magnet:")) withPublicTrackers(magnetOrUrl) else magnetOrUrl
+                    sm.download(source, File(downloadDir), TorrentFlags.AUTO_MANAGED)
                 } else {
                     val ti = TorrentInfo(File(magnetOrUrl))
                     sm.download(ti, File(downloadDir))
@@ -292,7 +332,13 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
-    fun prepareVideoFile(infoHash: String, fileIndex: Int, promise: Promise) {
+    fun prepareVideoFile(
+        infoHash: String,
+        fileIndex: Int,
+        resuming: Boolean,
+        fullDownload: Boolean,
+        promise: Promise
+    ) {
         Thread {
             try {
                 Log.d(TAG, "prepareVideoFile: infoHash=$infoHash, fileIndex=$fileIndex")
@@ -324,13 +370,29 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val fileSize = fs.fileSize(fileIndex)
                 val pieceLength = ti.pieceLength().toLong()
                 val startPiece = (fileOffset / pieceLength).toInt()
-                val startupEndOffset = fileOffset + minOf(fileSize, STREAM_STARTUP_BYTES) - 1L
+                // A resumed video starts mid-file, so fetching the opening minutes first
+                // would only compete with the header, the index and the resume point.
+                val startupBytes = minOf(fileSize, if (resuming) RESUME_HEADER_BYTES else STREAM_STARTUP_BYTES)
+                val startupEndOffset = fileOffset + startupBytes - 1L
                 val startupEndPiece = (startupEndOffset / pieceLength).toInt()
 
                 th.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
-                val filePriorities = Priority.array(Priority.IGNORE, fs.numFiles())
-                filePriorities[fileIndex] = Priority.TOP_PRIORITY
-                th.prioritizeFiles(filePriorities)
+                // The video file stays at normal priority: a file set to IGNORE has its
+                // pieces stored in libtorrent's part file, not the real file the stream
+                // server reads. Full download also skips the other files; limited download
+                // leaves file priorities alone and skips pieces instead.
+                streamServer?.setFullDownload(infoHash, fullDownload)
+                val filePriorities = if (fullDownload) {
+                    Priority.array(Priority.IGNORE, fs.numFiles())
+                } else {
+                    th.filePriorities()
+                }
+                filePriorities[fileIndex] = Priority.DEFAULT
+                applyFilePriorities(th, filePriorities)
+                if (!fullDownload) {
+                    // Only the pieces marked below and by the stream server download.
+                    th.prioritizePieces(Priority.array(Priority.IGNORE, ti.numPieces()))
+                }
 
                 for (pieceIndex in startPiece..startupEndPiece) {
                     if (!th.havePiece(pieceIndex)) {
@@ -339,9 +401,21 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }
                 }
 
+                val endPiece = ((fileOffset + fileSize - 1L) / pieceLength).toInt()
+                val tailStartPiece = maxOf(
+                    startupEndPiece + 1,
+                    ((fileOffset + maxOf(0L, fileSize - STREAM_TAIL_BYTES)) / pieceLength).toInt()
+                )
+                for (pieceIndex in tailStartPiece..endPiece) {
+                    if (!th.havePiece(pieceIndex)) {
+                        th.piecePriority(pieceIndex, Priority.TOP_PRIORITY)
+                        th.setPieceDeadline(pieceIndex, 2000)
+                    }
+                }
+
                 Log.d(
                     TAG,
-                    "prepareVideoFile: file=$fileIndex, pieces=$startPiece-$startupEndPiece, startupBytes=${minOf(fileSize, STREAM_STARTUP_BYTES)}"
+                    "prepareVideoFile: file=$fileIndex, pieces=$startPiece-$startupEndPiece, startupBytes=$startupBytes, resuming=$resuming, fullDownload=$fullDownload"
                 )
 
                 var waitCount = 0
@@ -451,6 +525,24 @@ class TorrentModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         } catch (e: Exception) {
             promise.reject("COMPLETE_ERROR", e.message, e)
         }
+    }
+
+    // libtorrent applies file priorities on its disk thread and then recomputes every
+    // piece priority from them, so piece priorities set before that finishes are lost.
+    private fun applyFilePriorities(th: TorrentHandle, priorities: Array<Priority>) {
+        if (th.filePriorities().contentEquals(priorities)) return
+        th.prioritizeFiles(priorities)
+        var waitCount = 0
+        while (waitCount < 30 && !th.filePriorities().contentEquals(priorities)) {
+            Thread.sleep(100)
+            waitCount++
+        }
+    }
+
+    @ReactMethod
+    fun setStreamDuration(infoHash: String, durationSeconds: Double, promise: Promise) {
+        streamServer?.setDuration(infoHash, durationSeconds)
+        promise.resolve(true)
     }
 
     @ReactMethod

@@ -1,5 +1,6 @@
+import {useFocusEffect} from '@react-navigation/native';
 import {View, ScrollView, BackHandler} from 'react-native';
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import {extensionStorage, providersStorage} from '../../lib/storage';
 import {SvgUri} from 'react-native-svg';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
@@ -17,19 +18,23 @@ const DisableProviders = ({navigation}: any) => {
     providersStorage.getDisabledProviders(),
   );
 
-  useEffect(() => {
-    if (!isTV) {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (navigation?.canGoBack?.()) {
-        navigation.goBack();
-        return true;
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV) {
+        return;
       }
-      return false;
-    });
-    return () => sub.remove();
-  }, [navigation]);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (navigation?.canGoBack?.()) {
+          navigation.goBack();
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [navigation]),
+  );
 
   const toggleProvider = (providerId: string) => {
     const newDisabled = providersStorage.toggleProvider(providerId);

@@ -1,3 +1,4 @@
+import {useFocusEffect} from '@react-navigation/native';
 import React, {useState, useEffect, useMemo, useCallback, useRef} from 'react';
 import {
   View,
@@ -141,13 +142,17 @@ const Extensions = ({navigation}: Props) => {
     actions?: AppDialogAction[],
   ) => setDialog({title, message, variant, actions});
 
-  useEffect(() => {
-    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
-      navigation.navigate('Settings');
-      return true;
-    });
-    return () => backSub.remove();
-  }, [navigation]);
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.navigate('Settings');
+        return true;
+      });
+      return () => backSub.remove();
+    }, [navigation]),
+  );
 
   // Load providers immediately on component mount (synchronous 0ms load)
   useEffect(() => {

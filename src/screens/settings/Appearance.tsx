@@ -1,6 +1,7 @@
+import {useFocusEffect} from '@react-navigation/native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
-import React, {useEffect} from 'react';
+import React, {useEffect, useCallback} from 'react';
 import {BackHandler, ScrollView, View} from 'react-native';
 import type {SettingsStackParamList} from '../../App';
 import AppearancePreference from './components/AppearancePreference';
@@ -14,16 +15,20 @@ type Props = NativeStackScreenProps<SettingsStackParamList, 'Appearance'>;
 const Appearance = ({navigation}: Props) => {
   const colors = useM3Colors();
 
-  useEffect(() => {
-    if (!isTV) {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      navigation.goBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [navigation]);
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV) {
+        return;
+      }
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        navigation.goBack();
+        return true;
+      });
+      return () => sub.remove();
+    }, [navigation]),
+  );
 
   return (
     <TVFocusGuide autoFocus={true} trapFocusRight={true} style={{flex: 1}}>

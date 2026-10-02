@@ -1,3 +1,4 @@
+import {useFocusEffect} from '@react-navigation/native';
 import {
   View,
   ScrollView,
@@ -6,7 +7,7 @@ import {
   Pressable,
   BackHandler,
 } from 'react-native';
-import React, { useState, useEffect } from 'react';
+import React, {useState, useEffect, useCallback} from 'react';
 import { startActivityAsync, ActivityAction } from 'expo-intent-launcher';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -111,35 +112,39 @@ const SubtitlePreference = ({navigation}: any) => {
   const [edgeModalVisible, setEdgeModalVisible] = useState(false);
   const [edgeColorModalVisible, setEdgeColorModalVisible] = useState(false);
 
-  useEffect(() => {
-    if (!isTV) {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (fontModalVisible) {
-        setFontModalVisible(false);
-        return true;
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV) {
+        return;
       }
-      if (colorModalVisible) {
-        setColorModalVisible(false);
-        return true;
-      }
-      if (edgeModalVisible) {
-        setEdgeModalVisible(false);
-        return true;
-      }
-      if (edgeColorModalVisible) {
-        setEdgeColorModalVisible(false);
-        return true;
-      }
-      if (navigation?.canGoBack?.()) {
-        navigation.goBack();
-        return true;
-      }
-      return false;
-    });
-    return () => sub.remove();
-  }, [fontModalVisible, colorModalVisible, edgeModalVisible, edgeColorModalVisible, navigation]);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (fontModalVisible) {
+          setFontModalVisible(false);
+          return true;
+        }
+        if (colorModalVisible) {
+          setColorModalVisible(false);
+          return true;
+        }
+        if (edgeModalVisible) {
+          setEdgeModalVisible(false);
+          return true;
+        }
+        if (edgeColorModalVisible) {
+          setEdgeColorModalVisible(false);
+          return true;
+        }
+        if (navigation?.canGoBack?.()) {
+          navigation.goBack();
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [fontModalVisible, colorModalVisible, edgeModalVisible, edgeColorModalVisible, navigation]),
+  );
 
   const handleSelectFont = (fontId: string) => {
     settingsStorage.setSubtitleFontFamily(fontId);

@@ -570,7 +570,13 @@ class RemoteDeliveryModule(
                 throw IllegalStateException("Cast delivery server stopped while preparing media")
             }
             sessions[sessionId] = session
-            if (mode == "ffmpeg" || mode == "hls") prefetchSubtitles(sourceUrl, isLocal, headers)
+            // A torrent fetches pieces on demand, so reading every subtitle block across
+            // the file would starve the sequential read the receiver is waiting on.
+            val isLoopbackSource = Regex("^https?://(127\\.0\\.0\\.1|localhost)[:/]", RegexOption.IGNORE_CASE)
+                .containsMatchIn(sourceUrl)
+            if ((mode == "ffmpeg" || mode == "hls") && !isLoopbackSource) {
+                prefetchSubtitles(sourceUrl, isLocal, headers)
+            }
             sessionErrors.remove(sessionId)
 
             val streamUrl = when (mode) {

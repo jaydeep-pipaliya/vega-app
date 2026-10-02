@@ -17,12 +17,24 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         private const val PIECE_WAIT_INTERVAL_MS = 100L
         private const val PIECE_WAIT_MAX_ITERATIONS = 600 // 60 seconds
         private const val INITIAL_PIECE_WAIT_MAX = 300 // 30 seconds for initial response
+        // Read-ahead is about 1% of the file, roughly a minute of video at the
+        // file's average bitrate, so it scales from small episodes to 4K remuxes.
+        private const val READAHEAD_FRACTION = 100L
+        private const val MIN_READAHEAD_BYTES = 16L * 1024L * 1024L
+        private const val MAX_READAHEAD_BYTES = 256L * 1024L * 1024L
+        // With full download off, only this much video past the reader is fetched.
+        private const val LIMITED_BUFFER_SECONDS = 60.0
+        private const val MIN_LIMITED_READAHEAD_BYTES = 4L * 1024L * 1024L
     }
 
     var sessionManager: org.libtorrent4j.SessionManager? = null
 
     private data class TorrentEntry(val saveDir: File)
     private val torrents = mutableMapOf<String, TorrentEntry>()
+    // Torrents that download only the buffer ahead of playback, not the whole file.
+    private val limitedTorrents = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // Video duration reported by the player, used to size the buffer by time.
+    private val durations = java.util.concurrent.ConcurrentHashMap<String, Double>()
 
     fun registerTorrent(infoHash: String, saveDir: File) {
         torrents[infoHash] = TorrentEntry(saveDir)
@@ -31,6 +43,31 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
     fun unregisterTorrent(infoHash: String) {
         torrents.remove(infoHash)
+        limitedTorrents.remove(infoHash)
+        durations.remove(infoHash)
+    }
+
+    fun setFullDownload(infoHash: String, fullDownload: Boolean) {
+        if (fullDownload) limitedTorrents.remove(infoHash) else limitedTorrents.add(infoHash)
+    }
+
+    fun setDuration(infoHash: String, durationSeconds: Double) {
+        if (durationSeconds > 0) durations[infoHash] = durationSeconds
+    }
+
+    private fun readaheadBytes(infoHash: String, fileSize: Long): Long {
+        if (infoHash in limitedTorrents) {
+            // About a minute of video past the reader, so a paused player soon stops
+            // downloading. Until the duration is known, 1% of the file stands in.
+            val duration = durations[infoHash] ?: 0.0
+            val minute = if (duration > 0) {
+                (fileSize / duration * LIMITED_BUFFER_SECONDS).toLong()
+            } else {
+                fileSize / READAHEAD_FRACTION
+            }
+            return minute.coerceIn(MIN_LIMITED_READAHEAD_BYTES, MAX_READAHEAD_BYTES)
+        }
+        return (fileSize / READAHEAD_FRACTION).coerceIn(MIN_READAHEAD_BYTES, MAX_READAHEAD_BYTES)
     }
 
     private fun freshHandle(infoHash: String): TorrentHandle? {
@@ -62,15 +99,22 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         return false
     }
 
-    private fun prefetchNextPieces(infoHash: String, currentPiece: Int, count: Int = 3) {
+    // Requests the pieces just ahead of the reader first, in order, so playback
+    // keeps going while the rest of the file downloads at normal priority.
+    private fun prefetchNextPieces(infoHash: String, currentPiece: Int, fileSize: Long) {
         try {
             val th = freshHandle(infoHash) ?: return
-            val numPieces = th.torrentFile()?.numPieces() ?: return
+            val ti = th.torrentFile() ?: return
+            val numPieces = ti.numPieces()
+            val pieceLength = ti.pieceLength().toLong()
+            val readahead = readaheadBytes(infoHash, fileSize)
+            val count = ((readahead + pieceLength - 1) / pieceLength).toInt()
             for (i in 1..count) {
                 val next = currentPiece + i
-                if (next < numPieces && !th.havePiece(next)) {
-                    th.piecePriority(next, Priority.SIX)
-                    th.setPieceDeadline(next, 3000 + i * 2000)
+                if (next >= numPieces) break
+                if (!th.havePiece(next)) {
+                    th.piecePriority(next, Priority.TOP_PRIORITY)
+                    th.setPieceDeadline(next, 1000 + i * 250)
                 }
             }
         } catch (_: Exception) {}
@@ -172,9 +216,9 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Seek error")
         }
 
-        prefetchNextPieces(infoHash, startPiece)
+        prefetchNextPieces(infoHash, startPiece, fileSize)
 
-        val inputStream = TorrentInputStream(raf, infoHash, fileOffset, pieceLength, start, contentLength)
+        val inputStream = TorrentInputStream(raf, infoHash, fileOffset, fileSize, pieceLength, start, contentLength)
 
         val response = newFixedLengthResponse(
             if (requestedRange != null) Response.Status.PARTIAL_CONTENT else Response.Status.OK,
@@ -225,6 +269,7 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
         private val raf: RandomAccessFile,
         private val infoHash: String,
         private val fileOffset: Long,
+        private val fileSize: Long,
         private val pieceLength: Long,
         startPos: Long,
         totalLength: Long
@@ -232,6 +277,8 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
         private var remaining = totalLength
         private var currentPos = startPos
+        // Read-ahead is refreshed once per piece, not on every small read.
+        private var prefetchedPiece = -1
 
         @Throws(java.io.IOException::class)
         private fun ensurePieceReady() {
@@ -242,7 +289,10 @@ class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
                 throw java.io.IOException("Timeout waiting for piece $pieceIndex (pos=$currentPos)")
             }
 
-            prefetchNextPieces(infoHash, pieceIndex)
+            if (pieceIndex != prefetchedPiece) {
+                prefetchedPiece = pieceIndex
+                prefetchNextPieces(infoHash, pieceIndex, fileSize)
+            }
         }
 
         override fun read(): Int {

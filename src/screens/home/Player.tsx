@@ -1011,6 +1011,10 @@ const Player = ({ route }: Props): React.JSX.Element => {
     });
 
   const [processedStreamUrl, setProcessedStreamUrl] = useState<string>('');
+  // Resume point handed to the player with a torrent source, fixed per stream so
+  // progress updates never reload it. Starting there skips buffering the opening
+  // seconds, which on a torrent means downloading pieces that are then skipped.
+  const [torrentStartMs, setTorrentStartMs] = useState<number | undefined>();
   const canCastStream = useMemo(
     () =>
       !Platform.isTV &&
@@ -1089,6 +1093,32 @@ const Player = ({ route }: Props): React.JSX.Element => {
 
   const activeTorrentRef = useRef<string | null>(null);
 
+  // Download progress for the cast screen, which has no torrent overlay.
+  const torrentCastDetail = useMemo(() => {
+    const isTorrent =
+      selectedStream?.type === 'torrent' ||
+      Boolean(selectedStream?.link?.startsWith('magnet:'));
+    if (!isTorrent || !torrentState) return null;
+    if (torrentState === 'Fetching Metadata...') return 'Fetching torrent info…';
+    if (torrentState === 'seeding' || torrentState === 'finished') {
+      // Without full download, 'finished' only means the buffer is filled.
+      return settingsStorage.isTorrentFullDownload()
+        ? 'Torrent fully downloaded'
+        : `${torrentDownloaded.toFixed(1)} MB downloaded · buffer full`;
+    }
+    const speed =
+      torrentDownloadSpeed > 0
+        ? ` · ${(torrentDownloadSpeed / 1024 / 1024).toFixed(1)} MB/s`
+        : '';
+    return `${torrentDownloaded.toFixed(1)} MB downloaded${speed}`;
+  }, [
+    selectedStream?.link,
+    selectedStream?.type,
+    torrentDownloaded,
+    torrentDownloadSpeed,
+    torrentState,
+  ]);
+
   // Handle torrent proxy resolution
   useEffect(() => {
     let isMounted = true;
@@ -1111,6 +1141,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       }
 
       setProcessedStreamUrl('');
+      setTorrentStartMs(undefined);
       setIsResolvingStream(true);
 
       const isTorrent =
@@ -1165,12 +1196,19 @@ const Player = ({ route }: Props): React.JSX.Element => {
             const preparation = torrentManager.prepareVideoFile(
               infoHash,
               videoFileIndex,
+              watchedDurationRef.current > 0,
+              settingsStorage.isTorrentFullDownload(),
             );
             const streamUrl = await torrentManager.getStreamUrl(
               infoHash,
               videoFileIndex,
             );
             console.log('Torrent stream URL:', streamUrl);
+            setTorrentStartMs(
+              watchedDurationRef.current > 5
+                ? Math.floor(watchedDurationRef.current * 1000)
+                : undefined,
+            );
             setProcessedStreamUrl(streamUrl);
             setIsResolvingStream(false);
             await preparation;
@@ -2227,8 +2265,16 @@ const Player = ({ route }: Props): React.JSX.Element => {
         setTextTracks(e.textTracks);
       }
       videoLoadedRef.current = true;
+      const torrentHash = activeTorrentRef.current;
+      if (torrentHash && Number(e?.duration) > 0) {
+        torrentManager
+          .setStreamDuration(torrentHash, Number(e.duration))
+          .catch(() => {});
+      }
       const wd = watchedDurationRef.current;
-      if (wd > 5) {
+      // A source opened at its start position is already there.
+      const loadedAt = Number(e?.currentTime) || 0;
+      if (wd > 5 && Math.abs(loadedAt - wd) > 2) {
         playerRef.current?.seek(wd);
         resumeAppliedRef.current = true;
       }
@@ -2258,6 +2304,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
           (selectedStream.link.startsWith('magnet:')
             ? processedStreamUrl
             : selectedStream.link) || '',
+        startPosition: torrentStartMs,
         bufferConfig: {
           minBufferMs: 8000,
           maxBufferMs: 20000,
@@ -2368,6 +2415,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
       selectedVideoTrack,
       handleSeekSnap,
       processedStreamUrl,
+      torrentStartMs,
       enableSwipeGesture,
       hideSeekButtons,
       showControls,
@@ -2483,6 +2531,7 @@ const Player = ({ route }: Props): React.JSX.Element => {
                 ? 'Preparing stream…'
                 : null
           }
+          detailText={torrentCastDetail}
           episodes={route.params?.episodeList}
           activeEpisodeIndex={
             currentEpisodeIndex >= 0 ? currentEpisodeIndex : undefined

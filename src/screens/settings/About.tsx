@@ -1,6 +1,7 @@
+import {useFocusEffect} from '@react-navigation/native';
 import {View, ScrollView, ToastAndroid, Linking, BackHandler, findNodeHandle} from 'react-native';
 // import pkg from '../../../package.json';
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useRef, useCallback} from 'react';
 import {settingsStorage} from '../../lib/storage';
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import * as Application from 'expo-application';
@@ -192,19 +193,23 @@ const About = ({navigation}: any) => {
     settingsStorage.isAutoCheckUpdateEnabled(),
   );
 
-  useEffect(() => {
-    if (!isTV) {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (navigation?.canGoBack?.()) {
-        navigation.goBack();
-        return true;
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isTV) {
+        return;
       }
-      return false;
-    });
-    return () => sub.remove();
-  }, [navigation]);
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (navigation?.canGoBack?.()) {
+          navigation.goBack();
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [navigation]),
+  );
 
   return (
     <TVFocusGuide autoFocus={true} trapFocusRight={true} trapFocusDown={true} style={{flex: 1}}>

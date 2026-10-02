@@ -222,7 +222,10 @@ const Home = ({}: Props) => {
             swipeEnabled={!disableDrawer && !isTV}
             renderDrawerContent={() =>
               !disableDrawer && !isTV ? (
-                <ProviderDrawer onClose={() => setIsDrawerOpen(false)} />
+                <ProviderDrawer
+                  isOpen={isDrawerOpen}
+                  onClose={() => setIsDrawerOpen(false)}
+                />
               ) : null
             }>
             <StatusBar style="light" />

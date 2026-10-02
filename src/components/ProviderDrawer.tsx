@@ -7,7 +7,13 @@ import {isTV} from '../lib/tv';
 import {TVFocusable, TVFocusGuide} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 
-const ProviderDrawer = ({onClose}: {onClose: () => void}) => {
+interface ProviderDrawerProps {
+  onClose: () => void;
+  /** The mobile drawer renders its content while closed. */
+  isOpen?: boolean;
+}
+
+const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
   const {provider, setProvider, installedProviders} = useContentStore(
     state => state,
   );
@@ -33,12 +39,14 @@ const ProviderDrawer = ({onClose}: {onClose: () => void}) => {
   );
 
   useEffect(() => {
+    // A closed drawer must not swallow back presses for the whole app.
+    if (!isOpen) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       handleClose();
       return true;
     });
     return () => sub.remove();
-  }, [handleClose]);
+  }, [handleClose, isOpen]);
 
   return (
     <View className="flex-1" style={{backgroundColor: isTV ? '#121214' : 'rgba(0,0,0,0.85)'}}>

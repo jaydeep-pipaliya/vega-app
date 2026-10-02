@@ -145,14 +145,18 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
     info?.image ||
     'https://placehold.jp/24/363636/ffffff/900x1200.png?text=Vega';
 
-  useEffect(() => {
-    const onBack = () => {
-      navigation.goBack();
-      return true;
-    };
-    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => sub.remove();
-  }, [navigation]);
+  // Register only while this screen is focused. A hidden screen in a
+  // mounted tab or stack must not swallow back presses.
+  useFocusEffect(
+    useCallback(() => {
+      const onBack = () => {
+        navigation.goBack();
+        return true;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, [navigation]),
+  );
 
   useEffect(() => {
     if (!dynamicInfoAccentEnabled) {

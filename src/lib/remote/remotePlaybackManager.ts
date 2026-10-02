@@ -104,6 +104,8 @@ class RemotePlaybackManager {
   private ownedTorrentHash: string | null = null;
 
   private operationSessions = new Map<number, Set<string>>();
+  // Wakes loads waiting in awaitCancelableOperation when a newer load or a stop arrives.
+  private supersedeWaiters = new Set<() => void>();
 
   private assertPlaybackOperation(token: number): void {
     if (token !== this.loadGeneration || this.ending) {
@@ -131,6 +133,39 @@ class RemotePlaybackManager {
     if (owned)
       for (const id of owned)
         await remoteDeliveryService.cleanupSession(id).catch(() => {});
+  }
+
+  private wakeSupersededOperations(): void {
+    for (const wake of [...this.supersedeWaiters]) wake();
+  }
+
+  /**
+   * Like awaitPlaybackOperation, but stops waiting as soon as the load is
+   * superseded. Only for work without side effects, such as track inspection,
+   * which can take minutes on a torrent with no peers and would otherwise hold
+   * the queue the next load waits in.
+   */
+  private async awaitCancelableOperation<T>(
+    work: Promise<T>,
+    token: number,
+  ): Promise<T> {
+    let wake = () => {};
+    const superseded = new Promise<never>((_, reject) => {
+      wake = () => {
+        if (token !== this.loadGeneration || this.ending) {
+          reject(new RemotePlaybackCanceledError());
+        }
+      };
+    });
+    this.supersedeWaiters.add(wake);
+    // The abandoned work may still fail later; nothing waits on it then.
+    work.catch(() => {});
+    try {
+      return await Promise.race([work, superseded]);
+    } finally {
+      this.supersedeWaiters.delete(wake);
+      this.assertPlaybackOperation(token);
+    }
   }
 
   private async awaitPlaybackOperation<T>(
@@ -440,6 +475,7 @@ class RemotePlaybackManager {
     if (isTV) return Promise.resolve();
     this.cancelQueuedSeek();
     const operationToken = ++this.loadGeneration;
+    this.wakeSupersededOperations();
     // Source changes supersede old work immediately, then wait for its cleanup.
     return this.enqueueOperation(() =>
       this.loadRemotePlayback(device, payload, operationToken),
@@ -522,7 +558,7 @@ class RemotePlaybackManager {
 
       // 1. Inspect tracks if MKV or local file
       const sourceType = payload.sourceType?.toLowerCase();
-      const inspected = await this.awaitPlaybackOperation(
+      const inspected = await this.awaitCancelableOperation(
         remoteDeliveryService.inspectTracks(
           payload.sourceUrl,
           payload.isLocal,
@@ -2463,6 +2499,7 @@ class RemotePlaybackManager {
     this.cancelQueuedSeek();
     this.ending = true;
     this.loadGeneration++;
+    this.wakeSupersededOperations();
     this.playbackGeneration++;
     return this.enqueueOperation(() => this.stopPlayback());
   }

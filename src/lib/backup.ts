@@ -37,6 +37,7 @@ const BACKUP_SETTINGS: Record<string, SettingType> = {
   [SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR]: 'bool',
   [SettingsKeys.ENABLE_2X_GESTURE]: 'bool',
   [SettingsKeys.ENABLE_SWIPE_GESTURE]: 'bool',
+  [SettingsKeys.TORRENT_FULL_DOWNLOAD]: 'bool',
   [SettingsKeys.EXCLUDED_QUALITIES]: 'array',
   [SettingsKeys.DOWNLOAD_CONCURRENCY]: 'number',
   [SettingsKeys.SUBTITLE_FONT_SIZE]: 'number',

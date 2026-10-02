@@ -40,6 +40,8 @@ interface RemotePlayerScreenProps {
   onSkipPress?: () => void;
   /** Shown with a spinner while servers load or the stream resolves. */
   preparingText?: string | null;
+  /** Small line under the status, such as torrent download progress. */
+  detailText?: string | null;
   onSelectServer?: (server: RemoteServer) => void;
   onSelectAudio?: (track: RemoteAudioTrack) => void;
   onSelectSubtitle?: (track?: RemoteSubtitleTrack) => void;
@@ -60,6 +62,7 @@ export const RemotePlayerScreen: React.FC<RemotePlayerScreenProps> = ({
   skipInterval,
   onSkipPress,
   preparingText,
+  detailText,
   onSelectServer,
   onSelectAudio,
   onSelectSubtitle,
@@ -108,6 +111,7 @@ export const RemotePlayerScreen: React.FC<RemotePlayerScreenProps> = ({
             skipInterval={skipInterval}
             onSkipPress={onSkipPress}
             preparingText={preparingText}
+            detailText={detailText}
           />
           <RemoteScrubber />
           <View style={{paddingBottom: 16, paddingTop: 8}}>

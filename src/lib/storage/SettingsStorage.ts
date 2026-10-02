@@ -78,6 +78,7 @@ export enum SettingsKeys {
 
   // Remote Playback
   ALWAYS_CAST_MODE = 'alwaysCastMode',
+  TORRENT_FULL_DOWNLOAD = 'torrentFullDownload',
 }
 
 
@@ -91,6 +92,15 @@ export class SettingsStorage {
 
   setAlwaysCastMode(enabled: boolean): void {
     mainStorage.setBool(SettingsKeys.ALWAYS_CAST_MODE, enabled);
+  }
+
+  /** Off: a torrent downloads only about a minute ahead of playback. */
+  isTorrentFullDownload(): boolean {
+    return mainStorage.getBool(SettingsKeys.TORRENT_FULL_DOWNLOAD, true);
+  }
+
+  setTorrentFullDownload(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.TORRENT_FULL_DOWNLOAD, enabled);
   }
 
   // Theme settings

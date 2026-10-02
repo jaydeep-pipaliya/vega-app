@@ -10,6 +10,8 @@ interface RemoteStatusLineProps {
   skipInterval?: {from: number; to: number; title?: string} | null;
   onSkipPress?: () => void;
   preparingText?: string | null;
+  /** Small second line, such as torrent download progress. */
+  detailText?: string | null;
 }
 
 /**
@@ -20,6 +22,7 @@ export const RemoteStatusLine: React.FC<RemoteStatusLineProps> = ({
   skipInterval,
   onSkipPress,
   preparingText,
+  detailText,
 }) => {
   const colors = useM3Colors();
   const status = useRemoteStore(state => state.status);
@@ -86,6 +89,14 @@ export const RemoteStatusLine: React.FC<RemoteStatusLineProps> = ({
         paddingHorizontal: 24,
       }}>
       {content}
+      {!!detailText && (
+        <AppText
+          role="labelSmall"
+          numberOfLines={1}
+          style={{color: colors.onSurfaceVariant, marginTop: 2}}>
+          {detailText}
+        </AppText>
+      )}
     </View>
   );
 };
