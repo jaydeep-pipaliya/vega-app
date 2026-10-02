@@ -2151,11 +2151,11 @@ const Player = ({ route }: Props): React.JSX.Element => {
   }, [applyPlayerSystemBars, isFullScreen, isRemoteActive]);
 
   const handleShowControls = useCallback(
-    () => setShowControls(true),
+    () => { if (!isTV) setShowControls(true); },
     [setShowControls],
   );
   const handleHideControls = useCallback(
-    () => setShowControls(false),
+    () => { if (!isTV) setShowControls(false); },
     [setShowControls],
   );
   const handleAudioTracks = useCallback(
@@ -2241,7 +2241,8 @@ const Player = ({ route }: Props): React.JSX.Element => {
       disableSeekButtons: isPlayerLocked || hideSeekButtons,
       showControls,
       showOnStart: showControls,
-      alwaysShowControls: false,
+      // TV visibility and its idle timer are owned by usePlayerTVControls.
+      alwaysShowControls: isTV,
       source: {
         textTracks: externalSubs,
         uri:

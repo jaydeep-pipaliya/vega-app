@@ -629,6 +629,12 @@ const AnimatedVideoPlayer = (
 
 
   useEffect(() => {
+    // The external visibility may have changed one render before the local
+    // state catches up. Never report that stale value back to the parent.
+    if (typeof props.showControls === 'boolean' && props.showControls !== showControls) {
+      clearControlTimeout();
+      return;
+    }
     if (showControls) {
       animations.showControlAnimation();
       setControlTimeout();
@@ -640,7 +646,7 @@ const AnimatedVideoPlayer = (
       typeof eventsRef.current.onHideControls === 'function' &&
         eventsRef.current.onHideControls();
     }
-  }, [showControls, animations, setControlTimeout, clearControlTimeout]);
+  }, [props.showControls, showControls, animations, setControlTimeout, clearControlTimeout]);
 
   useEffect(() => {
     setMuted(muted);
