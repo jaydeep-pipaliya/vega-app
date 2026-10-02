@@ -73,6 +73,9 @@ module.exports = () => {
       {
         android: {
           usePrecompiledHeaders: true,
+          // ByeDPI and WARP run bundled binaries from nativeLibraryDir, so the
+          // .so files must be extracted on install.
+          useLegacyPackaging: true,
           extraMavenRepos: [
             '../../node_modules/@notifee/react-native/android/libs',
           ],
