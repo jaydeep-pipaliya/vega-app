@@ -9,7 +9,8 @@ import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
 
-class TorrentStreamServer : NanoHTTPD(0) {
+// Bound to loopback so other devices on the network cannot read the stream.
+class TorrentStreamServer : NanoHTTPD("127.0.0.1", 0) {
 
     companion object {
         private const val TAG = "TorrentStreamServer"
