@@ -67,18 +67,21 @@ export const RemoteMediaCard: React.FC<RemoteMediaCardProps> = ({
             maxHeight: 420,
             overflow: 'hidden',
           }}>
-          {poster ? (
+          {/* resizeMethod="resize" decodes at the size measured on load. The
+              card starts at height 0, so the poster was decoded tiny and shown
+              blurry. Use "scale" and mount only after layout. */}
+          {poster && artworkHeight > 0 ? (
             <Image
               source={{uri: poster}}
               resizeMode="contain"
-              resizeMethod="resize"
+              resizeMethod="scale"
               onLoad={event => {
                 const {width, height} = event.nativeEvent.source;
                 if (width > 0 && height > 0) setArtworkSize({uri: poster, ratio: width / height});
               }}
               style={{height: '100%', width: '100%'}}
             />
-          ) : (
+          ) : poster ? null : (
             <MaterialCommunityIcons
               name="movie-open-outline"
               size={56}
