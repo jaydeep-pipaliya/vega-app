@@ -117,7 +117,7 @@
     "typescript": "~6.0.3"
   },
   "overrides": {
-    "react-native": "npm:react-native-tvos@0.86-stable"
+    "react-native": "$react-native"
   },
   "expo": {
     "install": {
