@@ -1,14 +1,14 @@
 ![vega-high-resolution-logo-transparent](https://github.com/Zenda-Cross/vega-app/assets/143804558/b2eb446f-8e7f-4800-81e1-3320c82f33de)
 
 # Vega-App
-Android app for streaming media.
+Android app for streaming and casting media.
 ### Features
-- Stream and Download Ad-Free.
-- Multi Audio and external Subs support.
+- Stream and Download.
+- Cast support: Google Cast/DLNA with custom remuxer supports embedded audio and sub track change support.
 - WatchList.
 - External player and Downloader support.
 - Sync with desktop app
-- Create custom sources.
+- Create custom plugins.
 <br>
 
 [![Discord](https://custom-icon-badges.demolab.com/badge/-Join_Discord-6567a5?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/cr42m6maWy)
