@@ -49,6 +49,12 @@ function withCustomNativeModules(config) {
               /^package com\.vega$/m,
               `package ${packageName}`,
             );
+            // Imports between these files must follow the package rename,
+            // or variant builds (e.g. vega.app) cannot resolve com.vega.*.
+            content = content.replace(
+              /^import com\.vega\./gm,
+              `import ${packageName}.`,
+            );
 
             fs.writeFileSync(targetFile, content, 'utf8');
           }
