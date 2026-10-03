@@ -5,6 +5,7 @@ import {Catalog, EpisodeLink, Info, Post, Stream, SettingsField} from '../provid
 import {extensionManager} from './ExtensionManager';
 import {extensionStorage} from '../storage/extensionStorage';
 import {providerKvStorage} from '../storage/StorageService';
+import {getSourceAuthHeaders} from '../storage/sourceTokenStorage';
 import {MAX_STATE_BYTES} from '../sandbox/protocol';
 import {sandboxBridge, setSandboxStateHandler} from '../sandbox/sandboxBridge';
 
@@ -374,7 +375,10 @@ export class ProviderManager {
       if (activeSource?.url) {
         try {
           const url = `${activeSource.url}/dist/${providerValue}/settings.js`;
-          const res = await axios.get(url, {timeout: 6000});
+          const res = await axios.get(url, {
+            timeout: 6000,
+            headers: getSourceAuthHeaders(activeSource.author, url),
+          });
           if (res.data && typeof res.data === 'string') {
             settingsModule = res.data;
             const existing = extensionStorage.getProviderModules(

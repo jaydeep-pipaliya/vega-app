@@ -3,11 +3,36 @@ const {
   withAndroidStyles,
 } = require('expo/config-plugins');
 
+const ADD_SOURCE_ACTION = 'vega.intent.action.ADD_SOURCE';
+
 const withAndroidNativeConfig = config => {
   config = withAndroidManifest(config, manifestConfig => {
     const application = manifestConfig.modResults.manifest.application?.[0];
     if (application?.$) {
       application.$['android:usesCleartextTraffic'] = 'true';
+    }
+
+    // Custom "add provider source" intent (action + "url" extra, no data URI).
+    // BROWSABLE lets web pages fire it through a Chrome intent: URI.
+    const mainActivity = application?.activity?.find(
+      activity => activity?.$?.['android:name'] === '.MainActivity',
+    );
+    if (mainActivity) {
+      mainActivity['intent-filter'] = mainActivity['intent-filter'] || [];
+      const hasAddSourceFilter = mainActivity['intent-filter'].some(filter =>
+        filter.action?.some(
+          action => action.$['android:name'] === ADD_SOURCE_ACTION,
+        ),
+      );
+      if (!hasAddSourceFilter) {
+        mainActivity['intent-filter'].push({
+          action: [{$: {'android:name': ADD_SOURCE_ACTION}}],
+          category: [
+            {$: {'android:name': 'android.intent.category.DEFAULT'}},
+            {$: {'android:name': 'android.intent.category.BROWSABLE'}},
+          ],
+        });
+      }
     }
 
     return manifestConfig;

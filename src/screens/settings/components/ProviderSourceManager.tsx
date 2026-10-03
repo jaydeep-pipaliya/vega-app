@@ -6,6 +6,14 @@ import {
   ProviderSource,
 } from '../../../lib/storage/extensionStorage';
 import {createProviderSource} from '../../../lib/utils/helpers';
+import {
+  normalizeSourceToken,
+  sourceTokenStorage,
+} from '../../../lib/storage/sourceTokenStorage';
+import {
+  clearPendingSourceToken,
+  getPendingSourceToken,
+} from '../../../lib/services/sourceIntent';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import AppDialog from '../../../components/AppDialog';
 import Text from '../../../components/ui/Text';
@@ -14,19 +22,34 @@ import {isTV} from '../../../lib/tv/constants';
 import {AddSourceModal} from './AddSourceModal';
 import {SourcePickerModal} from './SourcePickerModal';
 
+const RAW_GITHUB_PREFIX = 'https://raw.githubusercontent.com/';
+const INVALID_SOURCE_MESSAGE =
+  'Enter a GitHub, Codeberg, Bitbucket or GitLab repo URL, or an author name such as author, author@cb, author@bb or author@gl.';
+
 type Props = {
   primary: string;
   visible: boolean;
   onSourceChanged: (source: ProviderSource | undefined) => void | Promise<void>;
+  // Source URL from the add source intent. Opens the add dialog prefilled.
+  pendingSource?: string;
+  pendingSourceRequestId?: number;
 };
 
-const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
+const ProviderSourceManager = ({
+  primary,
+  visible,
+  onSourceChanged,
+  pendingSource,
+  pendingSourceRequestId,
+}: Props) => {
   const colors = useM3Colors();
   const [sources, setSources] = useState<ProviderSource[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showSourcePicker, setShowSourcePicker] = useState(false);
-  const [invalidSourceDialog, setInvalidSourceDialog] = useState(false);
+  const [invalidSourceMessage, setInvalidSourceMessage] = useState<string>();
   const [sourceToRemove, setSourceToRemove] = useState<string>();
+  const [prefillValue, setPrefillValue] = useState<string>();
+  const [prefillToken, setPrefillToken] = useState<string>();
 
   const defaultSource = useMemo(() => {
     return sources.find(item => item.isDefault) || sources[0];
@@ -54,6 +77,23 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
     }
   }, [visible]);
 
+  useEffect(() => {
+    if (!pendingSource) {
+      return;
+    }
+    setShowSourcePicker(false);
+    setPrefillValue(pendingSource);
+    setPrefillToken(getPendingSourceToken(pendingSourceRequestId));
+    setShowAddDialog(true);
+  }, [pendingSource, pendingSourceRequestId]);
+
+  const closeAddDialog = () => {
+    setShowAddDialog(false);
+    setPrefillValue(undefined);
+    setPrefillToken(undefined);
+    clearPendingSourceToken();
+  };
+
   const handleSelectSource = async (source: ProviderSource) => {
     setShowSourcePicker(false);
     extensionStorage.setDefaultProviderSource(source.author);
@@ -61,16 +101,33 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
     await onSourceChanged(extensionStorage.getProviderSource());
   };
 
-  const handleConfirmAdd = async (value: string) => {
+  // token is undefined for a public source.
+  const handleConfirmAdd = async (value: string, token?: string) => {
     try {
       const source = createProviderSource(value);
+      if (token !== undefined) {
+        const normalizedToken = normalizeSourceToken(token);
+        if (!normalizedToken) {
+          setInvalidSourceMessage('Enter a valid GitHub token.');
+          return;
+        }
+        if (!source.url.startsWith(RAW_GITHUB_PREFIX)) {
+          setInvalidSourceMessage(
+            'Private sources are supported only on GitHub.',
+          );
+          return;
+        }
+        sourceTokenStorage.set(source.author, normalizedToken);
+      } else {
+        sourceTokenStorage.delete(source.author);
+      }
       extensionStorage.addProviderSources(source.author, source.url);
       extensionStorage.setDefaultProviderSource(source.author);
-      setShowAddDialog(false);
+      closeAddDialog();
       reloadSources();
       await onSourceChanged(source);
     } catch {
-      setInvalidSourceDialog(true);
+      setInvalidSourceMessage(INVALID_SOURCE_MESSAGE);
     }
   };
 
@@ -195,17 +252,19 @@ const ProviderSourceManager = ({primary, visible, onSourceChanged}: Props) => {
 
       <AddSourceModal
         visible={showAddDialog}
-        onClose={() => setShowAddDialog(false)}
+        initialValue={prefillValue}
+        initialToken={prefillToken}
+        onClose={closeAddDialog}
         onAdd={handleConfirmAdd}
       />
 
       <AppDialog
-        visible={invalidSourceDialog}
+        visible={Boolean(invalidSourceMessage)}
         title="Invalid source"
-        message="Enter a valid source URL or GitHub author."
+        message={invalidSourceMessage || ''}
         primary={primary}
         variant="error"
-        onDismiss={() => setInvalidSourceDialog(false)}
+        onDismiss={() => setInvalidSourceMessage(undefined)}
       />
 
       <AppDialog

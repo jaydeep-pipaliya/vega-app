@@ -20,12 +20,18 @@ import {isTV} from '../../../lib/tv';
 
 interface AddSourceModalProps {
   visible: boolean;
+  initialValue?: string;
+  // GitHub token from the add source intent. Selects "Private" when set.
+  initialToken?: string;
   onClose: () => void;
-  onAdd: (value: string) => void;
+  // token is undefined for a public source.
+  onAdd: (value: string, token?: string) => void;
 }
 
 export const AddSourceModal: React.FC<AddSourceModalProps> = ({
   visible,
+  initialValue,
+  initialToken,
   onClose,
   onAdd,
 }) => {
@@ -34,6 +40,30 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isInputFocused, setIsInputFocused] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [token, setToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
+  const [isTokenFocused, setIsTokenFocused] = useState(false);
+
+  useEffect(() => {
+    if (visible && initialValue) {
+      setInputValue(initialValue);
+    }
+  }, [visible, initialValue]);
+
+  useEffect(() => {
+    if (visible && initialToken) {
+      setIsPrivate(true);
+      setToken(initialToken);
+    }
+  }, [visible, initialToken]);
+
+  const resetForm = () => {
+    setInputValue('');
+    setIsPrivate(false);
+    setToken('');
+    setShowToken(false);
+  };
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
@@ -56,16 +86,64 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
   }, []);
 
   const handleClose = () => {
-    setInputValue('');
+    resetForm();
     onClose();
   };
 
   const handleConfirm = () => {
     const trimmed = inputValue.trim();
     if (trimmed) {
-      onAdd(trimmed);
-      setInputValue('');
+      onAdd(trimmed, isPrivate ? token : undefined);
+      resetForm();
     }
+  };
+
+  const renderVisibilityOption = (
+    value: boolean,
+    label: string,
+    icon: 'earth' | 'lock',
+  ) => {
+    const selected = isPrivate === value;
+    return (
+      <TVFocusable
+        accessibilityRole="radio"
+        accessibilityState={{selected}}
+        accessibilityLabel={`${label} source`}
+        onPress={() => setIsPrivate(value)}
+        borderRadius={14}
+        focusScale={1.05}
+        style={{
+          height: 44,
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          backgroundColor: selected
+            ? colors.secondaryContainer
+            : colors.surfaceContainerHighest,
+          borderColor: selected ? colors.secondary : colors.outlineVariant,
+          borderRadius: 14,
+          borderWidth: 1,
+        }}>
+        <MaterialCommunityIcons
+          name={icon}
+          size={18}
+          color={
+            selected ? colors.onSecondaryContainer : colors.onSurfaceVariant
+          }
+        />
+        <Text
+          className="font-medium"
+          style={{
+            color: selected
+              ? colors.onSecondaryContainer
+              : colors.onSurfaceVariant,
+          }}>
+          {label}
+        </Text>
+      </TVFocusable>
+    );
   };
 
   return (
@@ -132,7 +210,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
             </TVFocusable>
           </View>
           <Text className="text-sm font-medium" style={{color: colors.onSurface}}>
-            Enter url of your hosted provider source or GitHub author
+            Enter a repo URL (GitHub, Codeberg, Bitbucket, GitLab) or author name. Use author@cb, author@bb or author@gl for non-GitHub hosts.
           </Text>
           <Text
             className="text-sm mt-[4px]"
@@ -168,7 +246,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
               borderWidth: isInputFocused ? 2.5 : 1,
               color: colors.onSurface,
             }}
-            placeholder="GitHub author or source URL"
+            placeholder="author, author@cb or repo URL"
             placeholderTextColor={colors.onSurfaceVariant}
             selectionColor={colors.primary}
             value={inputValue}
@@ -177,6 +255,67 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
             autoCapitalize="none"
             autoCorrect={false}
           />
+          <View className="flex-row gap-2 mt-3">
+            {renderVisibilityOption(false, 'Public', 'earth')}
+            {renderVisibilityOption(true, 'Private', 'lock')}
+          </View>
+          {isPrivate && (
+            <>
+              <View className="flex-row items-center gap-2 mt-3">
+                <TextInput
+                  className="h-14 px-4 flex-1"
+                  focusable={true}
+                  onFocus={() => setIsTokenFocused(true)}
+                  onBlur={() => setIsTokenFocused(false)}
+                  style={{
+                    backgroundColor: colors.surfaceContainerHighest,
+                    borderColor: isTokenFocused
+                      ? focusBorderColor
+                      : colors.outlineVariant,
+                    borderRadius: 18,
+                    borderWidth: isTokenFocused ? 2.5 : 1,
+                    color: colors.onSurface,
+                  }}
+                  placeholder="GitHub token"
+                  placeholderTextColor={colors.onSurfaceVariant}
+                  selectionColor={colors.primary}
+                  value={token}
+                  onChangeText={setToken}
+                  onSubmitEditing={handleConfirm}
+                  secureTextEntry={!showToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TVFocusable
+                  accessibilityRole="button"
+                  accessibilityLabel={showToken ? 'Hide token' : 'Show token'}
+                  onPress={() => setShowToken(current => !current)}
+                  borderRadius={14}
+                  focusScale={1.1}
+                  style={{
+                    height: 56,
+                    width: 48,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: colors.surfaceContainerHighest,
+                    borderRadius: 14,
+                  }}>
+                  <MaterialCommunityIcons
+                    name={showToken ? 'eye-off' : 'eye'}
+                    size={22}
+                    color={colors.onSurfaceVariant}
+                  />
+                </TVFocusable>
+              </View>
+              <Text
+                className="text-xs mt-2"
+                style={{color: colors.onSurfaceVariant, lineHeight: 16}}>
+                GitHub only. Use a fine-grained token with read-only Contents
+                access to this repo. The token is stored encrypted on this
+                device.
+              </Text>
+            </>
+          )}
           <View className="flex-row gap-2 mt-4">
             <TVFocusable
               accessibilityRole="button"

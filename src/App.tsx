@@ -52,6 +52,12 @@ import {syncDohSettings} from './lib/services/dohService';
 import {syncWarpSettings} from './lib/services/warpService';
 import {syncByeDpiSettings} from './lib/services/byeDpiService';
 import {
+  getInitialSourceIntent,
+  setPendingSourceToken,
+  subscribeSourceIntent,
+  type SourceIntentPayload,
+} from './lib/services/sourceIntent';
+import {
   reconcileCompletedDownloadOutputs,
   reconcileDownloadState,
 } from './lib/downloadReconciliation';
@@ -92,10 +98,8 @@ export type RootStackParamList = {
         screen?: keyof TabStackParamList;
         params?: {
           screen?: string;
-          params?: {
-            screen?: string;
-            params?: any;
-          };
+          // Nested screen params, or a leaf screen's own params.
+          params?: Record<string, unknown>;
         };
       }
     | undefined;
@@ -142,7 +146,7 @@ export type SettingsStackParamList = {
   About: undefined;
   Preferences: undefined;
   SubTitlesPreferences: undefined;
-  Extensions: undefined;
+  Extensions: {addSource?: string; requestId?: number} | undefined;
   DownloadsStack: undefined;
 };
 
@@ -169,6 +173,7 @@ const DownloadsStack = createNativeStackNavigator<DownloadsStackParamList>();
 const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 let pendingDownloadsNavigation = false;
+let pendingAddSource: SourceIntentPayload | undefined;
 
 LogBox.ignoreLogs([
   'You have passed a style to FlashList',
@@ -190,6 +195,25 @@ export const openDownloadsScreen = (): void => {
     return;
   }
   navigationRef.navigate('TabStack', {screen: 'DownloadsStack'});
+};
+
+// Opens Extensions with the add source dialog prefilled. The user still
+// confirms there, so another app or web page cannot add a source silently.
+const openAddSourceScreen = (payload: SourceIntentPayload): void => {
+  if (!navigationRef.isReady()) {
+    pendingAddSource = payload;
+    return;
+  }
+  pendingAddSource = undefined;
+  const requestId = Date.now();
+  setPendingSourceToken(requestId, payload.token);
+  navigationRef.navigate('TabStack', {
+    screen: 'SettingsStack',
+    params: {
+      screen: 'Extensions',
+      params: {addSource: payload.url, requestId},
+    },
+  });
 };
 
 const stackScreenOptions = {
@@ -610,12 +634,18 @@ const App = () => {
     }
   }, []);
 
+  useEffect(() => subscribeSourceIntent(openAddSourceScreen), []);
+
   const handleNavigationReady = useCallback(async () => {
     if (pendingDownloadsNavigation) {
       openDownloadsScreen();
     }
     // Hide bootsplash
     await BootSplash.hide({fade: true});
+    const initialSource = pendingAddSource ?? (await getInitialSourceIntent());
+    if (initialSource) {
+      openAddSourceScreen(initialSource);
+    }
     // Track initial screen
     if (hasFirebase) {
       await logScreenView();

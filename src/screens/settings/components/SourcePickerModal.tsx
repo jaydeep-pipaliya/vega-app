@@ -5,6 +5,7 @@ import Text from '../../../components/ui/Text';
 import {TVFocusable, TVFocusGuide} from '../../../components/tv';
 import MaterialDialogSurface from '../../../components/ui/MaterialDialogSurface';
 import type {ProviderSource} from '../../../lib/storage/extensionStorage';
+import {sourceTokenStorage} from '../../../lib/storage/sourceTokenStorage';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 
 interface SourcePickerModalProps {
@@ -96,11 +97,21 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
                   padding: 4,
                 }}>
                 <View className="flex-1">
-                  <Text
-                    className="font-semibold"
-                    style={{color: colors.onSurface}}>
-                    {source.author}
-                  </Text>
+                  <View className="flex-row items-center gap-1">
+                    <Text
+                      className="font-semibold"
+                      style={{color: colors.onSurface}}>
+                      {source.author}
+                    </Text>
+                    {sourceTokenStorage.has(source.author) && (
+                      <MaterialCommunityIcons
+                        name="lock"
+                        size={14}
+                        color={colors.onSurfaceVariant}
+                        accessibilityLabel="Private source"
+                      />
+                    )}
+                  </View>
                   <Text
                     className="mt-1 text-xs"
                     style={{color: colors.onSurfaceVariant}}

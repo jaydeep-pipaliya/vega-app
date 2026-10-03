@@ -78,7 +78,7 @@ const isSameProvider = (
 ) =>
   left?.value === right.value && left.source?.author === right.source?.author;
 
-const Extensions = ({navigation}: Props) => {
+const Extensions = ({navigation, route}: Props) => {
   const isScreenFocused = useIsFocused();
   const backButtonRef = useRef<View>(null);
   const backFocusHandleRef = useRef<number | null>(null);
@@ -633,6 +633,8 @@ const Extensions = ({navigation}: Props) => {
       <ProviderSourceManager
         visible
         primary={primary}
+        pendingSource={route.params?.addSource}
+        pendingSourceRequestId={route.params?.requestId}
         onSourceChanged={async (source: ProviderSource | undefined) => {
           const author = source?.author || '';
           setActiveSourceAuthor(author);
