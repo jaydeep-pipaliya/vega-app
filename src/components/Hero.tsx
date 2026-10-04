@@ -315,6 +315,11 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
     [submitProviderSearch],
   );
 
+  // Fill the field for editing; suggestions refresh for the new text.
+  const handleFillSuggestion = useCallback((title: string) => {
+    setSearchText(sanitizeSearchQuery(title));
+  }, []);
+
   // Debounced IMDb search suggestions for home page search. The timer lives in
   // the effect so the component stays compatible with React Compiler.
   useEffect(() => {
@@ -639,6 +644,7 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
             <SearchSuggestions
               suggestions={suggestions}
               onSelectSuggestion={handleSelectSuggestion}
+              onFillSuggestion={handleFillSuggestion}
             />
           </View>
         </SafeAreaView>

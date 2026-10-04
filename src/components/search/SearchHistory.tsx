@@ -4,14 +4,12 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import AppText from '../ui/Text';
 import Button from '../ui/Button';
-import IconButton from '../ui/IconButton';
 import {isTV} from '../../lib/tv/constants';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 
 interface SearchHistoryProps {
   history: string[];
   onSelectSearch: (text: string) => void;
-  onEditSearch?: (text: string) => void;
   onRemoveSearch: (text: string) => void;
   onClearHistory: () => void;
   searchFieldNodeHandle?: number | null;
@@ -22,7 +20,6 @@ interface HistoryRowProps {
   search: string;
   index: number;
   onPress: (search: string) => void;
-  onEdit?: (search: string) => void;
   onRemove: (search: string) => void;
   onItemFocus: (index: number) => void;
   focusBorderColor: string;
@@ -36,7 +33,6 @@ const HistoryRow = memo(
     search,
     index,
     onPress,
-    onEdit,
     onRemove,
     onItemFocus,
     focusBorderColor,
@@ -50,10 +46,6 @@ const HistoryRow = memo(
     const handlePress = useCallback(() => {
       onPress(search);
     }, [search, onPress]);
-
-    const handleEdit = useCallback(() => {
-      onEdit?.(search);
-    }, [search, onEdit]);
 
     const handleRemove = useCallback(() => {
       onRemove(search);
@@ -111,30 +103,28 @@ const HistoryRow = memo(
             }}>
             {search}
           </AppText>
-          <MaterialCommunityIcons
-            name="arrow-top-right"
-            size={18}
-            color={isFocused ? colors.primary : colors.onSurfaceVariant}
-          />
-        </Pressable>
-        {!isTV && (
-          <View style={{flexDirection: 'row', alignItems: 'center', marginLeft: 4}}>
-            {onEdit && (
-              <IconButton
-                icon="pencil-outline"
-                size={18}
-                label={`Edit ${search}`}
-                onPress={handleEdit}
-              />
-            )}
-            <IconButton
-              icon="close"
-              size={18}
-              label={`Remove ${search} from recent searches`}
+          {!isTV && (
+            <Pressable
               onPress={handleRemove}
-            />
-          </View>
-        )}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${search} from recent searches`}
+              style={({pressed}) => ({
+                marginLeft: 8,
+                padding: 4,
+                borderRadius: 16,
+                backgroundColor: pressed
+                  ? colors.surfaceContainerHighest
+                  : 'transparent',
+              })}>
+              <MaterialCommunityIcons
+                name="close"
+                size={20}
+                color={colors.onSurfaceVariant}
+              />
+            </Pressable>
+          )}
+        </Pressable>
       </View>
     );
   },
@@ -143,7 +133,6 @@ const HistoryRow = memo(
 const SearchHistory: React.FC<SearchHistoryProps> = ({
   history,
   onSelectSearch,
-  onEditSearch,
   onRemoveSearch,
   onClearHistory,
   searchFieldNodeHandle,
@@ -228,7 +217,6 @@ const SearchHistory: React.FC<SearchHistoryProps> = ({
                 nextFocusUp={nextUp}
                 nextFocusDown={nextDown}
                 onPress={handleSelect}
-                onEdit={onEditSearch}
                 onRemove={onRemoveSearch}
                 onItemFocus={handleItemFocus}
                 focusBorderColor={focusBorderColor}
@@ -248,7 +236,6 @@ const SearchHistory: React.FC<SearchHistoryProps> = ({
               search={item}
               index={index}
               onPress={handleSelect}
-              onEdit={onEditSearch}
               onRemove={onRemoveSearch}
               onItemFocus={handleItemFocus}
               focusBorderColor={focusBorderColor}

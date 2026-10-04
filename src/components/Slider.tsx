@@ -146,7 +146,10 @@ const Slider = ({
               flexShrink: 0,
               justifyContent: 'center',
               minHeight: 36,
-              paddingHorizontal: 12,
+              // The chevron glyph has ~6dp of empty space on its right, so
+              // less right padding makes both sides look even.
+              paddingLeft: 14,
+              paddingRight: 8,
             }}>
             <View
               style={{
@@ -159,7 +162,7 @@ const Slider = ({
               <AppText
                 role="labelLargeEmphasized"
                 numberOfLines={1}
-                style={{color: colors.primary, marginRight: 4}}>
+                style={{color: colors.primary, marginRight: 2}}>
                 See all
               </AppText>
               <MaterialCommunityIcons

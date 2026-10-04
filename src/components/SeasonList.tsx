@@ -893,6 +893,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
           type,
           position: 1,
           duration: 1,
+          seasonTitle: activeSeason.title,
         });
       }
       setStickyMenu({active: false});
@@ -934,6 +935,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
           type,
           position: 0,
           duration: 1,
+          seasonTitle: activeSeason.title,
         });
       }
       setStickyMenu({active: false});
@@ -1290,19 +1292,31 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
   // Last played episode of this title, re-read whenever the screen regains focus.
   const continueItems = useContinueWatchingStore(state => state.items);
   const readLastPlayed = useCallback((): LastPlayed | null => {
+    let stored: LastPlayed | null = null;
     try {
-      const stored = cacheStorage.getString(lastPlayedKey);
-      if (stored) return JSON.parse(stored);
+      const raw = cacheStorage.getString(lastPlayedKey);
+      if (raw) stored = JSON.parse(raw);
     } catch {}
+    // Continue watching follows every episode played, here, in the player's
+    // next-episode flow, and on synced devices. When it points elsewhere than
+    // the local record, it is the newer one.
     const item = continueItems.find(
       entry =>
         entry.infoUrl === routeParams.link &&
         entry.providerValue === providerValue &&
         entry.episode?.link,
     );
-    return item
-      ? {season: '', link: item.episode.link, title: item.episode.title}
-      : null;
+    if (!item) return stored;
+    // Desktop plays downloads from a file path; sourceLink is the provider link.
+    const link = item.episode.sourceLink || item.episode.link;
+    if (stored && (stored.link === link || stored.link === item.episode.link)) {
+      return stored;
+    }
+    return {
+      season: item.seasonTitle || '',
+      link,
+      title: item.episode.title,
+    };
   }, [lastPlayedKey, continueItems, routeParams.link, providerValue]);
   const [lastPlayed, setLastPlayed] = useState<LastPlayed | null>(readLastPlayed);
   useFocusEffect(

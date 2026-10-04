@@ -61,6 +61,16 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
     const [hasPreferredFocus, setHasPreferredFocus] = useState(true);
     const [containerHandle, setContainerHandle] = useState<number | null>(null);
     const tvFocusBorderColor = useTVFocusBorderColor();
+    // Text the native field already shows. Pushing it back with setText moves
+    // the cursor to the end, so only outside changes (clear, history pick) sync.
+    const nativeTextRef = useRef(value);
+    const handleNativeChange = useCallback(
+      (text: string) => {
+        nativeTextRef.current = text;
+        onChangeText(text);
+      },
+      [onChangeText],
+    );
 
     const exitEditingToContainer = useCallback(() => {
       Keyboard.dismiss();
@@ -105,7 +115,8 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
     }));
 
     useEffect(() => {
-      if (!isTV) {
+      if (!isTV && value !== nativeTextRef.current) {
+        nativeTextRef.current = value;
         fieldRef.current?.setText(value);
       }
     }, [value]);
@@ -282,7 +293,7 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
           ref={fieldRef}
           value={nativeValue}
           singleLine
-          onValueChange={onChangeText}
+          onValueChange={handleNativeChange}
           onFocusChanged={onFocusChange}
           keyboardOptions={{
             autoCorrectEnabled: false,

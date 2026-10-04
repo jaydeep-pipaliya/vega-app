@@ -12,8 +12,18 @@ export {SettingsStorage, settingsStorage} from './SettingsStorage';
 export type {SettingsKeys} from './SettingsStorage';
 
 // Export WatchListStorage
-export {WatchListStorage, watchListStorage} from './WatchListStorage';
-export type {WatchListKeys, WatchListItem} from './WatchListStorage';
+export {
+  WatchListStorage,
+  watchListStorage,
+  DEFAULT_COLLECTION,
+  DEFAULT_COLLECTION_ID,
+  getItemCollectionIds,
+} from './WatchListStorage';
+export type {
+  WatchListKeys,
+  WatchListItem,
+  LibraryCollection,
+} from './WatchListStorage';
 
 // Export CacheStorage
 export {CacheStorage, cacheStorageService} from './CacheStorage';

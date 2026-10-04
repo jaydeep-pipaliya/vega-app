@@ -3,6 +3,7 @@ import {settingsStorage} from '../storage';
 import {
   WatchListKeys,
   watchListStorage,
+  type LibraryCollection,
   type WatchListItem,
 } from '../storage/WatchListStorage';
 import {cacheStorage, mainStorage} from '../storage/StorageService';
@@ -26,6 +27,7 @@ import {
   type SyncTombstone,
   type SyncedDownload,
   type SyncedHistory,
+  type SyncedLibraryCollection,
   type SyncedWatchListItem,
   type VegaSyncManifest,
 } from './manifest';
@@ -48,6 +50,7 @@ let syncRequest: Promise<void> | undefined;
 let previousDownloads: Record<string, DownloadItem> = {};
 let previousHistory: ContinueWatchingItem[] = [];
 let previousWatchList: WatchListItem[] = [];
+let previousCollections: LibraryCollection[] = [];
 
 const getDeviceId = () => {
   const existing = mainStorage.getString(DEVICE_ID_KEY);
@@ -185,6 +188,7 @@ const toSyncedHistory = (item: ContinueWatchingItem): SyncedHistory => ({
   isSeries: item.type === 'series',
   lastPlayed: item.updatedAt,
   episodeTitle: item.episodeTitle || item.episode.title,
+  seasonTitle: item.seasonTitle,
   episode: item.episode,
   type: item.type,
   updatedAt: item.updatedAt,
@@ -228,6 +232,11 @@ const buildManifest = (): VegaSyncManifest => {
       .getWatchList()
       .map(item => [item.link, toSyncedWatchListItem(item)]),
   );
+  const collections = Object.fromEntries(
+    watchListStorage
+      .getCollections()
+      .map(collection => [collection.id, collection]),
+  );
   const history = mergeContinueWatchingIntoHistory(
     useContinueWatchingStore.getState().items,
   );
@@ -239,6 +248,7 @@ const buildManifest = (): VegaSyncManifest => {
     downloads,
     history,
     watchlist,
+    collections,
     tombstones: getTombstones(),
   };
 };
@@ -251,10 +261,12 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
     const position = item.progress ?? item.currentTime ?? 0;
     const duration = item.duration ?? 0;
     if (episode?.link && duration > 0) {
-      cacheStorage.setString(
-        episode.link,
-        JSON.stringify({position, duration}),
-      );
+      const progress = JSON.stringify({position, duration});
+      // Desktop plays downloads from a file path; sourceLink is the provider
+      // link the episode list here uses.
+      [episode.link, episode.sourceLink]
+        .filter((key): key is string => Boolean(key))
+        .forEach(key => cacheStorage.setString(key, progress));
     }
     if (!item.link || !item.provider) {
       return;
@@ -283,6 +295,7 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
         episodeTitle:
           item.episodeTitle ||
           (episode.title !== item.title ? episode.title : undefined),
+        seasonTitle: item.seasonTitle,
         episode,
         type: item.type || (item.isSeries ? 'series' : 'movie'),
         poster: item.poster,
@@ -335,6 +348,7 @@ export const setSyncedEpisodeProgress = ({
   type,
   position,
   duration,
+  seasonTitle,
 }: {
   episode: ContinueWatchingItem['episode'];
   title: string;
@@ -345,6 +359,7 @@ export const setSyncedEpisodeProgress = ({
   type: string;
   position: number;
   duration: number;
+  seasonTitle?: string;
 }) => {
   const id = episode.sourceLink || episode.id || episode.link;
   if (!id) {
@@ -365,6 +380,7 @@ export const setSyncedEpisodeProgress = ({
     isSeries: type === 'series',
     lastPlayed: updatedAt,
     episodeTitle: episode.title,
+    seasonTitle,
     episode,
     type,
     updatedAt,
@@ -461,6 +477,21 @@ const applyRemoteWatchList = (
   }
 };
 
+const applyRemoteCollections = (
+  collections: Record<string, SyncedLibraryCollection>,
+) => {
+  const items = Object.values(collections).sort(
+    (a, b) => a.createdAt - b.createdAt,
+  );
+  const serialized = JSON.stringify(items);
+  if (JSON.stringify(watchListStorage.getCollections()) !== serialized) {
+    watchListStorage.saveCollections(items);
+  }
+  if (JSON.stringify(useWatchListStore.getState().collections) !== serialized) {
+    useWatchListStore.setState({collections: items});
+  }
+};
+
 const applyTombstones = (tombstones: Record<string, SyncTombstone>) => {
   const store = useDownloadsStore.getState();
   const currentHistory = useContinueWatchingStore.getState().items;
@@ -521,6 +552,7 @@ const runSharedFolderSync = async (): Promise<void> => {
     applyTombstones(merged.tombstones);
     await applyRemoteDownloads(merged.downloads);
     applyRemoteHistory(merged.history);
+    applyRemoteCollections(merged.collections);
     applyRemoteWatchList(merged.watchlist);
   } finally {
     applyingRemoteState = false;
@@ -528,6 +560,7 @@ const runSharedFolderSync = async (): Promise<void> => {
   previousDownloads = useDownloadsStore.getState().downloads;
   previousHistory = useContinueWatchingStore.getState().items;
   previousWatchList = watchListStorage.getWatchList();
+  previousCollections = watchListStorage.getCollections();
   await publishSyncManifest();
 };
 
@@ -547,6 +580,7 @@ export const initializeSyncService = async (): Promise<void> => {
     previousHistory = useContinueWatchingStore.getState().items;
     mergeContinueWatchingIntoHistory(previousHistory);
     previousWatchList = watchListStorage.getWatchList();
+    previousCollections = watchListStorage.getCollections();
     useDownloadsStore.subscribe(state => {
       if (applyingRemoteState) {
         previousDownloads = state.downloads;
@@ -600,6 +634,7 @@ export const initializeSyncService = async (): Promise<void> => {
     useWatchListStore.subscribe(state => {
       if (applyingRemoteState) {
         previousWatchList = watchListStorage.getWatchList();
+        previousCollections = state.collections;
         return;
       }
       const currentLinks = new Set(state.watchList.map(item => item.link));
@@ -608,7 +643,16 @@ export const initializeSyncService = async (): Promise<void> => {
           addTombstone('watchlist', item.link);
         }
       }
+      const currentCollectionIds = new Set(
+        state.collections.map(collection => collection.id),
+      );
+      for (const collection of previousCollections) {
+        if (!currentCollectionIds.has(collection.id)) {
+          addTombstone('collection', collection.id);
+        }
+      }
       previousWatchList = watchListStorage.getWatchList();
+      previousCollections = state.collections;
       schedulePublish();
     });
   }

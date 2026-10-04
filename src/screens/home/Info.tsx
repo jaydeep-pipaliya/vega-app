@@ -27,7 +27,7 @@ import SkeletonLoader from '../../components/Skeleton';
 import {useContentDetails} from '../../lib/hooks/useContentInfo';
 import {extractImageAccent, getCachedImageAccent} from '../../lib/imageAccent';
 import type {Link} from '../../lib/providers/types';
-import {settingsStorage, watchListStorage} from '../../lib/storage';
+import {settingsStorage} from '../../lib/storage';
 import useContentStore from '../../lib/zustand/contentStore';
 import useWatchListStore from '../../lib/zustand/watchListStore';
 import {M3PaletteContext, useM3Colors} from '../../theme/M3PaletteContext';
@@ -35,6 +35,7 @@ import type {MaterialColors} from '../../theme/colors';
 import {buildDetailPalette} from '../../theme/detailPalette';
 import ContentOverview from './components/ContentOverview';
 import InfoStoryModal from './components/InfoStoryModal';
+import LibraryCollectionDialog from '../../components/library/LibraryCollectionDialog';
 import InfoSkeleton from './components/InfoSkeleton';
 import StatusBarScrim from '../../components/ui/StatusBarScrim';
 import {TVFocusGuide} from '../../components/tv';
@@ -51,6 +52,9 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
   const installedProviders = useContentStore(state => state.installedProviders);
   const addItem = useWatchListStore(state => state.addItem);
   const removeItem = useWatchListStore(state => state.removeItem);
+  const hasCustomCollections = useWatchListStore(
+    state => state.collections.length > 0,
+  );
   const providerValue = route.params.provider || provider.value;
   const {
     info,
@@ -61,9 +65,10 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
     error,
     refetch,
   } = useContentDetails(route.params.link, providerValue);
-  const [inLibrary, setInLibrary] = useState(() =>
-    watchListStorage.isInWatchList(route.params.link),
+  const inLibrary = useWatchListStore(state =>
+    state.watchList.some(item => item.link === route.params.link),
   );
+  const [collectionPickerVisible, setCollectionPickerVisible] = useState(false);
   const [readMore, setReadMore] = useState(false);
   const [storyVisible, setStoryVisible] = useState(false);
   const screenFocused = useIsFocused();
@@ -231,9 +236,13 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
         ignoreAndroidSystemSettings: false,
       });
     }
+    // With categories, ask where to save. With only the default one, toggle.
+    if (hasCustomCollections) {
+      setCollectionPickerVisible(true);
+      return;
+    }
     if (inLibrary) {
       removeItem(route.params.link);
-      setInLibrary(false);
       return;
     }
     addItem({
@@ -242,10 +251,10 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
       link: route.params.link,
       provider: providerValue,
     });
-    setInLibrary(true);
   }, [
     addItem,
     displayTitle,
+    hasCustomCollections,
     inLibrary,
     posterImage,
     providerValue,
@@ -452,6 +461,16 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
             tmdbId={info?.tmdbId}
             type={info?.type}
             visible={storyVisible}
+          />
+          <LibraryCollectionDialog
+            visible={collectionPickerVisible}
+            onClose={() => setCollectionPickerVisible(false)}
+            item={{
+              title: displayTitle,
+              poster: posterImage,
+              link: route.params.link,
+              provider: providerValue,
+            }}
           />
         </View>
       </M3PaletteContext.Provider>

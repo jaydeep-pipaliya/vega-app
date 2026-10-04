@@ -7,6 +7,8 @@ export interface ContinueWatchingItem {
   id: string;
   title: string;
   episodeTitle?: string;
+  /** Season (link group) of the episode, used by the Resume button. */
+  seasonTitle?: string;
   episode: EpisodeLink;
   type: string;
   poster?: string;

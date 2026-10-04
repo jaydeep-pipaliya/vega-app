@@ -4,7 +4,7 @@ import Home from './screens/home/Home';
 import Info from './screens/home/Info';
 import Player from './screens/home/Player';
 import Settings from './screens/settings/Settings';
-import WatchList from './screens/WatchList';
+import Library from './screens/Library';
 import Search from './screens/Search';
 import {isTV} from './lib/tv';
 import ScrollList from './screens/ScrollList';
@@ -311,7 +311,7 @@ const searchTabOptions = {
   tabBarIcon: makeTabIcon('magnify', 'magnify'),
 };
 const watchListTabOptions = {
-  title: 'Watch List',
+  title: 'Library',
   tabBarIcon: makeTabIcon('bookmark', 'bookmark-outline'),
 };
 const downloadsTabOptions = {
@@ -353,7 +353,7 @@ function SearchStackScreen() {
 function WatchListStackScreen() {
   return (
     <WatchListStack.Navigator screenOptions={stackScreenOptions}>
-      <WatchListStack.Screen name="WatchList" component={WatchList} />
+      <WatchListStack.Screen name="WatchList" component={Library} />
       <WatchListStack.Screen name="Info" component={Info} />
     </WatchListStack.Navigator>
   );

@@ -15,6 +15,7 @@ export enum SettingsKeys {
   IS_CUSTOM_THEME = 'isCustomTheme',
   SHOW_TAB_BAR_LABELS = 'showTabBarLabels',
   HIDE_DOWNLOADS_TAB = 'hideDownloadsTab',
+  SHOW_CONTINUE_WATCHING = 'showContinueWatching',
   CUSTOM_COLOR = 'customColor',
   ACCENT_SOURCE = 'accentSource',
   LAUNCHER_ICON = 'launcherIcon',
@@ -181,6 +182,15 @@ export class SettingsStorage {
 
   setHideDownloadsTab(hide: boolean): void {
     mainStorage.setBool(SettingsKeys.HIDE_DOWNLOADS_TAB, hide);
+  }
+
+  /** Continue watching row on Home. Playback positions are saved either way. */
+  showContinueWatching(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_CONTINUE_WATCHING, true);
+  }
+
+  setShowContinueWatching(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_CONTINUE_WATCHING, show);
   }
 
   isHapticFeedbackEnabled(): boolean {

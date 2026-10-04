@@ -254,11 +254,9 @@ const Search = () => {
     [handleSearch],
   );
 
-  const handleEditSearch = useCallback((text: string) => {
-    suppressSuggestionsRef.current = true;
-    setSuggestions([]);
-    setSearchText(text);
-    searchFieldRef.current?.focus();
+  // Fill the field for editing; suggestions refresh for the new text.
+  const handleFillSuggestion = useCallback((title: string) => {
+    setSearchText(sanitizeSearchQuery(title));
   }, []);
 
   const removeHistoryItem = useCallback(
@@ -360,6 +358,7 @@ const Search = () => {
               <SearchSuggestions
                 suggestions={suggestions}
                 onSelectSuggestion={handleSelectSuggestion}
+                onFillSuggestion={handleFillSuggestion}
                 searchFieldNodeHandle={searchFieldNode}
                 onFirstItemNodeHandle={setFirstItemNode}
               />
@@ -385,7 +384,6 @@ const Search = () => {
               <SearchHistory
                 history={searchHistory}
                 onSelectSearch={handleSearch}
-                onEditSearch={handleEditSearch}
                 onRemoveSearch={removeHistoryItem}
                 onClearHistory={clearHistory}
                 searchFieldNodeHandle={searchFieldNode}

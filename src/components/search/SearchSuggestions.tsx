@@ -10,6 +10,8 @@ import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
 interface SearchSuggestionsProps {
   suggestions: IMDbSuggestion[];
   onSelectSuggestion: (title: string) => void;
+  /** Puts the title in the search field without searching, for editing. */
+  onFillSuggestion?: (title: string) => void;
   searchFieldNodeHandle?: number | null;
   onFirstItemNodeHandle?: (node: number | null) => void;
 }
@@ -18,6 +20,7 @@ interface SuggestionItemProps {
   item: IMDbSuggestion;
   index: number;
   onPress: (title: string) => void;
+  onFill?: (title: string) => void;
   onItemFocus: (index: number) => void;
   focusBorderColor: string;
   nextFocusUp?: number | null;
@@ -30,6 +33,7 @@ const SuggestionItem = memo(
     item,
     index,
     onPress,
+    onFill,
     onItemFocus,
     focusBorderColor,
     nextFocusUp,
@@ -94,11 +98,31 @@ const SuggestionItem = memo(
           }}>
           {item.title}
         </AppText>
-        <MaterialCommunityIcons
-          name="arrow-top-right"
-          size={18}
-          color={isFocused ? colors.primary : colors.onSurfaceVariant}
-        />
+        {onFill && (
+          <Pressable
+            onPress={() => onFill(item.title)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit search with ${item.title}`}
+            style={({pressed}) => ({
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              marginVertical: -8,
+              marginRight: -8,
+              borderRadius: 18,
+              backgroundColor: pressed
+                ? colors.surfaceContainerHighest
+                : 'transparent',
+            })}>
+            <MaterialCommunityIcons
+              name="arrow-top-left"
+              size={20}
+              color={colors.onSurfaceVariant}
+            />
+          </Pressable>
+        )}
       </Pressable>
     );
   },
@@ -107,6 +131,7 @@ const SuggestionItem = memo(
 const SearchSuggestions: React.FC<SearchSuggestionsProps> = ({
   suggestions,
   onSelectSuggestion,
+  onFillSuggestion,
   searchFieldNodeHandle,
   onFirstItemNodeHandle,
 }) => {
@@ -189,6 +214,7 @@ const SearchSuggestions: React.FC<SearchSuggestionsProps> = ({
               item={item}
               index={index}
               onPress={handleSelect}
+              onFill={onFillSuggestion}
               onItemFocus={handleItemFocus}
               focusBorderColor={focusBorderColor}
             />

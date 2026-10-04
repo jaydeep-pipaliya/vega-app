@@ -807,6 +807,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       id: continueWatchingId,
       title: route.params.primaryTitle,
       episodeTitle: activeEpisode.title || route.params.secondaryTitle,
+      seasonTitle: route.params.secondaryTitle,
       episode: activeEpisode,
       type: route.params.type,
       poster: route.params.poster?.poster,

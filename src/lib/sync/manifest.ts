@@ -3,7 +3,11 @@ import type {SkipInterval} from '../providers/types';
 export const VEGA_SYNC_SCHEMA_VERSION = 1;
 export const VEGA_SYNC_DIRECTORY = '.vega-sync';
 
-export type SyncRecordKind = 'download' | 'history' | 'watchlist';
+export type SyncRecordKind =
+  | 'download'
+  | 'history'
+  | 'watchlist'
+  | 'collection';
 
 export interface SyncedDownload {
   id: string;
@@ -52,6 +56,8 @@ export interface SyncedHistory {
   currentTime?: number;
   playbackRate?: number;
   episodeTitle?: string;
+  /** Season (link group) the episode belongs to. Older versions omit it. */
+  seasonTitle?: string;
   episode?: SyncedHistoryEpisode;
   type?: string;
   cachedInfoData?: unknown;
@@ -63,6 +69,18 @@ export interface SyncedWatchListItem {
   poster: string;
   link: string;
   provider: string;
+  updatedAt: number;
+  /** Library category ids. Missing in manifests from older versions. */
+  collections?: string[];
+}
+
+/** User-made library category. Older versions ignore this. */
+export interface SyncedLibraryCollection {
+  id: string;
+  name: string;
+  icon: string;
+  color?: string;
+  createdAt: number;
   updatedAt: number;
 }
 
@@ -81,6 +99,7 @@ export interface VegaSyncManifest {
   downloads: Record<string, SyncedDownload>;
   history?: Record<string, SyncedHistory>;
   watchlist?: Record<string, SyncedWatchListItem>;
+  collections?: Record<string, SyncedLibraryCollection>;
   tombstones: Record<string, SyncTombstone>;
 }
 
@@ -88,6 +107,7 @@ export interface MergedSyncState {
   downloads: Record<string, SyncedDownload>;
   history: Record<string, SyncedHistory>;
   watchlist: Record<string, SyncedWatchListItem>;
+  collections: Record<string, SyncedLibraryCollection>;
   tombstones: Record<string, SyncTombstone>;
 }
 
@@ -198,6 +218,7 @@ export const mergeSyncManifests = (
   const downloads: Record<string, SyncedDownload> = {};
   const history: Record<string, SyncedHistory> = {};
   const watchlist: Record<string, SyncedWatchListItem> = {};
+  const collections: Record<string, SyncedLibraryCollection> = {};
   const tombstones: Record<string, SyncTombstone> = {};
 
   for (const manifest of manifests) {
@@ -214,6 +235,11 @@ export const mergeSyncManifests = (
     for (const [link, item] of Object.entries(manifest.watchlist || {})) {
       if (!watchlist[link] || item.updatedAt >= watchlist[link].updatedAt) {
         watchlist[link] = item;
+      }
+    }
+    for (const [id, item] of Object.entries(manifest.collections || {})) {
+      if (!collections[id] || item.updatedAt >= collections[id].updatedAt) {
+        collections[id] = item;
       }
     }
     for (const [id, item] of Object.entries(manifest.history || {})) {
@@ -263,6 +289,11 @@ export const mergeSyncManifests = (
       if (item && tombstone.deletedAt >= item.updatedAt) {
         delete history[tombstone.id];
       }
+    } else if (tombstone.kind === 'collection') {
+      const item = collections[tombstone.id];
+      if (item && tombstone.deletedAt >= item.updatedAt) {
+        delete collections[tombstone.id];
+      }
     } else {
       const item = watchlist[tombstone.id];
       if (item && tombstone.deletedAt >= item.updatedAt) {
@@ -277,5 +308,5 @@ export const mergeSyncManifests = (
       .slice(0, MAX_SYNC_HISTORY_ITEMS),
   );
 
-  return {downloads, history: limitedHistory, watchlist, tombstones};
+  return {downloads, history: limitedHistory, watchlist, collections, tombstones};
 };

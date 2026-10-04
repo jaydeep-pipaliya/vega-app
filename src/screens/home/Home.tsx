@@ -28,6 +28,7 @@ import {useM3Colors} from '../../theme/M3PaletteContext';
 import ContinueWatching from '../../components/ContinueWatching';
 import StatusBarScrim from '../../components/ui/StatusBarScrim';
 import {isTV} from '../../lib/tv/constants';
+import useNavigationPreferencesStore from '../../lib/zustand/navigationPreferencesStore';
 
 type Props = NativeStackScreenProps<HomeStackParamList, 'Home'>;
 
@@ -57,6 +58,9 @@ const Home = ({}: Props) => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const [isAtTop, setIsAtTop] = useState(true);
+  const showContinueWatching = useNavigationPreferencesStore(
+    state => state.showContinueWatching,
+  );
 
   // Memoize static values
   const disableDrawer = useMemo(
@@ -292,7 +296,7 @@ const Home = ({}: Props) => {
                     isDrawerOpen={isDrawerOpen}
                     onOpenDrawer={openDrawer}
                   />
-                  <ContinueWatching />
+                  {showContinueWatching && <ContinueWatching />}
                 </>
               }
               ListFooterComponent={

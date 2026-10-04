@@ -45,9 +45,6 @@ const Preferences = ({navigation}: any) => {
       return () => sub.remove();
     }, [navigation]),
   );
-  // const [showRecentlyWatched, setShowRecentlyWatched] = useState(
-  //   settingsStorage.getBool('showRecentlyWatched') || false,
-  // );
   const [disableDrawer, setDisableDrawer] = useState(
     settingsStorage.getBool('disableDrawer') || false,
   );
@@ -88,6 +85,12 @@ const Preferences = ({navigation}: any) => {
   );
   const setHideDownloadsTab = useNavigationPreferencesStore(
     state => state.setHideDownloadsTab,
+  );
+  const showContinueWatching = useNavigationPreferencesStore(
+    state => state.showContinueWatching,
+  );
+  const setShowContinueWatching = useNavigationPreferencesStore(
+    state => state.setShowContinueWatching,
   );
 
   const [OpenExternalPlayer, setOpenExternalPlayer] = useState(
@@ -194,15 +197,12 @@ const Preferences = ({navigation}: any) => {
               setShowHamburgerMenu(next);
             }}
           />
-          {/* <SettingsSwitchRow
-            title="Recently watched"
-            description="Keep your resume rail on Home"
-            value={showRecentlyWatched}
-            onValueChange={next => {
-              settingsStorage.setBool('showRecentlyWatched', next);
-              setShowRecentlyWatched(next);
-            }}
-          /> */}
+          <SettingsSwitchRow
+            title="Continue watching"
+            description="Show the Continue watching row on Home. Playback positions are still saved."
+            value={showContinueWatching}
+            onValueChange={setShowContinueWatching}
+          />
           <SettingsSwitchRow
             title="Disable drawer"
             value={disableDrawer}

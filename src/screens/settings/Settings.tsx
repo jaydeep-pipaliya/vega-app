@@ -297,7 +297,7 @@ const Settings = ({navigation}: Props) => {
     showAppDialog({
       title: 'Erase all local data?',
       message:
-        'This permanently erases every Vega MMKV store, including settings, installed provider data, Watchlist, Continue watching, download records, and cached state. This cannot be undone. Downloaded media files on disk are not deleted.',
+        'This permanently erases every Vega MMKV store, including settings, installed provider data, Library, Continue watching, download records, and cached state. This cannot be undone. Downloaded media files on disk are not deleted.',
       variant: 'error',
       actions: [
         {label: 'Cancel'},

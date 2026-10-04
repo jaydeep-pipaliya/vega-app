@@ -381,8 +381,8 @@ const ContentOverview = ({
             />
           ) : null}
           <InfoAction
-            icon={inLibrary ? 'bookmark' : 'bookmark-outline'}
-            label={inLibrary ? 'In watchlist' : 'Watchlist'}
+            icon={inLibrary ? 'bookmark-check' : 'bookmark-plus-outline'}
+            label={inLibrary ? 'Saved' : 'Save'}
             onPress={onToggleLibrary}
           />
         </View>

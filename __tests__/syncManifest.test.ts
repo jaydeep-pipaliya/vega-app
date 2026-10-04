@@ -451,6 +451,88 @@ describe('Vega sync manifest', () => {
     ]);
   });
 
+  it('merges library categories and keeps the newest edit', () => {
+    const category = {
+      id: 'c1',
+      name: 'Horror',
+      icon: 'ghost',
+      createdAt: 5,
+      updatedAt: 5,
+    };
+    const merged = mergeSyncManifests([
+      manifest('mobile', {collections: {c1: category}}),
+      manifest('desktop', {
+        collections: {
+          c1: {...category, name: 'Scary', icon: '👻', updatedAt: 9},
+          c2: {...category, id: 'c2', name: 'Anime', createdAt: 7},
+        },
+      }),
+    ]);
+
+    expect(merged.collections.c1.name).toBe('Scary');
+    expect(merged.collections.c1.icon).toBe('👻');
+    expect(Object.keys(merged.collections).sort()).toEqual(['c1', 'c2']);
+  });
+
+  it('keeps a deleted library category from coming back', () => {
+    const merged = mergeSyncManifests([
+      manifest('mobile', {
+        collections: {
+          c1: {id: 'c1', name: 'Horror', icon: 'ghost', createdAt: 5, updatedAt: 5},
+        },
+      }),
+      manifest('desktop', {
+        tombstones: {
+          [getTombstoneKey('collection', 'c1')]: {
+            kind: 'collection',
+            id: 'c1',
+            deletedAt: 8,
+          },
+        },
+      }),
+    ]);
+
+    expect(merged.collections).toEqual({});
+  });
+
+  it('syncs the categories of a saved title with the newest change', () => {
+    const item = {
+      title: 'Title',
+      poster: '',
+      link: 'movie',
+      provider: 'provider',
+    };
+    const merged = mergeSyncManifests([
+      manifest('mobile', {
+        watchlist: {movie: {...item, collections: ['watchlist'], updatedAt: 5}},
+      }),
+      manifest('desktop', {
+        watchlist: {movie: {...item, collections: ['c1', 'c2'], updatedAt: 9}},
+      }),
+    ]);
+
+    expect(merged.watchlist.movie.collections).toEqual(['c1', 'c2']);
+  });
+
+  it('does not let a category tombstone remove a saved title', () => {
+    const merged = mergeSyncManifests([
+      manifest('mobile', {
+        watchlist: {
+          c1: {title: 'T', poster: '', link: 'c1', provider: 'p', updatedAt: 1},
+        },
+        tombstones: {
+          [getTombstoneKey('collection', 'c1')]: {
+            kind: 'collection',
+            id: 'c1',
+            deletedAt: 8,
+          },
+        },
+      }),
+    ]);
+
+    expect(Object.keys(merged.watchlist)).toEqual(['c1']);
+  });
+
   it('ignores malformed or unsupported manifests', () => {
     expect(parseSyncManifest('{bad json')).toBeNull();
     expect(parseSyncManifest('{"schemaVersion":2}')).toBeNull();
