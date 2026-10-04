@@ -102,7 +102,7 @@ module.exports = () => {
                 },
               },
             },
-            debug: { minifyEnabled: false, debuggable: true },
+            debug: {minifyEnabled: false, debuggable: true},
           },
         },
         ios: {},
@@ -136,7 +136,7 @@ module.exports = () => {
       displayName: 'Vega',
       jsEngine: 'hermes',
       newArchEnabled: true,
-      autolinking: { exclude: ['expo-splash-screen'] },
+      autolinking: {exclude: ['expo-splash-screen']},
       plugins,
       slug: 'vega',
       version: '5.0.1',
@@ -146,11 +146,11 @@ module.exports = () => {
       },
       android: {
         ...(!IS_PLAYSTORE && hasAndroidGoogleServices
-          ? { googleServicesFile: androidGoogleServicesFile }
+          ? {googleServicesFile: androidGoogleServicesFile}
           : {}),
         minSdkVersion: 28,
         package: PACKAGE_NAME,
-        versionCode: 197,
+        versionCode: 198,
         permissions: [
           'FOREGROUND_SERVICE',
           'FOREGROUND_SERVICE_DATA_SYNC',
@@ -170,15 +170,15 @@ module.exports = () => {
           'android.permission.WRITE_EXTERNAL_STORAGE',
           ...(IS_PLAYSTORE
             ? [
-              'android.permission.REQUEST_INSTALL_PACKAGES',
-              'com.google.android.gms.permission.AD_ID',
-            ]
+                'android.permission.REQUEST_INSTALL_PACKAGES',
+                'com.google.android.gms.permission.AD_ID',
+              ]
             : []),
         ],
         queries: [
-          { action: 'VIEW', data: { scheme: 'http' } },
-          { action: 'VIEW', data: { scheme: 'https' } },
-          { action: 'VIEW', data: { scheme: 'vlc' } },
+          {action: 'VIEW', data: {scheme: 'http'}},
+          {action: 'VIEW', data: {scheme: 'https'}},
+          {action: 'VIEW', data: {scheme: 'vlc'}},
         ],
         allowBackup: true,
         adaptiveIcon: {
@@ -190,7 +190,7 @@ module.exports = () => {
       },
       ios: {
         ...(!IS_PLAYSTORE && hasIosGooglePlist
-          ? { googleServicesFile: iosGoogleServicesFile }
+          ? {googleServicesFile: iosGoogleServicesFile}
           : {}),
       },
       platforms: ['ios', 'android'],
