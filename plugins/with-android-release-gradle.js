@@ -16,17 +16,12 @@ module.exports = function withAndroidReleaseGradle(config) {
       const helperGradle = path.join(appDir, 'with-release-config.gradle');
       const abiSplitsGradle = path.join(appDir, 'with-abi-splits.gradle');
 
-      const isTvConfig = Boolean(config.extra?.isTV);
-
       // Write helper gradle to add the APK rename logic if not present
       const helperContent = `// Auto-applied by with-android-release-gradle config plugin
 if (project.android) {
-  def isTV = (project.findProperty("isTV") == "true" ||
-              project.findProperty("EXPO_TV") == "1" ||
-              System.getenv("EXPO_TV") == "1" ||
-              System.getenv("APP_VARIANT") == "tv" ||
-              ${isTvConfig})
-  def baseAppName = isTV ? "vega-tv" : "vega-mobile-universal"
+  // One APK for phone and TV: no variant in the name, so the in-app updater
+  // picks the same file on both.
+  def baseAppName = "vega"
   project.ext { appName = baseAppName }
 
   project.android.applicationVariants.all { variant ->
