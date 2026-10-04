@@ -10,6 +10,9 @@ const withAndroidNativeConfig = config => {
     const application = manifestConfig.modResults.manifest.application?.[0];
     if (application?.$) {
       application.$['android:usesCleartextTraffic'] = 'true';
+      // Larger Java heap for player buffers; the buffer settings cap usage by
+      // device RAM, so this only raises the ceiling.
+      application.$['android:largeHeap'] = 'true';
     }
 
     // Custom "add provider source" intent (action + "url" extra, no data URI).

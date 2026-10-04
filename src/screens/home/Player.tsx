@@ -224,6 +224,18 @@ const BOTTOM_CONTROL_LABEL_STYLE = {
 };
 const BottomControlButton = isTV ? Pressable : TouchableOpacity;
 
+/** "#RGB" / "#RRGGBB" / "#AARRGGBB" to Android "#AARRGGBB" with the given alpha. */
+const withAlpha = (hex: string, opacity: number) => {
+  let rgb = hex.replace('#', '');
+  if (rgb.length === 3) rgb = rgb.split('').map(c => c + c).join('');
+  if (rgb.length === 8) rgb = rgb.slice(2);
+  if (!/^[0-9a-f]{6}$/i.test(rgb) || opacity >= 1) return hex;
+  const alpha = Math.round(Math.max(0, opacity) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `#${alpha}${rgb}`;
+};
+
 type QualityIconName = '8k' | '4k' | '2k' | 'hd' | 'sd' | 'video-settings';
 
 const getQualityIconName = (
@@ -1134,6 +1146,8 @@ const Player = ({route}: Props): React.JSX.Element => {
     () => settingsStorage.isSwipeGestureEnabled(),
     [],
   );
+  const forwardBufferMB = useMemo(() => settingsStorage.getForwardBufferMB(), []);
+  const backBufferMB = useMemo(() => settingsStorage.getBackBufferMB(), []);
   const showMediaControls = useMemo(
     () => settingsStorage.showMediaControls(),
     [],
@@ -2597,11 +2611,15 @@ const Player = ({route}: Props): React.JSX.Element => {
             : selectedStream.link) || '',
         startPosition: torrentStartMs,
         bufferConfig: {
+          // Sizes decide how much is buffered (patched native load control);
+          // the long time limits only stop low-bitrate video buffering forever.
           minBufferMs: 8000,
-          maxBufferMs: 20000,
+          maxBufferMs: 10 * 60 * 1000,
           bufferForPlaybackMs: 1500,
           bufferForPlaybackAfterRebufferMs: 3000,
-          backBufferDurationMs: 0,
+          backBufferDurationMs: backBufferMB > 0 ? 10 * 60 * 1000 : 0,
+          forwardBufferMB,
+          backBufferMB,
           maxHeapAllocationPercent: 0.18,
           minBufferMemoryReservePercent: 0.2,
           minBackBufferMemoryReservePercent: 0.25,
@@ -2628,10 +2646,16 @@ const Player = ({route}: Props): React.JSX.Element => {
         fontSize: settingsStorage.getSubtitleFontSize() ?? 16,
         opacity: settingsStorage.getSubtitleOpacity() ?? 1,
         paddingBottom: settingsStorage.getSubtitleBottomPadding() ?? 10,
-        textColor: settingsStorage.getSubtitleTextColor(),
+        textColor: withAlpha(
+          settingsStorage.getSubtitleTextColor(),
+          settingsStorage.getSubtitleTextOpacity(),
+        ),
         fontFamily: settingsStorage.getSubtitleFontFamily(),
         edgeType: settingsStorage.getSubtitleEdgeType(),
-        edgeColor: settingsStorage.getSubtitleEdgeColor(),
+        edgeColor: withAlpha(
+          settingsStorage.getSubtitleEdgeColor(),
+          settingsStorage.getSubtitleTextOpacity(),
+        ),
         outlineWidth: settingsStorage.getSubtitleOutlineWidth() ?? 2,
         subtitlesFollowVideo: false,
       },
@@ -2714,6 +2738,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       hideSeekButtons,
       showControls,
       useSharedControlAnimations,
+      forwardBufferMB,
+      backBufferMB,
     ],
   );
 

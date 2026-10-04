@@ -8,7 +8,11 @@ export {
 } from './StorageService';
 
 // Export SettingsStorage
-export {SettingsStorage, settingsStorage} from './SettingsStorage';
+export {
+  SettingsStorage,
+  settingsStorage,
+  BUFFER_LIMITS,
+} from './SettingsStorage';
 export type {SettingsKeys} from './SettingsStorage';
 
 // Export WatchListStorage

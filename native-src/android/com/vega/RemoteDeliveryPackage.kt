@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class RemoteDeliveryPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(RemoteDeliveryModule(reactContext), VolumeKeyModule(reactContext), VegaLogModule(reactContext), SourceIntentModule(reactContext))
+        return listOf(RemoteDeliveryModule(reactContext), VolumeKeyModule(reactContext), VegaLogModule(reactContext), SourceIntentModule(reactContext), DeviceMemoryModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

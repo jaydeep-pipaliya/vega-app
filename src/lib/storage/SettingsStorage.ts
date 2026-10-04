@@ -35,6 +35,8 @@ export enum SettingsKeys {
   SHOW_PLAYER_EPISODE_SIDEBAR = 'showPlayerEpisodeSidebar',
   ENABLE_2X_GESTURE = 'enable2xGesture',
   ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
+  FORWARD_BUFFER_MB = 'forwardBufferMB',
+  BACK_BUFFER_MB = 'backBufferMB',
 
   // Quality settings
   EXCLUDED_QUALITIES = 'excludedQualities',
@@ -46,6 +48,7 @@ export enum SettingsKeys {
   // Subtitle settings
   SUBTITLE_FONT_SIZE = 'subtitleFontSize',
   SUBTITLE_OPACITY = 'subtitleOpacity',
+  SUBTITLE_TEXT_OPACITY = 'subtitleTextOpacity',
   SUBTITLE_BOTTOM_PADDING = 'subtitleBottomPadding',
   SUBTITLE_TEXT_COLOR = 'subtitleTextColor',
   SUBTITLE_FONT_FAMILY = 'subtitleFontFamily',
@@ -86,6 +89,32 @@ export enum SettingsKeys {
 /**
  * Settings storage manager
  */
+/**
+ * Buffer size choices in MB. Size, not time: a minute of a 50 GB remux is far
+ * bigger than a minute of a small encode. The patched native load control
+ * enforces both caps (and never exceeds 35% of the app heap).
+ */
+export const BUFFER_LIMITS = {
+  forwardMin: 16,
+  forwardMax: 256,
+  backMax: 128,
+  step: 16,
+} as const;
+const DEFAULT_FORWARD_BUFFER_MB = 64;
+const DEFAULT_BACK_BUFFER_MB = 0;
+
+/** Rounds to the slider step and clamps; falls back for missing values. */
+const clampBufferMB = (
+  value: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  const stepped = Math.round(value / BUFFER_LIMITS.step) * BUFFER_LIMITS.step;
+  return Math.min(Math.max(stepped, min), max);
+};
+
 export class SettingsStorage {
   isAlwaysCastMode(): boolean {
     return mainStorage.getBool(SettingsKeys.ALWAYS_CAST_MODE);
@@ -304,6 +333,43 @@ export class SettingsStorage {
     mainStorage.delete(SettingsKeys.DOWNLOAD_LOCATION);
   }
 
+  getForwardBufferMB(): number {
+    return clampBufferMB(
+      mainStorage.getNumber(SettingsKeys.FORWARD_BUFFER_MB),
+      BUFFER_LIMITS.forwardMin,
+      BUFFER_LIMITS.forwardMax,
+      DEFAULT_FORWARD_BUFFER_MB,
+    );
+  }
+
+  setForwardBufferMB(mb: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.FORWARD_BUFFER_MB,
+      clampBufferMB(
+        mb,
+        BUFFER_LIMITS.forwardMin,
+        BUFFER_LIMITS.forwardMax,
+        DEFAULT_FORWARD_BUFFER_MB,
+      ),
+    );
+  }
+
+  getBackBufferMB(): number {
+    return clampBufferMB(
+      mainStorage.getNumber(SettingsKeys.BACK_BUFFER_MB),
+      0,
+      BUFFER_LIMITS.backMax,
+      DEFAULT_BACK_BUFFER_MB,
+    );
+  }
+
+  setBackBufferMB(mb: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.BACK_BUFFER_MB,
+      clampBufferMB(mb, 0, BUFFER_LIMITS.backMax, DEFAULT_BACK_BUFFER_MB),
+    );
+  }
+
   getDownloadConcurrency(): number {
     const value = mainStorage.getNumber(SettingsKeys.DOWNLOAD_CONCURRENCY);
     return typeof value === 'number' && Number.isFinite(value)
@@ -334,6 +400,20 @@ export class SettingsStorage {
 
   setSubtitleOpacity(opacity: number): void {
     mainStorage.setString(SettingsKeys.SUBTITLE_OPACITY, opacity.toString());
+  }
+
+  getSubtitleTextOpacity(): number {
+    const value = mainStorage.getNumber(SettingsKeys.SUBTITLE_TEXT_OPACITY);
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(Math.max(value, 0.2), 1)
+      : 1;
+  }
+
+  setSubtitleTextOpacity(opacity: number): void {
+    mainStorage.setNumber(
+      SettingsKeys.SUBTITLE_TEXT_OPACITY,
+      Math.min(Math.max(opacity, 0.2), 1),
+    );
   }
 
   getSubtitleBottomPadding(): number {

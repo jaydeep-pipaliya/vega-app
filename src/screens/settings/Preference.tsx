@@ -7,6 +7,7 @@ import Constants from 'expo-constants';
 import DownloadLocationPreference from './components/DownloadLocationPreference';
 import useNavigationPreferencesStore from '../../lib/zustand/navigationPreferencesStore';
 import DownloadConcurrencyPreference from './components/DownloadConcurrencyPreference';
+import BufferPreference from './components/BufferPreference';
 import TmdbApiKeyPreference from './components/TmdbApiKeyPreference';
 import AppText from '../../components/ui/Text';
 import SettingsSection from '../../components/ui/SettingsSection';
@@ -337,6 +338,8 @@ const Preferences = ({navigation}: any) => {
             }}
           />
         </SettingsSection>
+
+        <BufferPreference />
 
         <DownloadLocationPreference primary={colors.primary} />
 

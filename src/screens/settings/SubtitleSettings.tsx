@@ -87,6 +87,9 @@ const SubtitlePreference = ({navigation}: any) => {
   const [opacity, setOpacity] = useState(
     settingsStorage.getSubtitleOpacity(),
   );
+  const [textOpacity, setTextOpacity] = useState(
+    settingsStorage.getSubtitleTextOpacity(),
+  );
   const [bottomElevation, setBottomElevation] = useState(
     settingsStorage.getSubtitleBottomPadding(),
   );
@@ -175,6 +178,7 @@ const SubtitlePreference = ({navigation}: any) => {
   const handleReset = () => {
     settingsStorage.setSubtitleFontSize(16);
     settingsStorage.setSubtitleOpacity(1);
+    settingsStorage.setSubtitleTextOpacity(1);
     settingsStorage.setSubtitleBottomPadding(10);
     settingsStorage.setSubtitleTextColor('#FFFFFF');
     settingsStorage.setSubtitleFontFamily('default');
@@ -184,6 +188,7 @@ const SubtitlePreference = ({navigation}: any) => {
 
     setFontSize(16);
     setOpacity(1);
+    setTextOpacity(1);
     setBottomElevation(10);
     setTextColor('#FFFFFF');
     setFontFamily('default');
@@ -398,6 +403,7 @@ const SubtitlePreference = ({navigation}: any) => {
             <AppText
               style={{
                 color: textColor,
+                opacity: textOpacity,
                 fontSize: fontSize,
                 lineHeight: Math.round(fontSize * 1.35),
                 fontFamily: previewFont,
@@ -511,6 +517,21 @@ const SubtitlePreference = ({navigation}: any) => {
             </>
           )}
           <SettingsSliderRow
+            title="Text opacity"
+            description="Opacity of subtitle text and its outline"
+            icon="format-color-text"
+            value={textOpacity}
+            min={0.2}
+            max={1}
+            step={0.05}
+            valueDisplay={`${Math.round(textOpacity * 100)}%`}
+            onValueChange={(val: number) => {
+              const rounded = parseFloat(val.toFixed(2));
+              setTextOpacity(rounded);
+              settingsStorage.setSubtitleTextOpacity(rounded);
+            }}
+          />
+          <SettingsSliderRow
             title="Background opacity"
             description="Opacity of subtitle background box"
             icon="opacity"
@@ -549,7 +570,7 @@ const SubtitlePreference = ({navigation}: any) => {
         <SettingsSection title="System">
           <SettingsRow
             title="Reset to defaults"
-            description="Font 16, White, Outline 2px, 100% opacity, Elevation 10"
+            description="Font 16, White, Outline 2px, 100% text and background opacity, Elevation 10"
             icon="restore"
             divider={false}
             onPress={handleReset}

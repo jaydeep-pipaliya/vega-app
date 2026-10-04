@@ -10,6 +10,46 @@ index 748b799..b4afeae 100644
      }
  
      if (ExoplayerDependencies["useExoplayerSmoothStreaming"]) {
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
+index 17f54c6..f87fdbb 100644
+--- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/BufferConfig.kt
+@@ -17,6 +17,8 @@ class BufferConfig {
+     var bufferForPlaybackMs = BufferConfigPropUnsetInt
+     var bufferForPlaybackAfterRebufferMs = BufferConfigPropUnsetInt
+     var backBufferDurationMs = BufferConfigPropUnsetInt
++    var forwardBufferMB = BufferConfigPropUnsetInt
++    var backBufferMB = BufferConfigPropUnsetInt
+     var maxHeapAllocationPercent = BufferConfigPropUnsetDouble
+     var minBackBufferMemoryReservePercent = BufferConfigPropUnsetDouble
+     var minBufferMemoryReservePercent = BufferConfigPropUnsetDouble
+@@ -34,6 +36,8 @@ class BufferConfig {
+                 bufferForPlaybackMs == other.bufferForPlaybackMs &&
+                 bufferForPlaybackAfterRebufferMs == other.bufferForPlaybackAfterRebufferMs &&
+                 backBufferDurationMs == other.backBufferDurationMs &&
++                forwardBufferMB == other.forwardBufferMB &&
++                backBufferMB == other.backBufferMB &&
+                 maxHeapAllocationPercent == other.maxHeapAllocationPercent &&
+                 minBackBufferMemoryReservePercent == other.minBackBufferMemoryReservePercent &&
+                 minBufferMemoryReservePercent == other.minBufferMemoryReservePercent &&
+@@ -93,6 +97,8 @@ class BufferConfig {
+         private const val PROP_BUFFER_CONFIG_MIN_BACK_BUFFER_MEMORY_RESERVE_PERCENT = "minBackBufferMemoryReservePercent"
+         private const val PROP_BUFFER_CONFIG_MIN_BUFFER_MEMORY_RESERVE_PERCENT = "minBufferMemoryReservePercent"
+         private const val PROP_BUFFER_CONFIG_BACK_BUFFER_DURATION_MS = "backBufferDurationMs"
++        private const val PROP_BUFFER_CONFIG_FORWARD_BUFFER_MB = "forwardBufferMB"
++        private const val PROP_BUFFER_CONFIG_BACK_BUFFER_MB = "backBufferMB"
+         private const val PROP_BUFFER_CONFIG_INITIAL_BITRATE = "initialBitrate"
+         private const val PROP_BUFFER_CONFIG_LIVE = "live"
+ 
+@@ -121,6 +127,8 @@ class BufferConfig {
+                         BufferConfigPropUnsetDouble
+                     )
+                 bufferConfig.backBufferDurationMs = safeGetInt(src, PROP_BUFFER_CONFIG_BACK_BUFFER_DURATION_MS, BufferConfigPropUnsetInt)
++                bufferConfig.forwardBufferMB = safeGetInt(src, PROP_BUFFER_CONFIG_FORWARD_BUFFER_MB, BufferConfigPropUnsetInt)
++                bufferConfig.backBufferMB = safeGetInt(src, PROP_BUFFER_CONFIG_BACK_BUFFER_MB, BufferConfigPropUnsetInt)
+                 bufferConfig.initialBitrate = safeGetInt(src, PROP_BUFFER_CONFIG_INITIAL_BITRATE, BufferConfigPropUnsetInt)
+                 bufferConfig.live = Live.parse(src.getMap(PROP_BUFFER_CONFIG_LIVE))
+             }
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt b/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt
 index 1ac0fd0..6540a53 100644
 --- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/common/api/SubtitleStyle.kt
@@ -1022,10 +1062,10 @@ index 5e36ef2..3eba51d 100644
              @SuppressLint("InlinedApi")
              val result = AppOpsManagerCompat.noteOpNoThrow(
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
-index e16ac96..11e04df 100644
+index e16ac96..d7492f0 100644
 --- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
 +++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
-@@ -57,9 +57,16 @@ import androidx.media3.datasource.DataSource;
+@@ -57,9 +57,18 @@ import androidx.media3.datasource.DataSource;
  import androidx.media3.datasource.DataSpec;
  import androidx.media3.datasource.DefaultDataSource;
  import androidx.media3.datasource.HttpDataSource;
@@ -1036,23 +1076,34 @@ index e16ac96..11e04df 100644
 +import java.nio.charset.StandardCharsets;
 +import java.util.Collections;
  import androidx.media3.exoplayer.DefaultLoadControl;
++import androidx.media3.exoplayer.LoadControl;
++import androidx.media3.exoplayer.analytics.PlayerId;
  import androidx.media3.exoplayer.DefaultRenderersFactory;
  import androidx.media3.exoplayer.ExoPlayer;
 +import androidx.media3.exoplayer.RendererCapabilities;
  import androidx.media3.exoplayer.dash.DashMediaSource;
  import androidx.media3.exoplayer.dash.DashUtil;
  import androidx.media3.exoplayer.dash.DefaultDashChunkSource;
-@@ -88,6 +95,9 @@ import androidx.media3.exoplayer.source.ClippingMediaSource;
+@@ -88,6 +97,10 @@ import androidx.media3.exoplayer.source.ClippingMediaSource;
  import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
  import androidx.media3.exoplayer.source.MediaSource;
  import androidx.media3.exoplayer.source.MergingMediaSource;
++import androidx.media3.exoplayer.source.WrappingMediaSource;
 +import androidx.media3.extractor.Extractor;
 +import androidx.media3.extractor.text.DefaultSubtitleParserFactory;
 +import androidx.media3.extractor.text.SubtitleExtractor;
  import androidx.media3.exoplayer.source.ProgressiveMediaSource;
  import androidx.media3.exoplayer.source.TrackGroupArray;
  import androidx.media3.exoplayer.source.ads.AdsMediaSource;
-@@ -234,6 +244,7 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -191,6 +204,7 @@ public class ReactExoplayerView extends FrameLayout implements
+ 
+     private DataSource.Factory mediaDataSourceFactory;
+     private ExoPlayer player;
++    private RNVLoadControl loadControl;
+     private DefaultTrackSelector trackSelector;
+     private boolean playerNeedsSource;
+     private ServiceConnection playbackServiceConnection;
+@@ -234,6 +248,7 @@ public class ReactExoplayerView extends FrameLayout implements
      private boolean isSeeking = false;
      private long seekPosition = -1;
      private boolean hasVideoEnded = false;
@@ -1060,7 +1111,134 @@ index e16ac96..11e04df 100644
  
      // Props from React
      private Source source = new Source();
-@@ -609,7 +620,7 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -562,8 +577,19 @@ public class ReactExoplayerView extends FrameLayout implements
+     }
+ 
+     private class RNVLoadControl extends DefaultLoadControl {
++        // Never let buffers take more than this share of the app heap, whatever size is asked for.
++        private static final double MAX_SIZE_BUDGET_HEAP_PERCENT = 0.35;
++        // ...and never more than 1/32 of total device RAM, so low-RAM TV boxes stay small.
++        private static final long MAX_SIZE_BUDGET_RAM_DIVISOR = 32;
+         private final int availableHeapInBytes;
+         private final Runtime runtime;
++        // Size caps in bytes; 0 when the app gives only time limits.
++        private final long forwardBufferBytes;
++        private final long backBufferBytes;
++        // Latest playback state, used to estimate bytes per second of buffered media.
++        private long lastPositionUs = 0;
++        private long lastForwardUs = 0;
++        private long lastBackUs = 0;
+         public RNVLoadControl(DefaultAllocator allocator, BufferConfig config) {
+             super(allocator,
+                     config.getMinBufferMs() != BufferConfig.Companion.getBufferConfigPropUnsetInt()
+@@ -583,17 +609,92 @@ public class ReactExoplayerView extends FrameLayout implements
+                     config.getBackBufferDurationMs() != BufferConfig.Companion.getBufferConfigPropUnsetInt()
+                             ? config.getBackBufferDurationMs()
+                             : DefaultLoadControl.DEFAULT_BACK_BUFFER_DURATION_MS,
+-                    DefaultLoadControl.DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME);
++                    // Keep the back buffer from the previous keyframe, so a seek back inside it
++                    // can start decoding without loading again.
++                    true);
+             runtime = Runtime.getRuntime();
+             ActivityManager activityManager = (ActivityManager) themedReactContext.getSystemService(ThemedReactContext.ACTIVITY_SERVICE);
+             double maxHeap = config.getMaxHeapAllocationPercent() != BufferConfig.Companion.getBufferConfigPropUnsetDouble()
+                     ? config.getMaxHeapAllocationPercent()
+                     : DEFAULT_MAX_HEAP_ALLOCATION_PERCENT;
+-            availableHeapInBytes = (int) Math.floor(activityManager.getMemoryClass() * maxHeap * 1024 * 1024);
++            long heapBytes = (long) activityManager.getMemoryClass() * 1024 * 1024;
++            forwardBufferBytes = config.getForwardBufferMB() > 0 ? config.getForwardBufferMB() * 1024L * 1024L : 0;
++            backBufferBytes = config.getBackBufferMB() > 0 ? config.getBackBufferMB() * 1024L * 1024L : 0;
++            if (forwardBufferBytes > 0) {
++                // Size mode: the budget is forward + back size, bounded by a safe share of the heap.
++                // maxMemory() is the real heap limit, including android:largeHeap.
++                ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
++                activityManager.getMemoryInfo(memoryInfo);
++                long safeBytes = Math.min(
++                        (long) (runtime.maxMemory() * MAX_SIZE_BUDGET_HEAP_PERCENT),
++                        memoryInfo.totalMem / MAX_SIZE_BUDGET_RAM_DIVISOR);
++                long budget = Math.min(forwardBufferBytes + backBufferBytes, safeBytes);
++                availableHeapInBytes = (int) budget;
++            } else {
++                availableHeapInBytes = (int) Math.floor(heapBytes * maxHeap);
++            }
++        }
++
++        // Bytes per microsecond of the media held now (forward + back), or 0 when unknown.
++        private double bytesPerUs() {
++            int loadedBytes = getAllocator().getTotalBytesAllocated();
++            long bufferedUs = lastForwardUs + Math.min(lastBackUs, lastPositionUs);
++            return loadedBytes > 0 && bufferedUs > 0 ? (double) loadedBytes / bufferedUs : 0;
++        }
++
++        // Back buffer size the budget leaves room for (the heap cap can be below forward + back).
++        private long backBudgetBytes() {
++            return Math.max(0, Math.min(backBufferBytes, availableHeapInBytes - Math.min(forwardBufferBytes, availableHeapInBytes)));
++        }
++
++        // True when the back buffer has a size cap, enforced by SizeLimitedBackBufferSource.
++        boolean limitsBackBufferBySize() {
++            return forwardBufferBytes > 0 && backBufferBytes > 0 && getBackBufferDurationUs(null) > 0;
++        }
++
++        // The back buffer can only be trimmed by duration, so turn its size cap into a duration
++        // using the observed bytes per second of what is buffered now. A 50 GB remux gets a few
++        // seconds, a small encode gets the whole configured window.
++        long getSizeLimitedBackBufferUs() {
++            long configured = getBackBufferDurationUs(null);
++            double rate = bytesPerUs();
++            long allowedUs = rate > 0 ? (long) (backBudgetBytes() / rate) : 0;
++            lastBackUs = Math.max(0, Math.min(allowedUs, configured));
++            return lastBackUs;
+         }
+ 
++        // In size mode the forward buffer stops at its own cap, so the rest of the budget stays
++        // free for the back buffer. Forward bytes are estimated from its share of the held media.
++        private boolean isForwardFull() {
++            if (forwardBufferBytes <= 0) {
++                return false;
++            }
++            long heldBackUs = Math.min(lastBackUs, lastPositionUs);
++            long bufferedUs = lastForwardUs + heldBackUs;
++            if (bufferedUs <= 0) {
++                return false;
++            }
++            long loadedBytes = getAllocator().getTotalBytesAllocated();
++            long forwardBytes = loadedBytes * lastForwardUs / bufferedUs;
++            return forwardBytes >= Math.min(forwardBufferBytes, availableHeapInBytes);
++        }
++
++        // Media3 1.8 calls this overload; DefaultLoadControl's version never reaches the
++        // deprecated three-argument overload RNV used to override, so without this the memory checks never ran.
+         @Override
+-        public boolean shouldContinueLoading(long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
++        public boolean shouldContinueLoading(LoadControl.Parameters parameters) {
++            lastPositionUs = parameters.playbackPositionUs;
++            lastForwardUs = parameters.bufferedDurationUs;
++            if (isForwardFull() && parameters.bufferedDurationUs / 1000 > 5000) {
++                return false;
++            }
++            if (!shouldContinueLoadingForMemory(parameters.bufferedDurationUs)) {
++                return false;
++            }
++            return super.shouldContinueLoading(parameters);
++        }
++
++        private boolean shouldContinueLoadingForMemory(long bufferedDurationUs) {
+             if (bufferingStrategy == BufferingStrategy.BufferingStrategyEnum.DisableBuffering) {
+                 return false;
+             } else if (bufferingStrategy == BufferingStrategy.BufferingStrategyEnum.DependingOnMemory) {
+@@ -601,7 +702,9 @@ public class ReactExoplayerView extends FrameLayout implements
+                 // when available memory on device become low.
+                 int loadedBytes = getAllocator().getTotalBytesAllocated();
+                 boolean isHeapReached = availableHeapInBytes > 0 && loadedBytes >= availableHeapInBytes;
+-                if (isHeapReached) {
++                // Keep a few seconds ahead even at the budget: stopping with almost nothing
++                // buffered stalls playback. The free-memory check below still guards the heap.
++                if (isHeapReached && bufferedDurationUs / 1000 > 5000) {
+                     return false;
+                 }
+                 long usedMemory = runtime.totalMemory() - runtime.freeMemory();
+@@ -609,7 +712,7 @@ public class ReactExoplayerView extends FrameLayout implements
                  double minBufferMemoryReservePercent = source.getBufferConfig().getMinBufferMemoryReservePercent() != BufferConfig.Companion.getBufferConfigPropUnsetDouble()
                          ? source.getBufferConfig().getMinBufferMemoryReservePercent()
                          : ReactExoplayerView.DEFAULT_MIN_BUFFER_MEMORY_RESERVE;
@@ -1069,7 +1247,137 @@ index e16ac96..11e04df 100644
                  long bufferedMs = bufferedDurationUs / (long) 1000;
                  if (reserveMemory > freeMemory && bufferedMs > 2000) {
                      // We don't have enough memory in reserve so we stop buffering to allow other components to use it instead
-@@ -715,6 +726,7 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -622,7 +725,128 @@ public class ReactExoplayerView extends FrameLayout implements
+                 }
+             }
+             // "default" case or normal case for "DependingOnMemory"
+-            return super.shouldContinueLoading(playbackPositionUs, bufferedDurationUs, playbackSpeed);
++            return true;
++        }
++    }
++
++    // media3 reads the back buffer duration once, when the player is created, so it cannot follow
++    // a size cap. The load control reports the full time window, and this source narrows every
++    // discard to the window the size cap allows at that moment.
++    private static final class SizeLimitedBackBufferSource extends WrappingMediaSource {
++        private final RNVLoadControl loadControl;
++
++        SizeLimitedBackBufferSource(MediaSource mediaSource, RNVLoadControl loadControl) {
++            super(mediaSource);
++            this.loadControl = loadControl;
++        }
++
++        @Override
++        public androidx.media3.exoplayer.source.MediaPeriod createPeriod(
++                MediaSource.MediaPeriodId id, androidx.media3.exoplayer.upstream.Allocator allocator, long startPositionUs) {
++            return new SizeLimitedBackBufferPeriod(super.createPeriod(id, allocator, startPositionUs), loadControl);
++        }
++
++        @Override
++        public void releasePeriod(androidx.media3.exoplayer.source.MediaPeriod mediaPeriod) {
++            super.releasePeriod(((SizeLimitedBackBufferPeriod) mediaPeriod).mediaPeriod);
++        }
++    }
++
++    private static final class SizeLimitedBackBufferPeriod
++            implements androidx.media3.exoplayer.source.MediaPeriod, androidx.media3.exoplayer.source.MediaPeriod.Callback {
++        final androidx.media3.exoplayer.source.MediaPeriod mediaPeriod;
++        private final RNVLoadControl loadControl;
++        private androidx.media3.exoplayer.source.MediaPeriod.Callback callback;
++
++        SizeLimitedBackBufferPeriod(androidx.media3.exoplayer.source.MediaPeriod mediaPeriod, RNVLoadControl loadControl) {
++            this.mediaPeriod = mediaPeriod;
++            this.loadControl = loadControl;
++        }
++
++        @Override
++        public void discardBuffer(long positionUs, boolean toKeyframe) {
++            // media3 passes the playback position minus the full window. When it frees memory in
++            // an emergency it passes the playback position itself; the result then discards up to
++            // the read position, which drops the whole back buffer as intended.
++            long playbackPositionUs = positionUs + loadControl.getBackBufferDurationUs(null);
++            mediaPeriod.discardBuffer(playbackPositionUs - loadControl.getSizeLimitedBackBufferUs(), toKeyframe);
++        }
++
++        @Override
++        public void prepare(androidx.media3.exoplayer.source.MediaPeriod.Callback callback, long positionUs) {
++            this.callback = callback;
++            mediaPeriod.prepare(this, positionUs);
++        }
++
++        @Override
++        public void onPrepared(androidx.media3.exoplayer.source.MediaPeriod period) {
++            callback.onPrepared(this);
++        }
++
++        @Override
++        public void onContinueLoadingRequested(androidx.media3.exoplayer.source.MediaPeriod period) {
++            callback.onContinueLoadingRequested(this);
++        }
++
++        @Override
++        public void maybeThrowPrepareError() throws java.io.IOException {
++            mediaPeriod.maybeThrowPrepareError();
++        }
++
++        @Override
++        public TrackGroupArray getTrackGroups() {
++            return mediaPeriod.getTrackGroups();
++        }
++
++        @Override
++        public java.util.List<StreamKey> getStreamKeys(java.util.List<ExoTrackSelection> trackSelections) {
++            return mediaPeriod.getStreamKeys(trackSelections);
++        }
++
++        @Override
++        public long selectTracks(ExoTrackSelection[] selections, boolean[] mayRetainStreamFlags,
++                androidx.media3.exoplayer.source.SampleStream[] streams, boolean[] streamResetFlags, long positionUs) {
++            return mediaPeriod.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs);
++        }
++
++        @Override
++        public long readDiscontinuity() {
++            return mediaPeriod.readDiscontinuity();
++        }
++
++        @Override
++        public long seekToUs(long positionUs) {
++            return mediaPeriod.seekToUs(positionUs);
++        }
++
++        @Override
++        public long getAdjustedSeekPositionUs(long positionUs, androidx.media3.exoplayer.SeekParameters seekParameters) {
++            return mediaPeriod.getAdjustedSeekPositionUs(positionUs, seekParameters);
++        }
++
++        @Override
++        public long getBufferedPositionUs() {
++            return mediaPeriod.getBufferedPositionUs();
++        }
++
++        @Override
++        public long getNextLoadPositionUs() {
++            return mediaPeriod.getNextLoadPositionUs();
++        }
++
++        @Override
++        public boolean continueLoading(androidx.media3.exoplayer.LoadingInfo loadingInfo) {
++            return mediaPeriod.continueLoading(loadingInfo);
++        }
++
++        @Override
++        public boolean isLoading() {
++            return mediaPeriod.isLoading();
++        }
++
++        @Override
++        public void reevaluateBuffer(long positionUs) {
++            mediaPeriod.reevaluateBuffer(positionUs);
+         }
+     }
+ 
+@@ -715,11 +939,12 @@ public class ReactExoplayerView extends FrameLayout implements
      private void initializePlayerCore(ReactExoplayerView self) {
          ExoTrackSelection.Factory videoTrackSelectionFactory = new AdaptiveTrackSelection.Factory();
          self.trackSelector = new DefaultTrackSelector(getContext(), videoTrackSelectionFactory);
@@ -1077,7 +1385,13 @@ index e16ac96..11e04df 100644
          self.trackSelector.setParameters(trackSelector.buildUponParameters()
                  .setMaxVideoBitrate(maxBitRate == 0 ? Integer.MAX_VALUE : maxBitRate));
  
-@@ -732,7 +744,7 @@ public class ReactExoplayerView extends FrameLayout implements
+         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+-        RNVLoadControl loadControl = new RNVLoadControl(
++        loadControl = new RNVLoadControl(
+                 allocator,
+                 source.getBufferConfig()
+         );
+@@ -732,7 +957,7 @@ public class ReactExoplayerView extends FrameLayout implements
  
          DefaultRenderersFactory renderersFactory =
                  new DefaultRenderersFactory(getContext())
@@ -1086,7 +1400,18 @@ index e16ac96..11e04df 100644
                          .setEnableDecoderFallback(true)
                          .forceEnableMediaCodecAsynchronousQueueing();
  
-@@ -1101,11 +1113,13 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -877,6 +1102,10 @@ public class ReactExoplayerView extends FrameLayout implements
+             }
+         }
+ 
++        if (loadControl != null && loadControl.limitsBackBufferBySize()) {
++            mediaSource = new SizeLimitedBackBufferSource(mediaSource, loadControl);
++        }
++
+         boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
+         if (haveResumePosition) {
+             player.seekTo(resumeWindow, resumePosition);
+@@ -1101,11 +1330,13 @@ public class ReactExoplayerView extends FrameLayout implements
                  } else if ("file".equals(uri.getScheme()) ||
                          !useCache) {
                      mediaSourceFactory = new ProgressiveMediaSource.Factory(
@@ -1102,7 +1427,7 @@ index e16ac96..11e04df 100644
                      );
  
                  }
-@@ -1144,12 +1158,62 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1144,12 +1375,62 @@ public class ReactExoplayerView extends FrameLayout implements
                  ? overridenMediaItemBuilder.build()
                  : mediaItemBuilder.build();
  
@@ -1166,7 +1491,7 @@ index e16ac96..11e04df 100644
  
          if (cropStartMs >= 0 && cropEndMs >= 0) {
              return new ClippingMediaSource(mediaSource, cropStartMs * 1000, cropEndMs * 1000);
-@@ -1162,6 +1226,78 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1162,6 +1443,78 @@ public class ReactExoplayerView extends FrameLayout implements
          return mediaSource;
      }
  
@@ -1245,7 +1570,7 @@ index e16ac96..11e04df 100644
      @Nullable
      private List<MediaItem.SubtitleConfiguration> buildSubtitleConfigurations() {
          if (source.getSideLoadedTextTracks() == null || source.getSideLoadedTextTracks().getTracks().isEmpty()) {
-@@ -1183,9 +1319,23 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1183,9 +1536,23 @@ public class ReactExoplayerView extends FrameLayout implements
                      }
                  }
                  
@@ -1270,7 +1595,7 @@ index e16ac96..11e04df 100644
                          .setLabel(label)
                          .setRoleFlags(C.ROLE_FLAG_SUBTITLE);
                  
-@@ -1586,7 +1736,17 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1586,7 +1953,17 @@ public class ReactExoplayerView extends FrameLayout implements
      }
  
      private ArrayList<VideoTrack> getVideoTrackInfo() {
@@ -1289,7 +1614,7 @@ index e16ac96..11e04df 100644
          if (trackSelector == null) {
              // Likely player is unmounting so no video tracks are available anymore
              return videoTracks;
-@@ -1612,6 +1772,72 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1612,6 +1989,72 @@ public class ReactExoplayerView extends FrameLayout implements
          return videoTracks;
      }
  
@@ -1362,7 +1687,7 @@ index e16ac96..11e04df 100644
      private ArrayList<VideoTrack> getVideoTrackInfoFromManifest() {
          return this.getVideoTrackInfoFromManifest(0);
      }
-@@ -1890,6 +2116,13 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1890,6 +2333,13 @@ public class ReactExoplayerView extends FrameLayout implements
          updateSubtitleButtonVisibility();
      }
  
@@ -1376,7 +1701,7 @@ index e16ac96..11e04df 100644
      
      private boolean hasBuiltInTextTracks() {
          if (player == null || trackSelector == null) return false;
-@@ -1954,6 +2187,12 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -1954,6 +2404,12 @@ public class ReactExoplayerView extends FrameLayout implements
      public void onPlayerError(@NonNull PlaybackException e) {
          String errorString = "ExoPlaybackException: " + PlaybackException.getErrorCodeName(e.errorCode);
          String errorCode = "2" + e.errorCode;
@@ -1389,7 +1714,7 @@ index e16ac96..11e04df 100644
          switch(e.errorCode) {
              case PlaybackException.ERROR_CODE_DRM_DEVICE_REVOKED:
              case PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED:
-@@ -2031,6 +2270,9 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2031,6 +2487,9 @@ public class ReactExoplayerView extends FrameLayout implements
      }
  
      public void onCues(CueGroup cueGroup) {
@@ -1399,7 +1724,7 @@ index e16ac96..11e04df 100644
          if (!cueGroup.cues.isEmpty() && cueGroup.cues.get(0).text != null) {
              String subtitleText = cueGroup.cues.get(0).text.toString();
              eventEmitter.onTextTrackDataChanged.invoke(subtitleText);
-@@ -2147,6 +2389,12 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2147,6 +2606,12 @@ public class ReactExoplayerView extends FrameLayout implements
                      TrackGroupArray groups = info.getTrackGroups(textRendererIndex);
                      boolean trackFound = false;
                      
@@ -1412,7 +1737,7 @@ index e16ac96..11e04df 100644
                      for (int groupIndex = 0; groupIndex < groups.length; groupIndex++) {
                          TrackGroup group = groups.get(groupIndex);
                          for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
-@@ -2159,7 +2407,7 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2159,7 +2624,7 @@ public class ReactExoplayerView extends FrameLayout implements
                                  isMatch = true;
                              } else if ("index".equals(type)) {
                                  int targetIndex = ReactBridgeUtils.safeParseInt(value, -1);
@@ -1421,7 +1746,7 @@ index e16ac96..11e04df 100644
                                      isMatch = true;
                                  }
                              }
-@@ -2171,6 +2419,8 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2171,6 +2636,8 @@ public class ReactExoplayerView extends FrameLayout implements
                                  trackFound = true;
                                  break;
                              }
@@ -1430,7 +1755,7 @@ index e16ac96..11e04df 100644
                          }
                          if (trackFound) break;
                      }
-@@ -2197,6 +2447,101 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2197,6 +2664,101 @@ public class ReactExoplayerView extends FrameLayout implements
          }
      }
  
@@ -1532,7 +1857,7 @@ index e16ac96..11e04df 100644
      public void setSelectedTrack(int trackType, String type, String value) {
          if (player == null || trackSelector == null) return;
  
-@@ -2209,6 +2554,14 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2209,6 +2771,14 @@ public class ReactExoplayerView extends FrameLayout implements
              return;
          }
  
@@ -1547,7 +1872,7 @@ index e16ac96..11e04df 100644
          MappingTrackSelector.MappedTrackInfo info = trackSelector.getCurrentMappedTrackInfo();
          if (info == null) {
              return;
-@@ -2317,6 +2670,15 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2317,6 +2887,15 @@ public class ReactExoplayerView extends FrameLayout implements
              groupIndex = getGroupIndexForDefaultLocale(groups);
          }
  
@@ -1563,7 +1888,7 @@ index e16ac96..11e04df 100644
          if (groupIndex == C.INDEX_UNSET && trackType == C.TRACK_TYPE_VIDEO && groups.length != 0) { // Video auto
              // Add all tracks as valid options for ABR to choose from
              TrackGroup group = groups.get(0);
-@@ -2359,7 +2721,7 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2359,7 +2938,7 @@ public class ReactExoplayerView extends FrameLayout implements
              DefaultTrackSelector.Parameters.Builder selectionParameters = trackSelector.getParameters()
                      .buildUpon()
                      .setExceedAudioConstraintsIfNecessary(true)
@@ -1572,7 +1897,7 @@ index e16ac96..11e04df 100644
                      .setExceedVideoConstraintsIfNecessary(true)
                      .setRendererDisabled(rendererIndex, false);
  
-@@ -2429,10 +2791,225 @@ public class ReactExoplayerView extends FrameLayout implements
+@@ -2429,10 +3008,225 @@ public class ReactExoplayerView extends FrameLayout implements
          return groupIndex;
      }
  
@@ -1799,3 +2124,55 @@ index e16ac96..11e04df 100644
      }
  
      public void setSelectedAudioTrack(String type, String value) {
+diff --git a/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts b/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
+index 76a0224..b3f0555 100644
+--- a/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
++++ b/node_modules/react-native-video/lib/specs/VideoNativeComponent.d.ts
+@@ -105,6 +105,8 @@ type BufferConfig = Readonly<{
+     bufferForPlaybackAfterRebufferMs?: Float;
+     maxHeapAllocationPercent?: Float;
+     backBufferDurationMs?: Float;
++    forwardBufferMB?: Int32;
++    backBufferMB?: Int32;
+     minBackBufferMemoryReservePercent?: Float;
+     minBufferMemoryReservePercent?: Float;
+     cacheSizeMB?: Float;
+diff --git a/node_modules/react-native-video/lib/types/video.d.ts b/node_modules/react-native-video/lib/types/video.d.ts
+index 67a9d63..ed8f23d 100644
+--- a/node_modules/react-native-video/lib/types/video.d.ts
++++ b/node_modules/react-native-video/lib/types/video.d.ts
+@@ -130,6 +130,8 @@ export type BufferConfig = {
+     bufferForPlaybackMs?: number;
+     bufferForPlaybackAfterRebufferMs?: number;
+     backBufferDurationMs?: number;
++    forwardBufferMB?: number;
++    backBufferMB?: number;
+     maxHeapAllocationPercent?: number;
+     minBackBufferMemoryReservePercent?: number;
+     minBufferMemoryReservePercent?: number;
+diff --git a/node_modules/react-native-video/src/specs/VideoNativeComponent.ts b/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
+index 3dcbe01..2b8f2d9 100644
+--- a/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
++++ b/node_modules/react-native-video/src/specs/VideoNativeComponent.ts
+@@ -138,6 +138,8 @@ type BufferConfig = Readonly<{
+   bufferForPlaybackAfterRebufferMs?: Float;
+   maxHeapAllocationPercent?: Float;
+   backBufferDurationMs?: Float; // Android
++  forwardBufferMB?: Int32; // Android
++  backBufferMB?: Int32; // Android
+   minBackBufferMemoryReservePercent?: Float;
+   minBufferMemoryReservePercent?: Float;
+   cacheSizeMB?: Float;
+diff --git a/node_modules/react-native-video/src/types/video.ts b/node_modules/react-native-video/src/types/video.ts
+index 0482944..0e45714 100644
+--- a/node_modules/react-native-video/src/types/video.ts
++++ b/node_modules/react-native-video/src/types/video.ts
+@@ -176,6 +176,8 @@ export type BufferConfig = {
+   bufferForPlaybackMs?: number;
+   bufferForPlaybackAfterRebufferMs?: number;
+   backBufferDurationMs?: number; // Android
++  forwardBufferMB?: number; // Android: forward buffer size cap
++  backBufferMB?: number; // Android: back buffer size cap
+   maxHeapAllocationPercent?: number;
+   minBackBufferMemoryReservePercent?: number;
+   minBufferMemoryReservePercent?: number;
