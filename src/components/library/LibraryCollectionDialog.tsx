@@ -350,7 +350,11 @@ const LibraryCollectionDialog = ({
                     checked ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'
                   }
                   size={24}
-                  color={checked ? colors.primary : colors.onSurfaceVariant}
+                  // On-container color stays readable on the checked row, even
+                  // with low-saturation artwork palettes where primary fades.
+                  color={
+                    checked ? colors.onSecondaryContainer : colors.onSurfaceVariant
+                  }
                 />
               </TVFocusable>
             );
