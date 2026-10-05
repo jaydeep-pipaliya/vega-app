@@ -4,6 +4,7 @@ import android.util.Log
 import com.facebook.react.modules.network.OkHttpClientFactory
 import com.facebook.react.modules.network.ReactCookieJarContainer
 import okhttp3.Cache
+import okhttp3.ConnectionPool
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
@@ -58,12 +59,23 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
     @Volatile
     var byeDpiProxyPort: Int? = null
 
+    // Every client made here (network module, Fresco images, downloads) shares one pool, so
+    // turning WARP or ByeDPI on or off can drop all open connections. Otherwise a client keeps
+    // reusing connections opened before the switch, which bypass the new route.
+    private val connectionPool = ConnectionPool()
+
+    fun evictConnections() {
+        connectionPool.evictAll()
+    }
+
     private var cachedDoh: DnsOverHttps? = null
     private var lastConfigKey: String = ""
 
     @Synchronized
     private fun getActiveDns(): Dns {
-        if (!enabled) return Dns.SYSTEM
+        // ByeDPI connects to the address resolved here, so it needs DoH even when the user turned
+        // DoH off: ISP DNS returns the block page address for blocked sites.
+        if (!enabled && byeDpiProxyPort == null) return Dns.SYSTEM
 
         val configKey = "${currentProvider.name}_$customUrl"
         if (cachedDoh != null && lastConfigKey == configKey) {
@@ -110,6 +122,7 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
     override fun createNewNetworkModuleClient(): OkHttpClient {
         return OkHttpClient.Builder()
             .dns(DynamicDns())
+            .connectionPool(connectionPool)
             .retryOnConnectionFailure(true)
             .cookieJar(ReactCookieJarContainer())
             .socketFactory(ByeDpiSocketFactory())
@@ -122,10 +135,9 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
                     val warpPort = warpProxyPort
                     if (warpPort != null && warpPort > 0) {
                         VegaLog.d(TAG, "Routing ${uri?.host} through WARP HTTP proxy on port $warpPort")
-                        return listOf(
-                            Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", warpPort)),
-                            Proxy.NO_PROXY
-                        )
+                        // WARP only: a direct fallback would quietly send requests past WARP,
+                        // straight into the block.
+                        return listOf(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", warpPort)))
                     }
                     // For ByeDPI, return Proxy.NO_PROXY so OkHttp resolves DNS via DoH,
                     // and ByeDpiSocketFactory routes the TCP connection to ByeDPI with the resolved IP!
@@ -133,10 +145,9 @@ class DohOkHttpFactory(private val cacheDir: File) : OkHttpClientFactory {
                 }
 
                 override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {
+                    // One failed site is not a dead proxy; WarpModule clears the port when the
+                    // proxy process exits.
                     VegaLog.w(TAG, "Proxy connection failed for $uri: ${ioe?.message}")
-                    if (warpProxyPort != null) {
-                        warpProxyPort = null
-                    }
                 }
             })
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -198,8 +209,9 @@ class ByeDpiSocket : Socket() {
             // 1. Connect underlying socket to local ByeDPI proxy
             super.connect(InetSocketAddress("127.0.0.1", byeDpiPort), timeout)
         } catch (e: Exception) {
-            VegaLog.w(TAG, "ByeDPI connection failed on port $byeDpiPort, resetting: ${e.message}")
-            DohOkHttpFactory.instance?.byeDpiProxyPort = null
+            // ByeDpiModule clears the port when the process exits; a failure here must not
+            // silently switch every later connection to direct.
+            VegaLog.w(TAG, "ByeDPI connection failed on port $byeDpiPort: ${e.message}")
             throw e
         }
 
@@ -282,8 +294,8 @@ class ByeDpiSocket : Socket() {
                 }
             }
         } catch (e: Exception) {
+            // Usually one unreachable address; OkHttp tries the next one, still through ByeDPI.
             VegaLog.w(TAG, "ByeDPI handshake failed on port $byeDpiPort: ${e.message}")
-            DohOkHttpFactory.instance?.byeDpiProxyPort = null
             throw e
         } finally {
             soTimeout = oldSoTimeout

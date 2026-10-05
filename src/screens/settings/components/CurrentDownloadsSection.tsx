@@ -10,6 +10,7 @@ import {
 import useDownloadsStore, {
   selectCurrentDownloads,
 } from '../../../lib/zustand/downloadsStore';
+import {useShallow} from 'zustand/react/shallow';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import CurrentDownloadRow from './CurrentDownloadRow';
 
@@ -23,7 +24,7 @@ const CurrentDownloadsSection = ({
   onFirstActionLayout?: () => void;
 }) => {
   const colors = useM3Colors();
-  const downloads = useDownloadsStore(selectCurrentDownloads);
+  const downloads = useDownloadsStore(useShallow(selectCurrentDownloads));
 
   if (downloads.length === 0) {
     return null;

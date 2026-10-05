@@ -28,6 +28,7 @@ import {
 import useDownloadsStore, {
   CURRENT_DOWNLOAD_STATUSES,
 } from '../lib/zustand/downloadsStore';
+import {useShallow} from 'zustand/react/shallow';
 import {
   selectDownloadLocation,
   validateDownloadLocationAccess,
@@ -196,12 +197,16 @@ const DownloadComponent = ({
       ),
   );
 
-  const subDownloads = useDownloadsStore(state =>
-    Object.values(state.downloads).filter(
-      item =>
-        isSubtitleDownloadItem(item) &&
-        (item.id.startsWith(`${downloadId}_subtitle_`) ||
-          (item.infoUrl === infoUrl && item.sourceLink === link)),
+  // useShallow: the filter returns a new array on every store change, which
+  // re-rendered every episode row on each download progress update.
+  const subDownloads = useDownloadsStore(
+    useShallow(state =>
+      Object.values(state.downloads).filter(
+        item =>
+          isSubtitleDownloadItem(item) &&
+          (item.id.startsWith(`${downloadId}_subtitle_`) ||
+            (item.infoUrl === infoUrl && item.sourceLink === link)),
+      ),
     ),
   );
 

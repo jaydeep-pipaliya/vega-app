@@ -6,12 +6,13 @@ import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
 import useDownloadsStore, {
   selectMissingDownloads,
 } from '../../../lib/zustand/downloadsStore';
+import {useShallow} from 'zustand/react/shallow';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 
 const MissingDownloadsSection = ({primary}: {primary: string}) => {
   const colors = useM3Colors();
   const focusBorderColor = useTVFocusBorderColor();
-  const missing = useDownloadsStore(selectMissingDownloads);
+  const missing = useDownloadsStore(useShallow(selectMissingDownloads));
   const removeDownload = useDownloadsStore(state => state.removeDownload);
 
   if (missing.length === 0) {

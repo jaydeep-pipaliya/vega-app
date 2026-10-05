@@ -35,6 +35,9 @@ jest.mock('expo-file-system', () => ({
   },
 }));
 
+jest.mock('../src/lib/storage', () => ({
+  settingsStorage: {getDownloadConnections: () => 4},
+}));
 jest.mock('../src/lib/downloadDestination', () => ({
   cleanupDownloadStaging: (...args: unknown[]) =>
     mockCleanupDownloadStaging(...args),

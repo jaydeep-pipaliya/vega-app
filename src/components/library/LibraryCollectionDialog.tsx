@@ -16,7 +16,7 @@ import {
   LIBRARY_ICON_KEYS,
 } from '../../lib/library/libraryIcons';
 import {
-  DEFAULT_COLLECTION,
+  DEFAULT_COLLECTION_ID,
   getItemCollectionIds,
   type LibraryCollection,
   type WatchListItem,
@@ -295,7 +295,7 @@ const LibraryCollectionDialog = ({
   );
 
   const renderPicker = () => {
-    const rows = [DEFAULT_COLLECTION, ...collections];
+    const rows = collections;
     return (
       <>
         {renderHeader('Save to library', item?.title)}
@@ -363,6 +363,7 @@ const LibraryCollectionDialog = ({
             accessibilityRole="button"
             accessibilityLabel="New category"
             onPress={openCreate}
+            hasTVPreferredFocus={isTV && rows.length === 0}
             registerScreenFocus={false}
             borderRadius={18}
             focusScale={1.03}
@@ -402,6 +403,13 @@ const LibraryCollectionDialog = ({
       </>
     );
   };
+
+  // Where titles only in the deleted category end up (see deleteCollection).
+  const watchlist = collections.find(c => c.id === DEFAULT_COLLECTION_ID);
+  const deleteNote =
+    watchlist && collection?.id !== DEFAULT_COLLECTION_ID
+      ? `Titles stay in your library. Titles only in this category move to ${watchlist.name}.`
+      : 'Titles stay in your library and show under All.';
 
   const renderEditor = () => {
     const choices = iconTab === 'icons' ? LIBRARY_ICON_KEYS : LIBRARY_EMOJIS;
@@ -598,8 +606,7 @@ const LibraryCollectionDialog = ({
               marginTop: 8,
               textAlign: 'center',
             }}>
-            Titles stay in your library. Titles only in this category move to
-            Watchlist.
+            {deleteNote}
           </AppText>
         ) : null}
       </>

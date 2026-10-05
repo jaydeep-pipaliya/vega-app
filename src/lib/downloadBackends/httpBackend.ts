@@ -10,6 +10,9 @@ import {
   type EmitterSubscription,
 } from 'react-native';
 import useDownloadsStore from '../zustand/downloadsStore';
+import {settingsStorage} from '../storage';
+import useDownloadConnectionsStore from '../zustand/downloadConnectionsStore';
+import {parseDownloadRanges} from '../downloadSegmentMap';
 import {
   DownloadPauseSupportError,
   type DownloadBackend,
@@ -37,6 +40,7 @@ interface NativeHttpDownloadModule {
     url: string,
     destinationUri: string,
     headers: Record<string, string>,
+    connections: number,
   ): Promise<{
     downloadedBytes: number;
     totalBytes: number;
@@ -54,6 +58,11 @@ interface NativeProgressEvent {
   downloadedBytes: number;
   totalBytes: number;
   speed: number;
+  details?: {
+    ranges: unknown;
+    connections: number;
+    connectionLimit: number;
+  };
 }
 
 interface NativeStateEvent {
@@ -149,6 +158,13 @@ const startNativeDownload = async ({
             event.totalBytes,
             event.speed,
           );
+        if (event.details) {
+          useDownloadConnectionsStore.getState().setDetails(record.id, {
+            ranges: parseDownloadRanges(event.details.ranges),
+            connections: event.details.connections,
+            connectionLimit: event.details.connectionLimit,
+          });
+        }
       },
     ),
     emitter.addListener('VegaHttpDownloadState', (event: NativeStateEvent) => {
@@ -191,6 +207,7 @@ const startNativeDownload = async ({
       record.url,
       destination.directFinalDocumentUri,
       record.headers || {},
+      settingsStorage.getDownloadConnections(),
     );
     useDownloadsStore
       .getState()
@@ -198,6 +215,7 @@ const startNativeDownload = async ({
   } finally {
     activeNativeDownloads.delete(record.id);
     subscriptions.forEach(subscription => subscription.remove());
+    useDownloadConnectionsStore.getState().clearDetails(record.id);
   }
 };
 

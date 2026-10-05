@@ -1,6 +1,7 @@
 import {cleanupDownloadStaging} from '../downloadDestination';
 import {cancelHlsDownload, hlsDownloader2} from '../hlsDownloader2';
 import useDownloadsStore from '../zustand/downloadsStore';
+import {settingsStorage} from '../storage';
 import type {DownloadBackend, DownloadBackendContext} from './types';
 
 export const hlsDownloadBackend: DownloadBackend = {
@@ -12,6 +13,7 @@ export const hlsDownloadBackend: DownloadBackend = {
       title: record.title,
       tempDirectory: `${destination.stagingDirectory}/segments`,
       headers: record.headers,
+      connections: settingsStorage.getDownloadConnections(),
       onJobStarted: backendJobId =>
         useDownloadsStore.getState().updateDownload(record.id, {
           backendJobId,

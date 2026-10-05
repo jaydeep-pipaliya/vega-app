@@ -80,6 +80,7 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
 
     private fun flushConnections() {
         try {
+            DohOkHttpFactory.instance?.evictConnections()
             OkHttpClientProvider.getOkHttpClient().connectionPool.evictAll()
         } catch (e: Exception) {
             VegaLog.w(TAG, "Failed to evict connection pool: ${e.message}")
@@ -145,11 +146,12 @@ class ByeDpiModule(reactContext: ReactApplicationContext) :
                     1080
                 }
 
+                // No -I: binding outgoing connections to 0.0.0.0 made every IPv6 site fail,
+                // and on IPv6-first networks blocked sites are often reachable only over IPv6.
                 val cmdList = mutableListOf(
                     binary.absolutePath,
                     "-i", "127.0.0.1",
-                    "-p", port.toString(),
-                    "-I", "0.0.0.0"
+                    "-p", port.toString()
                 )
 
                 val userTokens = if (!customArgs.isNullOrBlank()) {

@@ -44,6 +44,8 @@ export enum SettingsKeys {
   // Download settings
   DOWNLOAD_LOCATION = 'downloadLocation',
   DOWNLOAD_CONCURRENCY = 'downloadConcurrency',
+  DOWNLOAD_CONNECTIONS = 'downloadConnections',
+  PARALLEL_STREAMING = 'parallelStreaming',
 
   // Subtitle settings
   SUBTITLE_FONT_SIZE = 'subtitleFontSize',
@@ -100,6 +102,16 @@ export const BUFFER_LIMITS = {
   backMax: 128,
   step: 16,
 } as const;
+/** Connections one download may open; servers that refuse extra ones lower it. */
+export const MIN_DOWNLOAD_CONNECTIONS = 1;
+export const MAX_DOWNLOAD_CONNECTIONS = 16;
+const DEFAULT_DOWNLOAD_CONNECTIONS = 4;
+
+const isValidConnectionCount = (value: number | undefined): value is number =>
+  Number.isInteger(value) &&
+  (value as number) >= MIN_DOWNLOAD_CONNECTIONS &&
+  (value as number) <= MAX_DOWNLOAD_CONNECTIONS;
+
 const DEFAULT_FORWARD_BUFFER_MB = 64;
 const DEFAULT_BACK_BUFFER_MB = 0;
 
@@ -382,6 +394,27 @@ export class SettingsStorage {
       SettingsKeys.DOWNLOAD_CONCURRENCY,
       Math.min(Math.max(Math.round(value), 1), 5),
     );
+  }
+
+  getDownloadConnections(): number {
+    const value = mainStorage.getNumber(SettingsKeys.DOWNLOAD_CONNECTIONS);
+    return isValidConnectionCount(value)
+      ? value
+      : DEFAULT_DOWNLOAD_CONNECTIONS;
+  }
+
+  setDownloadConnections(value: number): void {
+    if (isValidConnectionCount(value)) {
+      mainStorage.setNumber(SettingsKeys.DOWNLOAD_CONNECTIONS, value);
+    }
+  }
+
+  getParallelStreaming(): boolean {
+    return mainStorage.getBool(SettingsKeys.PARALLEL_STREAMING, false);
+  }
+
+  setParallelStreaming(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.PARALLEL_STREAMING, enabled);
   }
 
   // Subtitle settings

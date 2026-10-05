@@ -23,7 +23,6 @@ import LibraryCollectionDialog from '../components/library/LibraryCollectionDial
 import LibraryIcon from '../components/library/LibraryIcon';
 import AppText from '../components/ui/Text';
 import {
-  DEFAULT_COLLECTION,
   getItemCollectionIds,
   mainStorage,
   settingsStorage,
@@ -107,11 +106,7 @@ const Library = () => {
 
   // A deleted category (here or synced from another device) falls back to All.
   const activeCollection =
-    filter === ALL_FILTER
-      ? undefined
-      : filter === DEFAULT_COLLECTION.id
-        ? DEFAULT_COLLECTION
-        : collections.find(c => c.id === filter);
+    filter === ALL_FILTER ? undefined : collections.find(c => c.id === filter);
   useEffect(() => {
     if (filter !== ALL_FILTER && !activeCollection) {
       setFilter(ALL_FILTER);
@@ -348,7 +343,7 @@ const Library = () => {
       icon: 'list',
       count: watchList.length,
     },
-    ...[DEFAULT_COLLECTION, ...collections].map(c => ({
+    ...collections.map(c => ({
       id: c.id,
       name: c.name,
       icon: c.icon,
@@ -370,8 +365,7 @@ const Library = () => {
       }}>
       {chips.map(chip => {
         const selected = chip.id === filter;
-        const isCustom =
-          chip.id !== ALL_FILTER && chip.id !== DEFAULT_COLLECTION.id;
+        const isCategory = chip.id !== ALL_FILTER;
         return (
           <TVFocusable
             key={chip.id}
@@ -382,7 +376,7 @@ const Library = () => {
             accessibilityLabel={`${chip.name}, ${chip.count} titles`}
             onPress={() => selectFilter(chip.id)}
             onLongPress={
-              isCustom
+              isCategory
                 ? () => {
                     triggerHaptic(HapticFeedbackTypes.impactMedium);
                     setEditor({
@@ -470,10 +464,7 @@ const Library = () => {
     </ScrollView>
   );
 
-  const editableCollection =
-    activeCollection && activeCollection.id !== DEFAULT_COLLECTION.id
-      ? (activeCollection as LibraryCollection)
-      : undefined;
+  const editableCollection = activeCollection;
 
   return (
     <TVFocusGuide

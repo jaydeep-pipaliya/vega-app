@@ -21,6 +21,9 @@ import {
   UIManager,
 } from 'react-native';
 import Animated, {
+  FadeIn,
+  FadeOut,
+  SlideInDown,
   useSharedValue,
   useAnimatedStyle,
   withTiming,
@@ -99,6 +102,7 @@ import PlayerMenuRow from '../../components/PlayerMenuRow';
 import {extractImageAccent} from '../../lib/imageAccent';
 import {mixHex} from '../../theme/seeds';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+import {syncParallelStreaming} from '../../lib/parallelStreaming';
 import {EpisodeLink, SkipInterval} from '../../lib/providers/types';
 import {getValidImageUri} from '../../components/EpisodeRowContent';
 import {Feather} from '@expo/vector-icons';
@@ -306,6 +310,8 @@ const goFullScreen = () => {
   }
 };
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 const PlayerSettingsLayer = ({
   children,
   onClose,
@@ -327,7 +333,9 @@ const PlayerSettingsLayer = ({
     );
   }
   return (
-    <View
+    <Animated.View
+      entering={FadeIn.duration(200)}
+      exiting={FadeOut.duration(180)}
       style={{
         position: 'absolute',
         top: 0,
@@ -338,7 +346,7 @@ const PlayerSettingsLayer = ({
         elevation: 50,
       }}>
       {children}
-    </View>
+    </Animated.View>
   );
 };
 
@@ -679,8 +687,6 @@ const Player = ({route}: Props): React.JSX.Element => {
     [sharedControlAnimations],
   );
   const toastOpacity = useSharedValue(0);
-  const settingsTranslateY = useSharedValue(10000);
-  const settingsOpacity = useSharedValue(0);
   const sidebarTranslateX = useSharedValue(400);
   const sidebarBackdropOpacity = useSharedValue(0);
 
@@ -1147,6 +1153,8 @@ const Player = ({route}: Props): React.JSX.Element => {
     [],
   );
   const forwardBufferMB = useMemo(() => settingsStorage.getForwardBufferMB(), []);
+  // Sent again before the video loads, in case the setting changed since startup.
+  useMemo(() => syncParallelStreaming(), []);
   const backBufferMB = useMemo(() => settingsStorage.getBackBufferMB(), []);
   const showMediaControls = useMemo(
     () => settingsStorage.showMediaControls(),
@@ -2440,16 +2448,6 @@ const Player = ({route}: Props): React.JSX.Element => {
   }, [isCasting, isPlayerLocked, setShowSettings, showSettings, streamLoading]);
 
   useEffect(() => {
-    // Settings modal visibility
-    settingsTranslateY.value = withTiming(showSettings ? 0 : 5000, {
-      duration: 250,
-    });
-    settingsOpacity.value = withTiming(showSettings ? 1 : 0, {
-      duration: 250,
-    });
-  }, [showSettings]);
-
-  useEffect(() => {
     // Episode sidebar visibility
     sidebarTranslateX.value = withTiming(showEpisodeSidebar ? 0 : 400, {
       duration: 250,
@@ -3431,7 +3429,9 @@ const Player = ({route}: Props): React.JSX.Element => {
                 alignItems: 'center',
               }}
               onPress={() => setShowSettings(false)}>
-              <Pressable
+              {/* The sheet slides up while the layer behind it fades in. */}
+              <AnimatedPressable
+                entering={SlideInDown.duration(260)}
                 focusable={false}
                 isTVSelectable={false}
                 style={{
@@ -3868,7 +3868,7 @@ const Player = ({route}: Props): React.JSX.Element => {
                     ))}
                   </ScrollView>
                 )}
-              </Pressable>
+              </AnimatedPressable>
             </Pressable>
           </TVFocusGuide>
         </PlayerSettingsLayer>

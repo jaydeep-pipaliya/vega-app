@@ -7,7 +7,12 @@ import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Surface from '../../../components/ui/Surface';
 import AppText from '../../../components/ui/Text';
 import { updateDownloadConcurrency } from '../../../lib/downloadManager';
-import { settingsStorage } from '../../../lib/storage';
+import {
+  MAX_DOWNLOAD_CONNECTIONS,
+  MIN_DOWNLOAD_CONNECTIONS,
+  settingsStorage,
+} from '../../../lib/storage';
+import SettingsSliderRow from '../../../components/ui/SettingsSliderRow';
 import { useM3Colors, useM3HostTheme } from '../../../theme/M3PaletteContext';
 import { isTV } from '../../../lib/tv';
 import { TVFocusable } from '../../../components/tv/TVFocusable';
@@ -24,6 +29,9 @@ const DownloadConcurrencyPreference = ({
   const hostTheme = useM3HostTheme();
   const [concurrency, setConcurrency] = useState(
     settingsStorage.getDownloadConcurrency(),
+  );
+  const [connections, setConnections] = useState(
+    settingsStorage.getDownloadConnections(),
   );
   const prevConcurrencyRef = useRef(concurrency);
   const decreaseRef = useRef<View>(null);
@@ -156,6 +164,22 @@ const DownloadConcurrencyPreference = ({
             )}
           </View>
         </View>
+
+        <View className="h-px bg-m3-outline-variant" />
+
+        <SettingsSliderRow
+          title="Connections per Download"
+          description="Faster on servers that limit speed per connection. Applies to new and resumed downloads"
+          value={connections}
+          min={MIN_DOWNLOAD_CONNECTIONS}
+          max={MAX_DOWNLOAD_CONNECTIONS}
+          step={1}
+          divider={false}
+          onValueChange={next => {
+            settingsStorage.setDownloadConnections(next);
+            setConnections(next);
+          }}
+        />
       </Surface>
     </View>
   );

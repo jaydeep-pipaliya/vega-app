@@ -427,6 +427,7 @@ const SubtitlePreference = ({navigation}: any) => {
             max={32}
             step={1}
             valueDisplay={`${fontSize} SP`}
+            widestValue="32 SP"
             onValueChange={(val: number) => {
               setFontSize(val);
               settingsStorage.setSubtitleFontSize(val);
@@ -509,6 +510,7 @@ const SubtitlePreference = ({navigation}: any) => {
                 max={6}
                 step={1}
                 valueDisplay={`${outlineWidth}px`}
+                widestValue="6px"
                 onValueChange={(val: number) => {
                   setOutlineWidth(val);
                   settingsStorage.setSubtitleOutlineWidth(val);
@@ -525,6 +527,7 @@ const SubtitlePreference = ({navigation}: any) => {
             max={1}
             step={0.05}
             valueDisplay={`${Math.round(textOpacity * 100)}%`}
+            widestValue="100%"
             onValueChange={(val: number) => {
               const rounded = parseFloat(val.toFixed(2));
               setTextOpacity(rounded);
@@ -540,6 +543,7 @@ const SubtitlePreference = ({navigation}: any) => {
             max={1}
             step={0.05}
             valueDisplay={`${Math.round(opacity * 100)}%`}
+            widestValue="100%"
             onValueChange={(val: number) => {
               const rounded = parseFloat(val.toFixed(2));
               setOpacity(rounded);
@@ -559,6 +563,7 @@ const SubtitlePreference = ({navigation}: any) => {
             max={80}
             step={1}
             valueDisplay={`${bottomElevation}dp`}
+            widestValue="80dp"
             onValueChange={(val: number) => {
               setBottomElevation(val);
               settingsStorage.setSubtitleBottomPadding(val);

@@ -1,9 +1,10 @@
 import {beforeEach, describe, expect, it, jest} from '@jest/globals';
 
 const mockAxiosGet = jest.fn<(url: string) => Promise<{data: unknown}>>();
+// A permanent HTTP error fails at once; network errors would be retried.
 const mockDownloadFile = jest.fn((_options: {fromUrl: string}) => ({
   jobId: 1,
-  promise: Promise.reject(new Error('segment request')),
+  promise: Promise.resolve({statusCode: 404}),
 }));
 
 jest.mock('axios', () => ({
@@ -59,7 +60,7 @@ describe('hlsDownloader2 playlist checks', () => {
       data: playlist('#EXT-X-KEY:METHOD=NONE'),
     });
 
-    await expect(download()).rejects.toThrow('segment request');
+    await expect(download()).rejects.toThrow('HTTP status 404');
     expect(mockDownloadFile.mock.calls[0][0].fromUrl).toBe(
       'https://example.com/segment0.ts',
     );

@@ -50,10 +50,13 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
     useNavigation<NativeStackNavigationProp<TabStackParamList>>();
   const provider = useContentStore(state => state.provider);
   const installedProviders = useContentStore(state => state.installedProviders);
-  const addItem = useWatchListStore(state => state.addItem);
+  const setItemCollections = useWatchListStore(
+    state => state.setItemCollections,
+  );
   const removeItem = useWatchListStore(state => state.removeItem);
-  const hasCustomCollections = useWatchListStore(
-    state => state.collections.length > 0,
+  // Id of the only category, or undefined when there are none or several.
+  const onlyCollectionId = useWatchListStore(state =>
+    state.collections.length === 1 ? state.collections[0].id : undefined,
   );
   const providerValue = route.params.provider || provider.value;
   const {
@@ -236,8 +239,9 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
         ignoreAndroidSystemSettings: false,
       });
     }
-    // With categories, ask where to save. With only the default one, toggle.
-    if (hasCustomCollections) {
+    // With one category, save to it or remove directly. With none or several,
+    // ask where to save.
+    if (!onlyCollectionId) {
       setCollectionPickerVisible(true);
       return;
     }
@@ -245,21 +249,24 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
       removeItem(route.params.link);
       return;
     }
-    addItem({
-      title: displayTitle,
-      poster: posterImage,
-      link: route.params.link,
-      provider: providerValue,
-    });
+    setItemCollections(
+      {
+        title: displayTitle,
+        poster: posterImage,
+        link: route.params.link,
+        provider: providerValue,
+      },
+      [onlyCollectionId],
+    );
   }, [
-    addItem,
     displayTitle,
-    hasCustomCollections,
     inLibrary,
+    onlyCollectionId,
     posterImage,
     providerValue,
     removeItem,
     route.params.link,
+    setItemCollections,
   ]);
 
   const searchTitle = useCallback(() => {

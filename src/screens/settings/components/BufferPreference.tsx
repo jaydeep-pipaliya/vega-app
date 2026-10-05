@@ -1,6 +1,8 @@
 import React, {useMemo, useState} from 'react';
 import SettingsSection from '../../../components/ui/SettingsSection';
 import SettingsSliderRow from '../../../components/ui/SettingsSliderRow';
+import SettingsSwitchRow from '../../../components/ui/SettingsSwitchRow';
+import {syncParallelStreaming} from '../../../lib/parallelStreaming';
 import {getSafeBufferTotalMB} from '../../../lib/deviceMemory';
 import {BUFFER_LIMITS, settingsStorage} from '../../../lib/storage';
 
@@ -12,6 +14,9 @@ const formatSize = (mb: number) => (mb === 0 ? 'Off' : `${mb} MB`);
  */
 const BufferPreference = () => {
   const safeTotal = useMemo(getSafeBufferTotalMB, []);
+  const [parallelStreaming, setParallelStreaming] = useState(() =>
+    settingsStorage.getParallelStreaming(),
+  );
   const [back, setBack] = useState(() =>
     Math.min(
       settingsStorage.getBackBufferMB(),
@@ -43,6 +48,7 @@ const BufferPreference = () => {
         max={forwardMax}
         step={BUFFER_LIMITS.step}
         valueDisplay={formatSize(forward)}
+        widestValue={formatSize(BUFFER_LIMITS.forwardMax)}
         onValueChange={next => {
           setForward(next);
           settingsStorage.setForwardBufferMB(next);
@@ -57,10 +63,21 @@ const BufferPreference = () => {
         max={backMax}
         step={BUFFER_LIMITS.step}
         valueDisplay={formatSize(back)}
-        divider={false}
+        widestValue={formatSize(BUFFER_LIMITS.backMax)}
         onValueChange={next => {
           setBack(next);
           settingsStorage.setBackBufferMB(next);
+        }}
+      />
+      <SettingsSwitchRow
+        title="Faster playback on slow servers"
+        description="When one connection is slower than 1.5 MB/s, loads the next part of the video over up to 4 connections. Direct video links only, not HLS"
+        value={parallelStreaming}
+        divider={false}
+        onValueChange={enabled => {
+          setParallelStreaming(enabled);
+          settingsStorage.setParallelStreaming(enabled);
+          syncParallelStreaming(enabled);
         }}
       />
     </SettingsSection>

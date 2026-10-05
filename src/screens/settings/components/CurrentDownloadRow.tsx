@@ -1,5 +1,5 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import React from 'react';
+import React, {useState} from 'react';
 import {Image, Text, View} from 'react-native';
 import {TVFocusable} from '../../../components/tv';
 import {useTVFocusBorderColor} from '../../../lib/tv/useTVFocusBorderColor';
@@ -14,6 +14,8 @@ import type {
 } from '../../../lib/zustand/downloadsStore';
 import {useM3Colors} from '../../../theme/M3PaletteContext';
 import DownloadProgressBar from './DownloadProgressBar';
+import DownloadConnectionsPanel from './DownloadConnectionsPanel';
+import useDownloadConnectionsStore from '../../../lib/zustand/downloadConnectionsStore';
 
 const statusLabels: Record<DownloadStatus, string> = {
   queued: 'Queued',
@@ -66,6 +68,11 @@ const CurrentDownloadRow = ({
     item.totalBytes > 0 ? item.downloadedBytes / item.totalBytes : 0;
   const failed = item.status === 'error' || item.status === 'interrupted';
   const canCancel = item.status !== 'canceling';
+  const details = useDownloadConnectionsStore(
+    state => state.details[item.id],
+  );
+  const [expanded, setExpanded] = useState(false);
+  const showDetails = expanded && details && item.totalBytes > 0;
 
   return (
     <View
@@ -76,7 +83,16 @@ const CurrentDownloadRow = ({
         borderRadius: 20,
         borderWidth: 1,
       }}>
-      <View className="flex-row">
+      <TVFocusable
+        testID={`download-details-${item.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} connections for ${item.title}`}
+        accessibilityState={{expanded}}
+        disabled={!details}
+        onPress={() => setExpanded(value => !value)}
+        borderRadius={16}
+        focusBorderColor={focusBorderColor}
+        style={{flexDirection: 'row'}}>
         <View
           className="h-24 w-16 overflow-hidden"
           style={{
@@ -116,11 +132,22 @@ const CurrentDownloadRow = ({
                 {getSubtitle(item)}
               </Text>
             </View>
-            <Text
-              className="text-xs font-medium"
-              style={{color: failed ? colors.error : colors.onSurfaceVariant}}>
-              {statusLabels[item.status]}
-            </Text>
+            <View className="flex-row items-center">
+              <Text
+                className="text-xs font-medium"
+                style={{
+                  color: failed ? colors.error : colors.onSurfaceVariant,
+                }}>
+                {statusLabels[item.status]}
+              </Text>
+              {details ? (
+                <MaterialCommunityIcons
+                  name={expanded ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={colors.onSurfaceVariant}
+                />
+              ) : null}
+            </View>
           </View>
 
           <View className="mt-3">
@@ -150,7 +177,15 @@ const CurrentDownloadRow = ({
             </View>
           </View>
         </View>
-      </View>
+      </TVFocusable>
+
+      {showDetails && (
+        <DownloadConnectionsPanel
+          details={details}
+          totalBytes={item.totalBytes}
+          primary={primary}
+        />
+      )}
 
       {failed && item.errorMessage && (
         <Text className="mt-3 text-sm" style={{color: colors.error}}>

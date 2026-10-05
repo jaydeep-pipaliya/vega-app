@@ -127,9 +127,14 @@ const reconcileRecord = async (record: DownloadItem): Promise<void> => {
     shouldResumeHttpDownload(record) &&
     (await downloadOutputExists(record.finalDocumentUri))
   ) {
-    const downloadedBytes = await getDownloadOutputSize(
-      record.finalDocumentUri,
-    ).catch(() => record.downloadedBytes);
+    // Parallel downloads write ranges out of order, so the file size can be
+    // near the total while gaps remain. Prefer the last reported progress.
+    const downloadedBytes =
+      record.downloadedBytes > 0
+        ? record.downloadedBytes
+        : await getDownloadOutputSize(record.finalDocumentUri).catch(
+            () => record.downloadedBytes,
+          );
     store.updateDownload(record.id, {
       status: 'queued',
       downloadedBytes,

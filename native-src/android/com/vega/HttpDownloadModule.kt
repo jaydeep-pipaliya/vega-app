@@ -20,9 +20,13 @@ import java.io.EOFException
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.max
 import kotlin.math.min
 
 private class DownloadCancelledException : IOException("Download cancelled")
@@ -32,20 +36,40 @@ private data class HttpDownloadJob(
     val url: String,
     val destinationUri: Uri,
     val headers: Map<String, String>,
+    val connections: Int,
     val completion: Promise,
 ) {
     @Volatile var cancelled = false
     @Volatile var userPaused = false
-    @Volatile var call: Call? = null
+    val calls: MutableSet<Call> = ConcurrentHashMap.newKeySet()
     @Volatile var cancelPromise: Promise? = null
     @Volatile var deleteOnCancel = false
     val monitor = Object()
+
+    fun cancelCalls() {
+        calls.forEach { it.cancel() }
+    }
+}
+
+/** A byte range [pos, end) still to download. Guarded by the owning transfer's lock. */
+private class Segment(var pos: Long, var end: Long) {
+    var owned = false
+    var notBefore = 0L
+    var receivedSinceReport = 0L
+    val remaining: Long get() = end - pos
 }
 
 /**
  * Streams HTTP response bodies directly into an SAF document. The document is
  * intentionally kept when the network disappears or the process is stopped;
- * the next start reads its current size and resumes with a validated Range.
+ * the next start resumes the missing byte ranges with a validated Range.
+ *
+ * When the server supports byte ranges the file is fetched over several
+ * connections at once, the way IDM does it: one connection starts at the first
+ * missing byte, and every free connection takes the second half of the largest
+ * range still downloading. Many servers limit speed per connection, so this
+ * multiplies the speed. Rate limits (429, 503, refused connections) lower the
+ * connection count instead of failing the download.
  */
 class HttpDownloadModule(
     private val reactContext: ReactApplicationContext,
@@ -57,6 +81,22 @@ class HttpDownloadModule(
         private const val INITIAL_RETRY_DELAY_MS = 1_000L
         private const val MAX_RETRY_DELAY_MS = 30_000L
         private const val BUFFER_SIZE = 512 * 1024
+
+        private const val MAX_CONNECTIONS = 16
+        // A range is split only when both halves get at least this much. Must stay above
+        // BUFFER_SIZE: a split point then always lies past the bytes a worker is writing.
+        private const val MIN_SPLIT_BYTES = 2L * 1024 * 1024
+        // Long requests keep the request count low; the cap limits what a dropped
+        // connection costs on servers that cut long transfers.
+        private const val MAX_REQUEST_BYTES = 256L * 1024 * 1024
+        private const val PERSIST_INTERVAL_MS = 2_000L
+        private const val CONNECTION_GROW_INTERVAL_MS = 30_000L
+        private const val SEGMENT_RETRY_DELAY_MS = 1_000L
+        private const val MAX_RETRY_AFTER_MS = 60_000L
+        // A rate limit this long after the previous wait counts as a new one.
+        private const val RATE_LIMIT_RESET_MS = 10_000L
+        private const val STALL_TIMEOUT_MS = 20_000L
+        private const val WORKER_STOP_TIMEOUT_MS = 10_000L
 
         private val jobs = ConcurrentHashMap<String, HttpDownloadJob>()
         private val executor = Executors.newCachedThreadPool()
@@ -118,6 +158,7 @@ class HttpDownloadModule(
         url: String,
         destinationUri: String,
         headers: ReadableMap?,
+        connections: Double,
         promise: Promise,
     ) {
         if (jobs.containsKey(downloadId)) {
@@ -130,10 +171,20 @@ class HttpDownloadModule(
             url = url,
             destinationUri = Uri.parse(destinationUri),
             headers = readableHeaders(headers),
+            connections = connections.toInt().coerceIn(1, MAX_CONNECTIONS),
             completion = promise,
         )
         jobs[downloadId] = job
         executor.execute { runJob(job) }
+    }
+
+    /**
+     * Lets the video player switch slow progressive streams to parallel range requests. Lives
+     * here because the player shares this module's segmented transfer approach.
+     */
+    @ReactMethod
+    fun setParallelStreaming(enabled: Boolean) {
+        com.brentvatne.exoplayer.ParallelDataSource.setEnabled(enabled)
     }
 
     @ReactMethod
@@ -144,7 +195,7 @@ class HttpDownloadModule(
             return
         }
         job.userPaused = true
-        job.call?.cancel()
+        job.cancelCalls()
         emitState(job.id, "paused")
         promise.resolve(null)
     }
@@ -175,7 +226,7 @@ class HttpDownloadModule(
             job.cancelPromise = promise
             job.deleteOnCancel = deleteDestination
             job.cancelled = true
-            job.call?.cancel()
+            job.cancelCalls()
             synchronized(job.monitor) {
                 job.userPaused = false
                 job.monitor.notifyAll()
@@ -236,7 +287,7 @@ class HttpDownloadModule(
                     waitForRetry(job, retryDelay)
                     retryDelay = min(retryDelay * 2, MAX_RETRY_DELAY_MS)
                 } finally {
-                    job.call = null
+                    job.calls.clear()
                 }
             }
             throw DownloadCancelledException()
@@ -268,124 +319,108 @@ class HttpDownloadModule(
         openedDescriptor?.use { descriptor ->
             FileOutputStream(descriptor.fileDescriptor).use { output ->
                 val channel = output.channel
-                var existingBytes = try {
+                val fileSize = try {
                     channel.size().coerceAtLeast(0L)
                 } catch (error: Exception) {
                     throw DestinationException("SAF destination does not support seeking", error)
-                }
-                val requestBuilder = Request.Builder().url(job.url)
-                var hasAcceptEncoding = false
-                job.headers.forEach { (name, value) ->
-                    if (name.equals("accept-encoding", ignoreCase = true)) {
-                        hasAcceptEncoding = true
-                    }
-                    if (!name.equals("range", ignoreCase = true) &&
-                        !name.equals("if-range", ignoreCase = true)) {
-                        requestBuilder.header(name, value)
-                    }
-                }
-                if (!hasAcceptEncoding) {
-                    requestBuilder.header("Accept-Encoding", "identity")
                 }
 
                 val storedUrl = metadata.getString(metaKey(job.id, "url"), null)
                 val storedUri = metadata.getString(metaKey(job.id, "uri"), null)
                 val canUseValidator = storedUrl == job.url && storedUri == job.destinationUri.toString()
-                if (existingBytes > 0L) {
-                    requestBuilder.header("Range", "bytes=$existingBytes-")
-                    if (canUseValidator) {
-                        val validator = metadata.getString(metaKey(job.id, "etag"), null)
-                            ?: metadata.getString(metaKey(job.id, "lastModified"), null)
-                        validator?.let { requestBuilder.header("If-Range", it) }
-                    }
+                val validator = if (canUseValidator) {
+                    metadata.getString(metaKey(job.id, "etag"), null)
+                        ?: metadata.getString(metaKey(job.id, "lastModified"), null)
+                } else {
+                    null
                 }
 
-                val call = client.newCall(requestBuilder.build())
-                job.call = call
+                // Ranges still missing from an earlier parallel run. Without them the file is
+                // contiguous from byte 0 (a fresh download, or one from a single-connection version).
+                val savedTotal = if (canUseValidator) metadata.getLong(metaKey(job.id, "total"), -1L) else -1L
+                var savedRanges = if (canUseValidator && savedTotal > 0L) {
+                    parseRanges(metadata.getString(metaKey(job.id, "remaining"), null))
+                } else {
+                    null
+                }
+                if (savedRanges != null && fileSize == 0L && savedRanges.sumOf { it.remaining } < savedTotal) {
+                    // The partial file was removed; the saved ranges no longer describe it.
+                    savedRanges = null
+                }
+                if (savedRanges != null && savedRanges.isEmpty() && fileSize >= savedTotal) {
+                    return savedTotal to savedTotal
+                }
+
+                val probeStart = savedRanges?.firstOrNull()?.pos ?: fileSize
+                val call = client.newCall(
+                    buildRequest(job, probeStart, null, if (probeStart > 0L || savedRanges != null) validator else null),
+                )
+                job.calls.add(call)
                 val response = call.execute()
-                response.use {
+                var handedOff = false
+                try {
                     if (response.code == 416) {
-                        val expectedTotal = parseUnsatisfiedTotal(response.header("Content-Range"))
-                        if (expectedTotal >= 0L && existingBytes == expectedTotal) {
-                            return existingBytes to expectedTotal
+                        val expectedTotal = parseContentRangeTotal(response.header("Content-Range"))
+                        if (savedRanges == null && expectedTotal >= 0L && fileSize == expectedTotal) {
+                            return fileSize to expectedTotal
                         }
-                        try {
-                            channel.truncate(0L)
-                        } catch (error: Exception) {
-                            throw DestinationException("Unable to reset the SAF destination", error)
-                        }
-                        clearMetadata(job.id)
+                        resetDestination(job, channel)
                         throw IOException("Server rejected the saved byte range; restarting")
                     }
                     if (!response.isSuccessful) {
-                        throw HttpStatusException(response.code)
+                        throw HttpStatusException(response.code, parseRetryAfterMs(response))
                     }
 
-                    var writeOffset = existingBytes
-                    if (existingBytes > 0L && response.code == 206) {
+                    val segments = mutableListOf<Segment>()
+                    val totalBytes: Long
+                    val splittable: Boolean
+                    if (response.code == 206) {
                         val rangeStart = parseContentRangeStart(response.header("Content-Range"))
-                        if (rangeStart != existingBytes) {
+                        val rangeTotal = parseContentRangeTotal(response.header("Content-Range"))
+                        if (rangeStart != probeStart ||
+                            (savedRanges != null && rangeTotal != savedTotal)) {
+                            resetDestination(job, channel)
+                            throw IOException("Server returned an invalid byte range; restarting")
+                        }
+                        if (rangeTotal > 0L) {
+                            totalBytes = rangeTotal
+                            splittable = true
+                            savedRanges?.let { segments.addAll(it) }
+                                ?: segments.add(Segment(probeStart, rangeTotal))
+                        } else {
+                            // Size unknown: keep one connection and read to the end.
+                            totalBytes = 0L
+                            splittable = false
+                            segments.add(Segment(probeStart, Long.MAX_VALUE))
+                        }
+                    } else {
+                        // The server ignored Range or the validator changed. Never append a full
+                        // response to a partial file because that silently corrupts the video.
+                        if (probeStart > 0L || savedRanges != null) {
                             try {
                                 channel.truncate(0L)
                             } catch (error: Exception) {
                                 throw DestinationException("Unable to reset the SAF destination", error)
                             }
-                            clearMetadata(job.id)
-                            throw IOException("Server returned an invalid byte range; restarting")
                         }
-                    } else if (existingBytes > 0L) {
-                        // The server ignored Range or the validator changed. Never append a full
-                        // response to a partial file because that silently corrupts the video.
-                        try {
-                            channel.truncate(0L)
-                        } catch (error: Exception) {
-                            throw DestinationException("Unable to reset the SAF destination", error)
-                        }
-                        writeOffset = 0L
-                        existingBytes = 0L
+                        val length = response.body?.contentLength() ?: -1L
+                        totalBytes = length.coerceAtLeast(0L)
+                        splittable = false
+                        segments.add(Segment(0L, if (length > 0L) length else Long.MAX_VALUE))
                     }
 
-                    val body = response.body ?: throw IOException("Empty response body")
-                    val totalBytes = parseContentRangeTotal(response.header("Content-Range"))
-                        .takeIf { it > 0L }
-                        ?: body.contentLength().takeIf { it >= 0L }?.plus(writeOffset)
-                        ?: 0L
-
-                    saveMetadata(job, response)
-                    try {
-                        channel.position(writeOffset)
-                    } catch (error: Exception) {
-                        throw DestinationException("SAF destination does not support resuming", error)
-                    }
-                    var downloadedBytes = writeOffset
-                    var previousBytes = downloadedBytes
-                    var previousTime = System.currentTimeMillis()
-                    val buffer = ByteArray(BUFFER_SIZE)
-                    body.byteStream().use { input ->
-                        while (true) {
-                            if (job.cancelled) throw DownloadCancelledException()
-                            if (job.userPaused) throw IOException("Download paused")
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            val byteBuffer = java.nio.ByteBuffer.wrap(buffer, 0, read)
-                            try {
-                                while (byteBuffer.hasRemaining()) {
-                                    channel.write(byteBuffer)
-                                }
-                            } catch (error: Exception) {
-                                throw DestinationException("Unable to write to the SAF destination", error)
-                            }
-                            downloadedBytes += read
-
-                            val now = System.currentTimeMillis()
-                            val elapsed = now - previousTime
-                            if (elapsed >= PROGRESS_INTERVAL_MS) {
-                                val speed = ((downloadedBytes - previousBytes) * 1000.0) / elapsed
-                                emitProgress(job.id, downloadedBytes, totalBytes, speed)
-                                previousBytes = downloadedBytes
-                                previousTime = now
-                            }
-                        }
+                    saveMetadata(job, response, totalBytes)
+                    val responseValidator = response.header("ETag") ?: response.header("Last-Modified")
+                    val transfer = SegmentedTransfer(
+                        job, channel, segments, totalBytes, splittable,
+                        validator = if (splittable) responseValidator ?: validator else null,
+                    )
+                    handedOff = true
+                    val result = try {
+                        transfer.run(response, call)
+                    } catch (error: RangeResetException) {
+                        resetDestination(job, channel)
+                        throw IOException(error.message)
                     }
                     try {
                         output.flush()
@@ -393,14 +428,346 @@ class HttpDownloadModule(
                     } catch (error: Exception) {
                         throw DestinationException("Unable to flush the SAF destination", error)
                     }
-                    if (totalBytes > 0L && downloadedBytes < totalBytes) {
-                        throw EOFException("Connection ended before the file was complete")
+                    return result
+                } finally {
+                    if (!handedOff) {
+                        response.close()
+                        job.calls.remove(call)
                     }
-                    return downloadedBytes to if (totalBytes > 0L) totalBytes else downloadedBytes
                 }
             }
         }
         throw IOException("Unable to open the SAF destination")
+    }
+
+    /**
+     * Downloads [segments] into [channel] over up to [HttpDownloadJob.connections] connections.
+     * Workers write with positional writes, so they never share a file position.
+     */
+    private inner class SegmentedTransfer(
+        private val job: HttpDownloadJob,
+        private val channel: FileChannel,
+        private val segments: MutableList<Segment>,
+        private val totalBytes: Long,
+        private val splittable: Boolean,
+        private val validator: String?,
+    ) {
+        private val lock = Object()
+        private var active = 0
+        private val connectionLimit = if (splittable) job.connections else 1
+        private var maxConnections = connectionLimit
+        private var cooldownUntil = 0L
+        private var growAt = Long.MAX_VALUE
+        private var rateLimitStreak = 0
+        // Connections currently receiving data: what the server accepts right now.
+        private var streaming = 0
+        private var fatal: Exception? = null
+        private var lastError: Exception? = null
+        @Volatile private var lastProgressAt = System.currentTimeMillis()
+        private val downloaded = AtomicLong(
+            if (totalBytes > 0L) totalBytes - segments.sumOf { it.remaining } else segments.first().pos,
+        )
+
+        fun run(probe: Response, probeCall: Call): Pair<Long, Long> {
+            var previousBytes = downloaded.get()
+            var previousTime = System.currentTimeMillis()
+            var lastPersist = previousTime
+            try {
+                synchronized(lock) { startWorker(segments.first(), probe, probeCall) }
+                while (true) {
+                    synchronized(lock) {
+                        fatal?.let { throw it }
+                        if (segments.isEmpty() && active == 0) {
+                            return downloaded.get() to if (totalBytes > 0L) totalBytes else downloaded.get()
+                        }
+                        // Connections keep failing: hand the error to runJob, which waits for
+                        // the network or backs off, then resumes from the saved ranges.
+                        val error = lastError
+                        val stalled = System.currentTimeMillis() - lastProgressAt >= STALL_TIMEOUT_MS
+                        if (error != null && (!hasNetwork() || stalled)) throw error
+                        schedule()
+                        lock.wait(250L)
+                    }
+                    if (job.cancelled) throw DownloadCancelledException()
+                    if (job.userPaused) throw IOException("Download paused")
+
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - previousTime
+                    if (elapsed >= PROGRESS_INTERVAL_MS) {
+                        val bytes = downloaded.get()
+                        emitProgress(
+                            job.id, bytes, totalBytes, ((bytes - previousBytes) * 1000.0) / elapsed,
+                            connectionDetails(elapsed),
+                        )
+                        previousBytes = bytes
+                        previousTime = now
+                    }
+                    if (now - lastPersist >= PERSIST_INTERVAL_MS) {
+                        persistRemaining()
+                        lastPersist = now
+                    }
+                }
+            } finally {
+                job.cancelCalls()
+                synchronized(lock) {
+                    val deadline = System.currentTimeMillis() + WORKER_STOP_TIMEOUT_MS
+                    while (active > 0 && System.currentTimeMillis() < deadline) {
+                        lock.wait(100L)
+                    }
+                }
+                persistRemaining()
+            }
+        }
+
+        /**
+         * Ranges still downloading, for the download details view. Each entry is
+         * [pos, end, bytes per second, 1 when a connection is on it].
+         */
+        private fun connectionDetails(elapsedMs: Long): com.facebook.react.bridge.WritableMap {
+            val ranges = Arguments.createArray()
+            synchronized(lock) {
+                segments.forEach { segment ->
+                    if (segment.remaining <= 0L || segment.end == Long.MAX_VALUE) return@forEach
+                    ranges.pushArray(Arguments.createArray().apply {
+                        pushDouble(segment.pos.toDouble())
+                        pushDouble(segment.end.toDouble())
+                        pushDouble(segment.receivedSinceReport * 1000.0 / max(1L, elapsedMs))
+                        pushInt(if (segment.owned) 1 else 0)
+                    })
+                    segment.receivedSinceReport = 0L
+                }
+                return Arguments.createMap().apply {
+                    putArray("ranges", ranges)
+                    putInt("connections", streaming)
+                    putInt("connectionLimit", maxConnections)
+                }
+            }
+        }
+
+        /** Fills free connection slots. Caller holds [lock]. */
+        private fun schedule() {
+            val now = System.currentTimeMillis()
+            if (now >= growAt && maxConnections < connectionLimit) {
+                maxConnections++
+                growAt = if (maxConnections < connectionLimit) now + CONNECTION_GROW_INTERVAL_MS else Long.MAX_VALUE
+            }
+            if (now < cooldownUntil) return
+            while (active < maxConnections) {
+                val waiting = segments.firstOrNull { !it.owned && it.remaining > 0L && it.notBefore <= now }
+                if (waiting != null) {
+                    startWorker(waiting, null, null)
+                    continue
+                }
+                if (!splittable) return
+                val largest = segments.filter { it.owned }.maxByOrNull { it.remaining } ?: return
+                if (largest.remaining < MIN_SPLIT_BYTES * 2) return
+                val middle = largest.pos + largest.remaining / 2
+                val second = Segment(middle, largest.end)
+                largest.end = middle
+                segments.add(segments.indexOf(largest) + 1, second)
+                startWorker(second, null, null)
+            }
+        }
+
+        private fun startWorker(segment: Segment, response: Response?, call: Call?) {
+            segment.owned = true
+            active++
+            executor.execute { work(segment, response, call) }
+        }
+
+        private fun work(segment: Segment, initialResponse: Response?, initialCall: Call?) {
+            var response = initialResponse
+            var call = initialCall
+            try {
+                while (true) {
+                    val pos: Long
+                    val end: Long
+                    synchronized(lock) {
+                        pos = segment.pos
+                        end = segment.end
+                    }
+                    if (pos >= end) break
+                    if (response == null) {
+                        val lastByte = if (end == Long.MAX_VALUE) null else min(end, pos + MAX_REQUEST_BYTES) - 1
+                        val request = buildRequest(job, pos, lastByte, validator)
+                        call = client.newCall(request).also { job.calls.add(it) }
+                        response = call.execute()
+                        checkRangeResponse(response, pos)
+                    }
+                    synchronized(lock) { streaming++ }
+                    val reachedEnd = try {
+                        response.use { readInto(segment, it) }
+                    } finally {
+                        synchronized(lock) { streaming-- }
+                    }
+                    call?.let { job.calls.remove(it) }
+                    response = null
+                    call = null
+                    if (reachedEnd) continue
+                    // The body ended before the segment did.
+                    if (end == Long.MAX_VALUE) {
+                        synchronized(lock) { segment.end = segment.pos }
+                    } else if (!splittable || synchronized(lock) { segment.pos } == pos) {
+                        throw EOFException("Connection ended before the file was complete")
+                    }
+                }
+                synchronized(lock) {
+                    segments.remove(segment)
+                    lastError = null
+                }
+            } catch (error: Exception) {
+                onWorkerError(segment, error)
+            } finally {
+                response?.close()
+                call?.let { job.calls.remove(it) }
+                synchronized(lock) {
+                    segment.owned = false
+                    active--
+                    lock.notifyAll()
+                }
+            }
+        }
+
+        private fun checkRangeResponse(response: Response, pos: Long) {
+            if (!response.isSuccessful) {
+                val status = response.code
+                val retryAfter = parseRetryAfterMs(response)
+                response.close()
+                throw HttpStatusException(status, retryAfter)
+            }
+            val contentRange = response.header("Content-Range")
+            if (response.code != 206 || parseContentRangeStart(contentRange) != pos ||
+                (totalBytes > 0L && parseContentRangeTotal(contentRange) != totalBytes)) {
+                response.close()
+                throw RangeResetException("The file changed on the server; restarting")
+            }
+        }
+
+        /** Returns true when the segment end was reached, false when the body ended first. */
+        private fun readInto(segment: Segment, response: Response): Boolean {
+            val body = response.body ?: throw IOException("Empty response body")
+            val buffer = ByteArray(BUFFER_SIZE)
+            body.byteStream().use { input ->
+                while (true) {
+                    if (job.cancelled) throw DownloadCancelledException()
+                    if (job.userPaused) throw IOException("Download paused")
+                    val read = input.read(buffer)
+                    if (read < 0) return false
+                    val writePos: Long
+                    val count: Int
+                    synchronized(lock) {
+                        writePos = segment.pos
+                        count = min(read.toLong(), segment.end - segment.pos).toInt()
+                    }
+                    if (count > 0) {
+                        val byteBuffer = ByteBuffer.wrap(buffer, 0, count)
+                        try {
+                            var position = writePos
+                            while (byteBuffer.hasRemaining()) {
+                                position += channel.write(byteBuffer, position)
+                            }
+                        } catch (error: Exception) {
+                            throw DestinationException("Unable to write to the SAF destination", error)
+                        }
+                        downloaded.addAndGet(count.toLong())
+                        lastProgressAt = System.currentTimeMillis()
+                    }
+                    synchronized(lock) {
+                        segment.pos += count
+                        segment.receivedSinceReport += count
+                        if (segment.pos >= segment.end) return true
+                    }
+                }
+            }
+        }
+
+        private fun onWorkerError(segment: Segment, error: Exception) {
+            synchronized(lock) {
+                if (job.cancelled || job.userPaused) return
+                val now = System.currentTimeMillis()
+                when {
+                    error is DestinationException || error is RangeResetException -> fatal = error
+                    error is HttpStatusException && isConnectionLimit(error) -> {
+                        // The server refuses this many connections. Keep the ones it accepts,
+                        // wait, and let the count grow back slowly. Errors from a burst of new
+                        // connections count as one rate limit.
+                        if (now >= cooldownUntil) {
+                            if (now >= cooldownUntil + RATE_LIMIT_RESET_MS) rateLimitStreak = 0
+                            val backoff = min(
+                                INITIAL_RETRY_DELAY_MS shl min(rateLimitStreak, 5),
+                                MAX_RETRY_DELAY_MS,
+                            )
+                            rateLimitStreak++
+                            cooldownUntil = now + if (error.retryAfterMs > 0L) error.retryAfterMs else backoff
+                        }
+                        maxConnections = min(maxConnections, max(1, streaming))
+                        growAt = cooldownUntil + CONNECTION_GROW_INTERVAL_MS
+                        segment.notBefore = cooldownUntil
+                        lastError = error
+                    }
+                    error is HttpStatusException && !isRetryable(error) -> {
+                        // With other connections working, an error here is most likely a
+                        // per-connection limit; only a single connection's error is final.
+                        if (streaming == 0) {
+                            fatal = error
+                        } else {
+                            maxConnections = min(maxConnections, streaming)
+                            growAt = now + CONNECTION_GROW_INTERVAL_MS
+                            segment.notBefore = now + SEGMENT_RETRY_DELAY_MS
+                            lastError = error
+                        }
+                    }
+                    else -> {
+                        segment.notBefore = now + SEGMENT_RETRY_DELAY_MS
+                        lastError = error
+                    }
+                }
+                lock.notifyAll()
+            }
+        }
+
+        private fun isConnectionLimit(error: HttpStatusException): Boolean =
+            error.status == 429 || error.status == 503
+
+        private fun persistRemaining() {
+            if (totalBytes <= 0L) return
+            val ranges = synchronized(lock) {
+                segments.filter { it.remaining > 0L }.joinToString(",") { "${it.pos}-${it.end}" }
+            }
+            metadata.edit()
+                .putLong(metaKey(job.id, "total"), totalBytes)
+                .putString(metaKey(job.id, "remaining"), ranges)
+                .apply()
+        }
+    }
+
+    private fun buildRequest(job: HttpDownloadJob, start: Long, lastByte: Long?, validator: String?): Request {
+        val requestBuilder = Request.Builder().url(job.url)
+        var hasAcceptEncoding = false
+        job.headers.forEach { (name, value) ->
+            if (name.equals("accept-encoding", ignoreCase = true)) {
+                hasAcceptEncoding = true
+            }
+            if (!name.equals("range", ignoreCase = true) &&
+                !name.equals("if-range", ignoreCase = true)) {
+                requestBuilder.header(name, value)
+            }
+        }
+        if (!hasAcceptEncoding) {
+            requestBuilder.header("Accept-Encoding", "identity")
+        }
+        requestBuilder.header("Range", if (lastByte != null) "bytes=$start-$lastByte" else "bytes=$start-")
+        validator?.let { requestBuilder.header("If-Range", it) }
+        return requestBuilder.build()
+    }
+
+    private fun resetDestination(job: HttpDownloadJob, channel: FileChannel) {
+        try {
+            channel.truncate(0L)
+        } catch (error: Exception) {
+            throw DestinationException("Unable to reset the SAF destination", error)
+        }
+        clearMetadata(job.id)
     }
 
     private fun waitWhilePaused(job: HttpDownloadJob) {
@@ -425,8 +792,8 @@ class HttpDownloadModule(
         jobs.values.forEach { job ->
             if (!job.cancelled && !job.userPaused) {
                 emitState(job.id, "waitingForNetwork", "Waiting for network connection")
-                // Interrupt a blocked OkHttp read immediately instead of waiting for its timeout.
-                job.call?.cancel()
+                // Interrupt blocked OkHttp reads immediately instead of waiting for their timeout.
+                job.cancelCalls()
                 synchronized(job.monitor) { job.monitor.notifyAll() }
             }
         }
@@ -459,14 +826,20 @@ class HttpDownloadModule(
         else -> false
     }
 
-    private fun saveMetadata(job: HttpDownloadJob, response: Response) {
+    private fun saveMetadata(job: HttpDownloadJob, response: Response, totalBytes: Long) {
         metadata.edit()
             .putString(metaKey(job.id, "url"), job.url)
             .putString(metaKey(job.id, "uri"), job.destinationUri.toString())
+            .remove(metaKey(job.id, "etag"))
+            .remove(metaKey(job.id, "lastModified"))
             .apply {
                 response.header("ETag")?.let { putString(metaKey(job.id, "etag"), it) }
                 response.header("Last-Modified")?.let {
                     putString(metaKey(job.id, "lastModified"), it)
+                }
+                if (response.code != 206 || totalBytes <= 0L) {
+                    remove(metaKey(job.id, "total"))
+                    remove(metaKey(job.id, "remaining"))
                 }
             }
             .apply()
@@ -478,14 +851,23 @@ class HttpDownloadModule(
             .remove(metaKey(downloadId, "uri"))
             .remove(metaKey(downloadId, "etag"))
             .remove(metaKey(downloadId, "lastModified"))
+            .remove(metaKey(downloadId, "total"))
+            .remove(metaKey(downloadId, "remaining"))
             .apply()
     }
 
     private fun metaKey(downloadId: String, field: String) = "$downloadId:$field"
 
-    private fun emitProgress(downloadId: String, downloaded: Long, total: Long, speed: Double) {
+    private fun emitProgress(
+        downloadId: String,
+        downloaded: Long,
+        total: Long,
+        speed: Double,
+        details: com.facebook.react.bridge.WritableMap? = null,
+    ) {
         emit(PROGRESS_EVENT, Arguments.createMap().apply {
             putString("downloadId", downloadId)
+            details?.let { putMap("details", it) }
             putDouble("downloadedBytes", downloaded.toDouble())
             putDouble("totalBytes", total.toDouble())
             putDouble("speed", speed)
@@ -519,6 +901,23 @@ class HttpDownloadModule(
         return result
     }
 
+    private fun parseRanges(value: String?): MutableList<Segment>? {
+        if (value == null) return null
+        if (value.isEmpty()) return mutableListOf()
+        return value.split(",").map { part ->
+            val bounds = part.split("-")
+            val start = bounds.getOrNull(0)?.toLongOrNull() ?: return null
+            val end = bounds.getOrNull(1)?.toLongOrNull() ?: return null
+            if (start < 0L || end <= start) return null
+            Segment(start, end)
+        }.sortedBy { it.pos }.toMutableList()
+    }
+
+    private fun parseRetryAfterMs(response: Response): Long {
+        val seconds = response.header("Retry-After")?.trim()?.toLongOrNull() ?: return 0L
+        return (seconds * 1000L).coerceIn(0L, MAX_RETRY_AFTER_MS)
+    }
+
     private fun parseContentRangeStart(value: String?): Long {
         return Regex("bytes\\s+(\\d+)-", RegexOption.IGNORE_CASE)
             .find(value ?: "")?.groupValues?.getOrNull(1)?.toLongOrNull() ?: -1L
@@ -528,9 +927,8 @@ class HttpDownloadModule(
         return Regex("/(\\d+)$").find(value ?: "")
             ?.groupValues?.getOrNull(1)?.toLongOrNull() ?: -1L
     }
-
-    private fun parseUnsatisfiedTotal(value: String?): Long = parseContentRangeTotal(value)
 }
 
-private class HttpStatusException(val status: Int) : IOException("HTTP $status")
+private class HttpStatusException(val status: Int, val retryAfterMs: Long = 0L) : IOException("HTTP $status")
 private class DestinationException(message: String, cause: Throwable) : IOException(message, cause)
+private class RangeResetException(message: String) : IOException(message)

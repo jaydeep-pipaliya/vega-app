@@ -12,6 +12,8 @@ export {
   SettingsStorage,
   settingsStorage,
   BUFFER_LIMITS,
+  MAX_DOWNLOAD_CONNECTIONS,
+  MIN_DOWNLOAD_CONNECTIONS,
 } from './SettingsStorage';
 export type {SettingsKeys} from './SettingsStorage';
 

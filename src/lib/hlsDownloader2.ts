@@ -14,6 +14,19 @@ interface M3U8Data {
   isLive: boolean;
 }
 
+const MAX_SEGMENT_ATTEMPTS = 5;
+const SEGMENT_RETRY_BASE_MS = 1000;
+const MAX_SEGMENT_RETRY_MS = 16000;
+
+class SegmentHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Segment download failed with HTTP status ${status}`);
+  }
+}
+
+const sleep = (ms: number) =>
+  new Promise<void>(resolve => setTimeout(resolve, ms));
+
 const cancelledDownloads = new Set<string>();
 const activeDownloads = new Set<string>();
 
@@ -215,9 +228,7 @@ const downloadSegment = async (
     if (await RNFS.exists(outputPath)) {
       await RNFS.unlink(outputPath).catch(() => undefined);
     }
-    throw new Error(
-      `Segment download failed with HTTP status ${result.statusCode}`,
-    );
+    throw new SegmentHttpError(result.statusCode);
   }
 };
 
@@ -260,6 +271,7 @@ export const hlsDownloader2 = async ({
   onProgress,
   onCompleted,
   headers = {},
+  connections = 4,
 }: {
   videoUrl: string;
   downloadId: string;
@@ -270,6 +282,8 @@ export const hlsDownloader2 = async ({
   onProgress?: (completedSegments: number, totalSegments: number) => void;
   onCompleted?: (outputPath: string) => void | Promise<void>;
   headers?: any;
+  /** Segments downloaded at the same time. */
+  connections?: number;
 }) => {
   cancelledDownloads.delete(downloadId);
   activeDownloads.add(downloadId);
@@ -305,46 +319,72 @@ export const hlsDownloader2 = async ({
       segmentPaths.push(initPath);
     }
 
+    // A pool of workers takes segments in order. Each 429 or 503 removes a
+    // worker, so a server that limits connections gets fewer of them.
+    const offset = m3u8Data.initSegmentUrl ? 1 : 0;
     let downloadedSegments = 0;
-    const maxConcurrentDownloads = 8; // Limit concurrent downloads
+    let nextSegment = 0;
+    let workerLimit = Math.max(
+      1,
+      Math.min(connections, m3u8Data.segments.length),
+    );
+    let failed = false;
 
-    // Download segments in batches
-    for (let i = 0; i < m3u8Data.segments.length; i += maxConcurrentDownloads) {
-      if (cancelledDownloads.has(downloadId)) {
-        throw new Error('Download cancelled by user');
-      }
-
-      const batch = m3u8Data.segments.slice(i, i + maxConcurrentDownloads);
-      const batchPromises = batch.map(async segment => {
-        const segmentPath = `${tempDir}/segment_${segment.index}.ts`;
-        segmentPaths[segment.index + (m3u8Data.initSegmentUrl ? 1 : 0)] = segmentPath;
-
+    const downloadWithRetry = async (url: string, segmentPath: string) => {
+      for (let attempt = 1; ; attempt++) {
         try {
-          await downloadSegment(downloadId, segment.url, segmentPath, headers);
-          downloadedSegments++;
-          onProgress?.(downloadedSegments, m3u8Data.segments.length);
-
-          const progress =
-            (downloadedSegments / m3u8Data.segments.length) * 100;
-
-          console.log(
-            `Downloaded segment ${segment.index + 1}/${
-              m3u8Data.segments.length
-            } (${progress.toFixed(1)}%)`,
-          );
+          await downloadSegment(downloadId, url, segmentPath, headers);
+          return;
         } catch (error) {
+          if (cancelledDownloads.has(downloadId)) {
+            throw error;
+          }
+          const status = error instanceof SegmentHttpError ? error.status : 0;
+          const rateLimited = status === 429 || status === 503;
+          const permanent =
+            status >= 400 && status < 500 && status !== 408 && !rateLimited;
+          if (permanent || attempt >= MAX_SEGMENT_ATTEMPTS) {
+            throw error;
+          }
+          if (rateLimited && workerLimit > 1) {
+            workerLimit--;
+          }
+          await sleep(
+            Math.min(
+              SEGMENT_RETRY_BASE_MS * 2 ** (attempt - 1),
+              MAX_SEGMENT_RETRY_MS,
+            ),
+          );
+        }
+      }
+    };
+
+    const runWorker = async (workerIndex: number) => {
+      while (workerIndex < workerLimit && !failed) {
+        if (cancelledDownloads.has(downloadId)) {
+          throw new Error('Download cancelled by user');
+        }
+        const segment = m3u8Data.segments[nextSegment++];
+        if (!segment) {
+          return;
+        }
+        const segmentPath = `${tempDir}/segment_${segment.index}.ts`;
+        segmentPaths[segment.index + offset] = segmentPath;
+        try {
+          await downloadWithRetry(segment.url, segmentPath);
+        } catch (error) {
+          failed = true;
           console.error(`Failed to download segment ${segment.index}:`, error);
           throw error;
         }
-      });
-
-      await Promise.all(batchPromises);
-
-      // Small delay between batches to avoid overwhelming the server
-      if (i + maxConcurrentDownloads < m3u8Data.segments.length) {
-        await new Promise(resolve => setTimeout(resolve, 80));
+        downloadedSegments++;
+        onProgress?.(downloadedSegments, m3u8Data.segments.length);
       }
-    }
+    };
+
+    await Promise.all(
+      Array.from({length: workerLimit}, (_, index) => runWorker(index)),
+    );
 
     if (cancelledDownloads.has(downloadId)) {
       throw new Error('Download cancelled by user');

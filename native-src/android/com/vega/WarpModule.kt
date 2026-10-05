@@ -33,6 +33,19 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "WarpModule"
 
+/** How to reach Cloudflare, tried in order until traffic passes. */
+private data class TunnelMode(val label: String, val args: List<String>)
+
+private val TUNNEL_MODES = listOf(
+    TunnelMode("HTTP/3", emptyList()),
+    // Networks that block QUIC (UDP 443) usually still allow TCP 443.
+    TunnelMode("HTTP/2", listOf("--http2")),
+    // Last resort for an endpoint whose certificate does not match the pinned key.
+    TunnelMode("HTTP/3 without certificate pinning", listOf("--insecure")),
+)
+
+private const val TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace"
+
 class WarpModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext), LifecycleEventListener {
 
@@ -106,6 +119,7 @@ class WarpModule(reactContext: ReactApplicationContext) :
 
     private fun flushConnections() {
         try {
+            DohOkHttpFactory.instance?.evictConnections()
             OkHttpClientProvider.getOkHttpClient().connectionPool.evictAll()
         } catch (e: Exception) {
             VegaLog.w(TAG, "Failed to evict connection pool: ${e.message}")
@@ -295,6 +309,67 @@ class WarpModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Starts the proxy and waits until it listens. Uses http-proxy, not l4-http-proxy: the L4
+     * mode looks up site names with plain DNS outside the tunnel, where an ISP that poisons DNS
+     * returns its block page address; http-proxy resolves names inside the tunnel.
+     */
+    private fun launchProxy(binary: File, configFile: File, port: Int, extraArgs: List<String>): Process? {
+        val command = mutableListOf(
+            binary.absolutePath,
+            "-c", configFile.absolutePath,
+            "http-proxy",
+            "-b", "127.0.0.1",
+            "-p", port.toString(),
+            "-d", "1.1.1.1",
+            "-d", "8.8.8.8",
+        )
+        command.addAll(extraArgs)
+        val pb = ProcessBuilder(command)
+        pb.directory(getWarpDir())
+        pb.redirectErrorStream(true)
+        val proc = pb.start()
+
+        val listening = java.util.concurrent.atomic.AtomicBoolean(false)
+        Thread {
+            try {
+                proc.inputStream.bufferedReader().forEachLine { line ->
+                    VegaLog.d("WarpProcess", line)
+                    if (line.contains("listening on", ignoreCase = true)) {
+                        listening.set(true)
+                    }
+                }
+            } catch (_: Exception) {}
+        }.start()
+
+        var waitedMs = 0
+        while (waitedMs < 3000 && proc.isAlive && !listening.get()) {
+            Thread.sleep(100)
+            waitedMs += 100
+        }
+        return if (proc.isAlive) proc else null
+    }
+
+    /** True when a request through the proxy reaches Cloudflare with WARP on. */
+    private fun tunnelWorks(port: Int): Boolean {
+        val client = OkHttpClient.Builder()
+            .proxy(java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", port)))
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
+            .build()
+        return try {
+            client.newCall(Request.Builder().url(TRACE_URL).build()).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                response.isSuccessful &&
+                    (body.contains("warp=on") || body.contains("warp=plus"))
+            }
+        } catch (e: Exception) {
+            VegaLog.w(TAG, "WARP check through port $port failed: ${e.message}")
+            false
+        }
+    }
+
     @ReactMethod
     fun startWarp(promise: Promise) {
         Thread {
@@ -328,73 +403,58 @@ class WarpModule(reactContext: ReactApplicationContext) :
                     }
                 }
 
-                val port = try {
-                    ServerSocket(0).use { it.localPort }
-                } catch (e: Exception) {
-                    8086
-                }
-
-                val pb = ProcessBuilder(
-                    binary.absolutePath,
-                    "-c", configFile.absolutePath,
-                    "l4-http-proxy",
-                    "-b", "127.0.0.1",
-                    "-p", port.toString(),
-                    "-d", "8.8.8.8",
-                    "-d", "1.1.1.1",
-                    "--insecure"
-                )
-                pb.directory(getWarpDir())
-                pb.redirectErrorStream(true)
-                val proc = pb.start()
-                warpProcess = proc
-                currentPort = port
-
-                var isListening = false
-                val logLines = StringBuilder()
-                Thread {
-                    try {
-                        proc.inputStream.bufferedReader().forEachLine { line ->
-                            VegaLog.d("WarpProcess", line)
-                            logLines.append(line).append("\n")
-                            if (line.contains("listening on", ignoreCase = true) || line.contains("HTTP proxy", ignoreCase = true)) {
-                                isListening = true
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }.start()
-
-                // Monitor process liveness in background
-                Thread {
-                    try {
-                        proc.waitFor()
-                    } catch (_: Exception) {}
-                    if (warpProcess == proc) {
-                        VegaLog.i(TAG, "WARP proxy process terminated unexpectedly")
-                        stopInternal()
+                val failures = mutableListOf<String>()
+                for (mode in TUNNEL_MODES) {
+                    val port = try {
+                        ServerSocket(0).use { it.localPort }
+                    } catch (e: Exception) {
+                        8086
                     }
-                }.start()
+                    val proc = launchProxy(binary, configFile, port, mode.args)
+                    if (proc == null) {
+                        failures.add("${mode.label}: proxy exited")
+                        continue
+                    }
+                    if (!tunnelWorks(port)) {
+                        failures.add("${mode.label}: no traffic through Cloudflare")
+                        proc.destroy()
+                        proc.waitFor(2, TimeUnit.SECONDS)
+                        if (proc.isAlive) proc.destroyForcibly()
+                        continue
+                    }
 
-                var waitedMs = 0
-                while (waitedMs < 2500 && proc.isAlive && !isListening) {
-                    Thread.sleep(100)
-                    waitedMs += 100
-                }
+                    warpProcess = proc
+                    currentPort = port
+                    // Clears the routing when the proxy dies, so requests stop pointing at a
+                    // dead port.
+                    Thread {
+                        try {
+                            proc.waitFor()
+                        } catch (_: Exception) {}
+                        if (warpProcess == proc) {
+                            VegaLog.i(TAG, "WARP proxy process terminated unexpectedly")
+                            stopInternal()
+                        }
+                    }.start()
 
-                if (!proc.isAlive) {
-                    stopInternal()
-                    promise.reject("WARP_START_FAILED", "WARP proxy process terminated immediately: $logLines")
+                    DohOkHttpFactory.instance?.warpProxyPort = port
+                    flushConnections()
+                    VegaLog.i(TAG, "WARP connected over ${mode.label} on port $port")
+
+                    val result = Arguments.createMap().apply {
+                        putBoolean("running", true)
+                        putInt("port", port)
+                        putString("transport", mode.label)
+                    }
+                    promise.resolve(result)
                     return@Thread
                 }
 
-                DohOkHttpFactory.instance?.warpProxyPort = port
-                flushConnections()
-
-                val result = Arguments.createMap().apply {
-                    putBoolean("running", true)
-                    putInt("port", port)
-                }
-                promise.resolve(result)
+                stopInternal()
+                promise.reject(
+                    "WARP_TUNNEL_FAILED",
+                    "Could not connect to Cloudflare WARP. ${failures.joinToString("; ")}"
+                )
             } catch (e: Exception) {
                 stopInternal()
                 promise.reject("WARP_ERROR", e.message, e)

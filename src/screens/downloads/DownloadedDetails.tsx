@@ -33,6 +33,7 @@ import type {DownloadItem} from '../../lib/zustand/downloadsStore';
 import useDownloadsStore, {
   selectCompletedDownloads,
 } from '../../lib/zustand/downloadsStore';
+import {useShallow} from 'zustand/react/shallow';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import DownloadedEpisodeControls from './components/DownloadedEpisodeControls';
 import DownloadedEpisodeRow from './components/DownloadedEpisodeRow';
@@ -66,7 +67,7 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
   const colors = useM3Colors();
   const primary = colors.primary;
   const focusBorderColor = useTVFocusBorderColor();
-  const completed = useDownloadsStore(selectCompletedDownloads);
+  const completed = useDownloadsStore(useShallow(selectCompletedDownloads));
   const markMissing = useDownloadsStore(state => state.markMissing);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DownloadItem | null>(null);

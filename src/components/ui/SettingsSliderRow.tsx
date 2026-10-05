@@ -19,6 +19,11 @@ interface SettingsSliderRowProps {
   max: number;
   step?: number;
   valueDisplay?: string | number;
+  /**
+   * Widest text the value can show. The chip keeps this width, so the title
+   * and description do not reflow as the value changes. Defaults to `max`.
+   */
+  widestValue?: string;
   onValueChange: (value: number) => void;
   onValueChangeFinished?: (value: number) => void;
   divider?: boolean;
@@ -33,6 +38,7 @@ const SettingsSliderRow = ({
   max,
   step,
   valueDisplay,
+  widestValue,
   onValueChange,
   onValueChangeFinished,
   divider = true,
@@ -119,12 +125,20 @@ const SettingsSliderRow = ({
           </View>
         </View>
         <View
-          className="rounded-full px-2.5 py-1"
+          className="items-center rounded-full px-2.5 py-1"
           style={{ backgroundColor: colors.surfaceContainerHighest }}>
           <AppText
             role="titleSmall"
             style={{ color: colors.primary, fontWeight: '700' }}>
             {display}
+          </AppText>
+          {/* Zero-height copy of the widest value: keeps the chip at least that
+              wide without adding height. */}
+          <AppText
+            role="titleSmall"
+            aria-hidden
+            style={{ fontWeight: '700', height: 0, opacity: 0 }}>
+            {widestValue ?? String(max)}
           </AppText>
         </View>
       </View>

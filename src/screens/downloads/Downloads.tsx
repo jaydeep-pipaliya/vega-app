@@ -33,6 +33,7 @@ import useDownloadsStore, {
   selectCompletedDownloads,
   selectCurrentDownloads,
 } from '../../lib/zustand/downloadsStore';
+import {useShallow} from 'zustand/react/shallow';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import CurrentDownloadsSection from '../settings/components/CurrentDownloadsSection';
 import MissingDownloadsSection from '../settings/components/MissingDownloadsSection';
@@ -48,8 +49,8 @@ const Downloads = () => {
   const navigation =
     useNavigation<NativeStackNavigationProp<DownloadsStackParamList>>();
   const screenFocused = useIsFocused();
-  const completed = useDownloadsStore(selectCompletedDownloads);
-  const currentDownloads = useDownloadsStore(selectCurrentDownloads);
+  const completed = useDownloadsStore(useShallow(selectCompletedDownloads));
+  const currentDownloads = useDownloadsStore(useShallow(selectCurrentDownloads));
   const groups = useMemo(() => groupCompletedDownloads(completed), [completed]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(
     new Set(),
