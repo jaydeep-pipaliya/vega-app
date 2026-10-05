@@ -1,6 +1,7 @@
 const mockClearDefaultStore = jest.fn();
 const mockClearCacheStore = jest.fn();
 const mockClearProviderKvStore = jest.fn();
+const mockClearProviderCookieStore = jest.fn();
 
 jest.mock('react-native-mmkv-storage', () => ({
   MMKVLoader: class {
@@ -21,6 +22,10 @@ jest.mock('react-native-mmkv-storage', () => ({
           }
           if (instanceId === 'provider_kv') {
             mockClearProviderKvStore();
+            return;
+          }
+          if (instanceId === 'provider_cookies') {
+            mockClearProviderCookieStore();
             return;
           }
           mockClearDefaultStore();
@@ -50,5 +55,6 @@ describe('clearAllMMKVStorage', () => {
     expect(mockClearDefaultStore).toHaveBeenCalledTimes(1);
     expect(mockClearCacheStore).toHaveBeenCalledTimes(1);
     expect(mockClearProviderKvStore).toHaveBeenCalledTimes(1);
+    expect(mockClearProviderCookieStore).toHaveBeenCalledTimes(1);
   });
 });

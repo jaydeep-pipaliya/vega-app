@@ -1,5 +1,26 @@
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import axios from 'axios';
+import {NativeModules} from 'react-native';
+
+interface NativeFileFetcher {
+  fetchToFile(
+    tag: string,
+    url: string,
+    path: string,
+    headers: Record<string, string>,
+  ): Promise<{statusCode: number}>;
+  cancelFetches(tag: string): void;
+}
+
+// Segments go through the app's OkHttp client so DNS over HTTPS, WARP and
+// ByeDPI apply to them, as they do to the playlist. RNFS.downloadFile uses
+// HttpURLConnection, which skips all three.
+const nativeFetcher = NativeModules.HttpDownloadModule as
+  | Partial<NativeFileFetcher>
+  | undefined;
+const canFetchNatively =
+  typeof nativeFetcher?.fetchToFile === 'function' &&
+  typeof nativeFetcher?.cancelFetches === 'function';
 
 interface SegmentInfo {
   duration: number;
@@ -211,6 +232,19 @@ const downloadSegment = async (
   }
 
   const reqHeaders = normalizeHeaders(headers);
+  if (canFetchNatively) {
+    const {statusCode} = await nativeFetcher!.fetchToFile!(
+      downloadId,
+      segmentUrl,
+      outputPath,
+      reqHeaders,
+    );
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new SegmentHttpError(statusCode);
+    }
+    return;
+  }
+
   const download = RNFS.downloadFile({
     fromUrl: segmentUrl,
     toFile: outputPath,
@@ -429,6 +463,9 @@ export const hlsDownloader2 = async ({
 
     throw error;
   } finally {
+    if (canFetchNatively) {
+      nativeFetcher!.cancelFetches!(downloadId);
+    }
     activeDownloads.delete(downloadId);
     cancelledDownloads.delete(downloadId);
   }
@@ -438,6 +475,9 @@ export const hlsDownloader2 = async ({
 export const cancelHlsDownload = (downloadId: string) => {
   if (activeDownloads.has(downloadId)) {
     cancelledDownloads.add(downloadId);
+    if (canFetchNatively) {
+      nativeFetcher!.cancelFetches!(downloadId);
+    }
     console.log(`Cancelling HLS download: ${downloadId}`);
   }
 };

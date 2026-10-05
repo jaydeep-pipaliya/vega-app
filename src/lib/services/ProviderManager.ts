@@ -8,6 +8,18 @@ import {providerKvStorage} from '../storage/StorageService';
 import {getSourceAuthHeaders} from '../storage/sourceTokenStorage';
 import {MAX_STATE_BYTES} from '../sandbox/protocol';
 import {sandboxBridge, setSandboxStateHandler} from '../sandbox/sandboxBridge';
+import {
+  getProviderKvPrefix,
+  providerAuthor,
+  providerScopeId,
+} from '../sandbox/providerScope';
+import {getJarCookieHeader} from '../sandbox/providerCookieJar';
+
+/** Module code and the source author it came from. */
+interface ProviderCode {
+  code: string;
+  author: string;
+}
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message) {
@@ -25,13 +37,14 @@ const getErrorMessage = (error: unknown, fallback: string): string => {
 };
 
 export class ProviderManager {
+  // Keyed by providerScopeId(author, value).
   private readonly providerState = new Map<string, Record<string, unknown>>();
   private readonly settingsSchemaCache = new Map<string, SettingsField[]>();
 
   constructor() {
-    setSandboxStateHandler((providerValue, state) => {
+    setSandboxStateHandler((providerValue, author, state) => {
       try {
-        this.saveProviderState(providerValue, state);
+        this.saveProviderState(providerScopeId(author, providerValue), state);
       } catch (error) {
         console.warn('Discarding provider state:', error);
       }
@@ -39,7 +52,12 @@ export class ProviderManager {
   }
 
   clearProviderState(providerValue: string): void {
-    this.providerState.delete(providerValue);
+    const suffix = `/${encodeURIComponent(providerValue)}`;
+    for (const scope of Array.from(this.providerState.keys())) {
+      if (scope.endsWith(suffix)) {
+        this.providerState.delete(scope);
+      }
+    }
     for (const key of Array.from(this.settingsSchemaCache.keys())) {
       if (key.endsWith(`:${providerValue}`)) {
         this.settingsSchemaCache.delete(key);
@@ -47,8 +65,8 @@ export class ProviderManager {
     }
   }
 
-  private getProviderState(providerValue: string): Record<string, unknown> {
-    const current = this.providerState.get(providerValue);
+  private getProviderState(scope: string): Record<string, unknown> {
+    const current = this.providerState.get(scope);
     if (!current) {
       return {};
     }
@@ -59,7 +77,7 @@ export class ProviderManager {
     }
   }
 
-  private saveProviderState(providerValue: string, value: unknown): void {
+  private saveProviderState(scope: string, value: unknown): void {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error('Provider state must be an object');
     }
@@ -68,7 +86,7 @@ export class ProviderManager {
       throw new Error('Provider state exceeds the 256 KB limit');
     }
     this.providerState.set(
-      providerValue,
+      scope,
       JSON.parse(serialized) as Record<string, unknown>,
     );
   }
@@ -76,25 +94,30 @@ export class ProviderManager {
   private getModule(
     providerValue: string,
     key: 'catalog' | 'posts' | 'meta' | 'stream' | 'episodes' | 'settings',
-  ): string | undefined {
-    return extensionManager.getProviderModules(providerValue)?.modules[key];
+  ): ProviderCode | undefined {
+    const module = extensionManager.getProviderModules(providerValue);
+    const code = module?.modules[key];
+    return code
+      ? {code, author: providerAuthor(module?.sourceAuthor)}
+      : undefined;
   }
 
   private executeModule<T>(
-    moduleCode: string,
+    module: ProviderCode,
     providerValue: string,
     exportName?: string,
     args: Record<string, unknown> = {},
     signal?: AbortSignal,
   ): Promise<T> {
     return sandboxBridge.invoke<T>({
-      moduleCode,
+      moduleCode: module.code,
       providerValue,
+      author: module.author,
       exportName,
       // commonHeaders is passed per invoke because it is platform dependent and
       // the sandbox realm cannot read Platform itself.
       args: {...args, commonHeaders},
-      state: this.getProviderState(providerValue),
+      state: this.getProviderState(providerScopeId(module.author, providerValue)),
       signal,
     });
   }
@@ -301,7 +324,10 @@ export class ProviderManager {
         {link, type, isDownload: Boolean(isDownload)},
         signal,
       );
-      return this.requireArray<Stream>(streams, providerValue, 'getStream');
+      return this.withJarCookies(
+        getStreamModule.author,
+        this.requireArray<Stream>(streams, providerValue, 'getStream'),
+      );
     } catch (error) {
       console.error('Error in stream function:', error);
       throw new Error(
@@ -312,6 +338,28 @@ export class ProviderManager {
       );
     }
   };
+  /**
+   * Provider requests no longer share the native cookie store with the player,
+   * so streams get their author's cookies (e.g. WAF clearance) as a header,
+   * unless the provider set a Cookie header itself.
+   */
+  private withJarCookies(author: string, streams: Stream[]): Stream[] {
+    return streams.map(stream => {
+      const headers =
+        stream.headers && typeof stream.headers === 'object'
+          ? stream.headers
+          : {};
+      if (
+        !/^https?:/i.test(stream.link ?? '') ||
+        Object.keys(headers).some(k => k.toLowerCase() === 'cookie')
+      ) {
+        return stream;
+      }
+      const cookie = getJarCookieHeader(author, stream.link);
+      return cookie ? {...stream, headers: {...headers, Cookie: cookie}} : stream;
+    });
+  }
+
   getEpisodes = async ({
     url,
     providerValue,
@@ -361,9 +409,12 @@ export class ProviderManager {
       return cached;
     }
 
-    let settingsModule =
-      extensionManager.getProviderModules(providerValue, sourceAuthor)?.modules
-        ?.settings;
+    const installedModule = extensionManager.getProviderModules(
+      providerValue,
+      sourceAuthor,
+    );
+    let settingsModule = installedModule?.modules?.settings;
+    let settingsAuthor = installedModule?.sourceAuthor ?? sourceAuthor;
 
     if (!settingsModule) {
       // Fallback: try on-demand fetch of settings.js
@@ -381,6 +432,7 @@ export class ProviderManager {
           });
           if (res.data && typeof res.data === 'string') {
             settingsModule = res.data;
+            settingsAuthor = activeSource.author;
             const existing = extensionStorage.getProviderModules(
               providerValue,
               sourceAuthor,
@@ -407,7 +459,7 @@ export class ProviderManager {
 
     try {
       const raw = await this.executeModule<unknown>(
-        settingsModule,
+        {code: settingsModule, author: providerAuthor(settingsAuthor)},
         providerValue,
         'getSettingsSchema',
       );
@@ -426,10 +478,13 @@ export class ProviderManager {
     }
   };
 
-  clearProviderStorage = async (providerValue: string): Promise<void> => {
-    this.providerState.delete(providerValue);
+  clearProviderStorage = async (
+    providerValue: string,
+    sourceAuthor?: string,
+  ): Promise<void> => {
+    this.providerState.delete(providerScopeId(sourceAuthor, providerValue));
     const allKeys = await providerKvStorage.getKeys();
-    const prefix = `${providerValue}:`;
+    const prefix = getProviderKvPrefix(sourceAuthor, providerValue);
     for (const key of allKeys) {
       if (key.startsWith(prefix)) {
         providerKvStorage.delete(key);

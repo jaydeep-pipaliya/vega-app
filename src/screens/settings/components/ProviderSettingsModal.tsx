@@ -21,7 +21,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { providerManager } from '../../../lib/services/ProviderManager';
 import { providerKvStorage } from '../../../lib/storage/StorageService';
-import { getScopedKvKey } from '../../../lib/sandbox/providerRpc';
+import {
+  getScopedKvKey,
+  migrateLegacyProviderKv,
+} from '../../../lib/sandbox/providerScope';
 import { showAppDialog } from '../../../lib/zustand/appDialogStore';
 import type { ProviderExtension } from '../../../lib/storage/extensionStorage';
 import type { SettingsField, SelectOption } from '../../../lib/providers/types';
@@ -120,10 +123,11 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
         sourceAuthor: provider.source?.author,
       });
       setFields(schema);
+      await migrateLegacyProviderKv();
 
       const initialValues: Record<string, unknown> = {};
       for (const field of schema) {
-        const scopedKey = getScopedKvKey(provider.value, field.key);
+        const scopedKey = getScopedKvKey(provider.source?.author, provider.value, field.key);
         const storedRaw = providerKvStorage.getString(scopedKey);
         if (storedRaw !== undefined && storedRaw !== null) {
           try {
@@ -160,7 +164,7 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
   const handleSave = () => {
     if (!provider) return;
     for (const [key, value] of Object.entries(values)) {
-      const scopedKey = getScopedKvKey(provider.value, key);
+      const scopedKey = getScopedKvKey(provider.source?.author, provider.value, key);
       if (value === undefined || value === null || value === '') {
         providerKvStorage.delete(scopedKey);
       } else {
@@ -182,7 +186,10 @@ export const ProviderSettingsModal: React.FC<ProviderSettingsModalProps> = ({
           label: 'Reset',
           variant: 'destructive',
           onPress: async () => {
-            await providerManager.clearProviderStorage(provider.value);
+            await providerManager.clearProviderStorage(
+              provider.value,
+              provider.source?.author,
+            );
             const defaultValues: Record<string, unknown> = {};
             for (const field of fields) {
               if (field.defaultValue !== undefined) {

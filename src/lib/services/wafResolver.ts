@@ -4,7 +4,9 @@ import type {
   OpenWebViewResult,
 } from '../providers/types';
 import {useWafStore} from '../zustand/wafStore';
-import {buildCookieString, getCookies, pickUserAgent, deleteCookie} from './cookieManager';
+import {buildCookieString, pickUserAgent} from './cookieManager';
+import {providerAuthor} from '../sandbox/providerScope';
+import {deleteJarCookie, getJarCookieMap} from '../sandbox/providerCookieJar';
 
 /**
  * Opens a dialog WebView so the user can solve a WAF / captcha challenge
@@ -30,6 +32,9 @@ import {buildCookieString, getCookies, pickUserAgent, deleteCookie} from './cook
  *    cookies) once the user taps "Done" or the optional `waitForCookie` is
  *    detected.
  *  - rejects if the user cancels the dialog or the optional `timeoutMs` elapses.
+ *
+ * Cookies are read from and saved to the cookie jar of `author` (the
+ * provider's source author), never another author's.
  */
 // Dictionary to store pending WAF resolution promises by URL/cookie
 const pendingRequests: Record<string, Promise<OpenWebViewResult>> = {};
@@ -37,7 +42,9 @@ const pendingRequests: Record<string, Promise<OpenWebViewResult>> = {};
 export const openWebView = (
   url: string,
   options?: OpenWebViewOptions,
+  authorRaw?: string,
 ): Promise<OpenWebViewResult> => {
+  const author = providerAuthor(authorRaw);
   if (!url) {
     return Promise.reject(new Error('openWebView: a url is required'));
   }
@@ -47,7 +54,8 @@ export const openWebView = (
 
   // Extract domain/hostname so parallel requests to different paths on the same site are coalesced
   const hostname = url.includes('://') ? url.split('/')[2] : url;
-  const cacheKey = options?.waitForCookie ? `${hostname}:${options.waitForCookie}` : hostname;
+  const siteKey = options?.waitForCookie ? `${hostname}:${options.waitForCookie}` : hostname;
+  const cacheKey = `${author}|${siteKey}`;
   
   // Request coalescing: if a WAF resolution is already pending for this URL/cookie, return its promise
   // We ALWAYS coalesce, even if force: true, to prevent multiple dialogs for the same domain
@@ -59,7 +67,7 @@ export const openWebView = (
     // If not forced and the awaited cookie already exists, return it without a
     // dialog. In force mode we always open.
     if (!options?.force && options?.waitForCookie) {
-      const cookieMap = await getCookies(url);
+      const cookieMap = getJarCookieMap(author, url);
       if (cookieMap[options.waitForCookie]) {
         return {
           data: '',
@@ -72,15 +80,16 @@ export const openWebView = (
     } else if (options?.waitForCookie) {
       // If it is forced, or if we are about to open the dialog, delete the old cookie
       // because it is either expired or invalid (caused a 403).
-      await deleteCookie(url, options.waitForCookie);
+      deleteJarCookie(author, url, options.waitForCookie);
     }
 
     return new Promise<OpenWebViewResult>((resolve, reject) => {
       useWafStore.getState().enqueue({
+        ...options,
         url,
+        author,
         resolve,
         reject,
-        ...options,
       });
     });
   };

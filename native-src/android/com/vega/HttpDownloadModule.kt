@@ -14,9 +14,11 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.modules.network.OkHttpClientProvider
 import okhttp3.Call
+import okhttp3.CookieJar
 import okhttp3.Request
 import okhttp3.Response
 import java.io.EOFException
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
@@ -99,6 +101,8 @@ class HttpDownloadModule(
         private const val WORKER_STOP_TIMEOUT_MS = 10_000L
 
         private val jobs = ConcurrentHashMap<String, HttpDownloadJob>()
+        // Open fetchToFile calls by tag, so one HLS download can cancel its own.
+        private val fileCalls = ConcurrentHashMap<String, MutableSet<Call>>()
         private val executor = Executors.newCachedThreadPool()
     }
 
@@ -142,6 +146,14 @@ class HttpDownloadModule(
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(0, TimeUnit.MILLISECONDS)
             .retryOnConnectionFailure(true)
+            .build()
+    }
+
+    // Sends only the cookies given in the headers; the shared cookie store is left out.
+    private val fileClient by lazy {
+        client.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .cookieJar(CookieJar.NO_COOKIES)
             .build()
     }
 
@@ -234,6 +246,59 @@ class HttpDownloadModule(
         } else {
             promise.resolve(null)
         }
+    }
+
+    /**
+     * Downloads one small file, such as an HLS segment, through the app's OkHttp client so
+     * DNS over HTTPS, WARP and ByeDPI apply to it. Resolves with the HTTP status; the file is
+     * written only for a 2xx response.
+     */
+    @ReactMethod
+    fun fetchToFile(
+        tag: String,
+        url: String,
+        path: String,
+        headers: ReadableMap?,
+        promise: Promise,
+    ) {
+        executor.execute {
+            val calls = fileCalls.getOrPut(tag) { ConcurrentHashMap.newKeySet() }
+            try {
+                val builder = Request.Builder().url(url)
+                readableHeaders(headers).forEach { (name, value) -> builder.header(name, value) }
+                val call = fileClient.newCall(builder.build())
+                calls.add(call)
+                try {
+                    call.execute().use { response ->
+                        if (response.isSuccessful) {
+                            val target = File(path)
+                            val partial = File("$path.part")
+                            response.body?.byteStream()?.use { input ->
+                                FileOutputStream(partial).use { output -> input.copyTo(output, BUFFER_SIZE) }
+                            } ?: throw IOException("Empty response body")
+                            if (target.exists()) target.delete()
+                            if (!partial.renameTo(target)) {
+                                partial.delete()
+                                throw IOException("Unable to save $path")
+                            }
+                        }
+                        val result = Arguments.createMap()
+                        result.putInt("statusCode", response.code)
+                        promise.resolve(result)
+                    }
+                } finally {
+                    calls.remove(call)
+                }
+            } catch (error: Exception) {
+                File("$path.part").delete()
+                promise.reject("FETCH_FAILED", error.message ?: error.toString(), error)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun cancelFetches(tag: String) {
+        fileCalls.remove(tag)?.forEach { it.cancel() }
     }
 
     @ReactMethod

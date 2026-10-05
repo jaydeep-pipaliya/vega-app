@@ -73,14 +73,16 @@ describe('providerRpc openWebView', () => {
     mockOpenWebView.mockResolvedValue(result);
 
     await expect(
-      handleProviderRpc('uhd', 'openWebView', {
+      handleProviderRpc('uhd', 'alice', 'openWebView', {
         url: result.url,
         options: {waitForCookie: 'cf_clearance'},
       }),
     ).resolves.toEqual({...result, cookie: result.cookies});
-    expect(mockOpenWebView).toHaveBeenCalledWith(`${result.url}/`, {
-      waitForCookie: 'cf_clearance',
-    });
+    expect(mockOpenWebView).toHaveBeenCalledWith(
+      `${result.url}/`,
+      {waitForCookie: 'cf_clearance'},
+      'alice',
+    );
   });
 });
 
@@ -90,47 +92,47 @@ describe('providerRpc KV store operations', () => {
   });
 
   it('sets and gets KV entries properly', async () => {
-    await handleProviderRpc('uhd', 'kvSet', {
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {
       key: 'auth_session',
       value: {token: 'abc123xyz', expires: 999999},
     });
 
-    const stored = await handleProviderRpc('uhd', 'kvGet', {
+    const stored = await handleProviderRpc('uhd', 'alice', 'kvGet', {
       key: 'auth_session',
     });
     expect(stored).toEqual({token: 'abc123xyz', expires: 999999});
   });
 
   it('returns undefined for non-existent key', async () => {
-    const stored = await handleProviderRpc('uhd', 'kvGet', {
+    const stored = await handleProviderRpc('uhd', 'alice', 'kvGet', {
       key: 'non_existent',
     });
     expect(stored).toBeUndefined();
   });
 
   it('deletes KV entries and lists keys', async () => {
-    await handleProviderRpc('uhd', 'kvSet', {key: 'key1', value: 'val1'});
-    await handleProviderRpc('uhd', 'kvSet', {key: 'key2', value: 'val2'});
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'key1', value: 'val1'});
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'key2', value: 'val2'});
 
-    const keys = await handleProviderRpc('uhd', 'kvKeys', {});
+    const keys = await handleProviderRpc('uhd', 'alice', 'kvKeys', {});
     expect(keys).toEqual(['key1', 'key2']);
 
-    const deleted = await handleProviderRpc('uhd', 'kvDelete', {key: 'key1'});
+    const deleted = await handleProviderRpc('uhd', 'alice', 'kvDelete', {key: 'key1'});
     expect(deleted).toBe(true);
 
-    const remainingKeys = await handleProviderRpc('uhd', 'kvKeys', {});
+    const remainingKeys = await handleProviderRpc('uhd', 'alice', 'kvKeys', {});
     expect(remainingKeys).toEqual(['key2']);
   });
 
   it('clears all KV entries for a specific provider without affecting others', async () => {
-    await handleProviderRpc('uhd', 'kvSet', {key: 'k1', value: 1});
-    await handleProviderRpc('uhd', 'kvSet', {key: 'k2', value: 2});
-    await handleProviderRpc('cinefreak', 'kvSet', {key: 'k1', value: 99});
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'k1', value: 1});
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'k2', value: 2});
+    await handleProviderRpc('cinefreak', 'alice', 'kvSet', {key: 'k1', value: 99});
 
-    await handleProviderRpc('uhd', 'kvClear', {});
-    const uhdKeys = await handleProviderRpc('uhd', 'kvKeys', {});
-    const cinefreakKeys = await handleProviderRpc('cinefreak', 'kvKeys', {});
-    const cinefreakVal = await handleProviderRpc('cinefreak', 'kvGet', {key: 'k1'});
+    await handleProviderRpc('uhd', 'alice', 'kvClear', {});
+    const uhdKeys = await handleProviderRpc('uhd', 'alice', 'kvKeys', {});
+    const cinefreakKeys = await handleProviderRpc('cinefreak', 'alice', 'kvKeys', {});
+    const cinefreakVal = await handleProviderRpc('cinefreak', 'alice', 'kvGet', {key: 'k1'});
 
     expect(uhdKeys).toEqual([]);
     expect(cinefreakKeys).toEqual(['k1']);
@@ -138,11 +140,11 @@ describe('providerRpc KV store operations', () => {
   });
 
   it('keeps KV storage isolated between different providers', async () => {
-    await handleProviderRpc('uhd', 'kvSet', {key: 'sharedKey', value: 'uhdValue'});
-    await handleProviderRpc('cinefreak', 'kvSet', {key: 'sharedKey', value: 'cineValue'});
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'sharedKey', value: 'uhdValue'});
+    await handleProviderRpc('cinefreak', 'alice', 'kvSet', {key: 'sharedKey', value: 'cineValue'});
 
-    const uhdVal = await handleProviderRpc('uhd', 'kvGet', {key: 'sharedKey'});
-    const cineVal = await handleProviderRpc('cinefreak', 'kvGet', {key: 'sharedKey'});
+    const uhdVal = await handleProviderRpc('uhd', 'alice', 'kvGet', {key: 'sharedKey'});
+    const cineVal = await handleProviderRpc('cinefreak', 'alice', 'kvGet', {key: 'sharedKey'});
 
     expect(uhdVal).toEqual('uhdValue');
     expect(cineVal).toEqual('cineValue');
@@ -150,11 +152,29 @@ describe('providerRpc KV store operations', () => {
 
   it('rejects invalid keys', async () => {
     await expect(
-      handleProviderRpc('uhd', 'kvSet', {key: '', value: 'test'}),
+      handleProviderRpc('uhd', 'alice', 'kvSet', {key: '', value: 'test'}),
     ).rejects.toThrow('Invalid KV key');
 
     await expect(
-      handleProviderRpc('uhd', 'kvGet', {key: '   '}),
+      handleProviderRpc('uhd', 'alice', 'kvGet', {key: '   '}),
     ).rejects.toThrow('Invalid KV key');
+  });
+
+  it('keeps KV storage isolated between authors with the same provider value', async () => {
+    await handleProviderRpc('uhd', 'alice', 'kvSet', {key: 'token', value: 'a'});
+    await handleProviderRpc('uhd', 'bob', 'kvSet', {key: 'token', value: 'b'});
+
+    expect(await handleProviderRpc('uhd', 'alice', 'kvGet', {key: 'token'})).toBe('a');
+    expect(await handleProviderRpc('uhd', 'bob', 'kvGet', {key: 'token'})).toBe('b');
+
+    await handleProviderRpc('uhd', 'bob', 'kvClear', {});
+    expect(await handleProviderRpc('uhd', 'bob', 'kvKeys', {})).toEqual([]);
+    expect(await handleProviderRpc('uhd', 'alice', 'kvKeys', {})).toEqual(['token']);
+  });
+
+  it('does not let a provider value reach another value through the key prefix', async () => {
+    await handleProviderRpc('a:b', 'alice', 'kvSet', {key: 'k', value: 1});
+
+    expect(await handleProviderRpc('a', 'alice', 'kvKeys', {})).toEqual([]);
   });
 });

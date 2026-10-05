@@ -66,9 +66,7 @@ export const getCookieObjects = async (
   return cookies;
 };
 
-import {getGlobalCookies, clearGlobalCookies} from './cookieStore';
-
-// Reads cookies for `url` as a name -> value map.
+// Reads native cookies for `url` as a name -> value map.
 export const getCookies = async (
   url: string,
 ): Promise<Record<string, string>> => {
@@ -77,20 +75,6 @@ export const getCookies = async (
   for (const cookie of objects) {
     map[cookie.name] = cookie.value;
   }
-  const persistent = getGlobalCookies(url);
-  if (persistent) {
-    const parts = persistent.split(';').map(p => p.trim()).filter(Boolean);
-    for (const part of parts) {
-      const eqIdx = part.indexOf('=');
-      if (eqIdx > 0) {
-        const name = part.slice(0, eqIdx).trim();
-        const value = part.slice(eqIdx + 1).trim();
-        if (!map[name]) {
-          map[name] = value;
-        }
-      }
-    }
-  }
   return map;
 };
 
@@ -98,34 +82,16 @@ export const getCookies = async (
 // same-name cookies that are scoped to different domains or paths.
 export const getCookieHeader = async (url: string): Promise<string> => {
   const objects = await getCookieObjects(url);
-  let cookieHeader = objects.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
-  const persistent = getGlobalCookies(url);
-  if (persistent) {
-    if (!cookieHeader) {
-      cookieHeader = persistent;
-      await setCookieString(url, persistent).catch(() => {});
-    } else {
-      const existingNames = new Set(
-        cookieHeader.split(';').map(c => c.split('=', 1)[0].trim()).filter(Boolean),
-      );
-      const missing = persistent
-        .split(';')
-        .map(c => c.trim())
-        .filter(c => !existingNames.has(c.split('=', 1)[0].trim()));
-      if (missing.length > 0) {
-        cookieHeader = `${cookieHeader}; ${missing.join('; ')}`;
-      }
-    }
-  }
-  return cookieHeader;
+  return objects.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
 };
 
-// Deletes a specific cookie for a URL
+// Deletes a specific cookie for a URL. `domain` is the cookie's Domain
+// attribute when known, so parent-domain cookies are removed too.
 export const deleteCookie = async (
   url: string,
   name: string,
+  domain?: string,
 ): Promise<void> => {
-  clearGlobalCookies(url);
   const CookieManager = getCookieManager();
   if (!CookieManager) return;
   try {
@@ -143,6 +109,9 @@ export const deleteCookie = async (
         const host = parsed.hostname;
         domains.push(host, `.${host}`);
       } catch {}
+      if (domain) {
+        domains.push(domain);
+      }
 
       for (const d of domains) {
         await CookieManager.set(url, {
@@ -157,6 +126,14 @@ export const deleteCookie = async (
     await CookieManager.flush();
   } catch (e) {
     console.warn('[cookieManager] failed to delete cookie', e);
+  }
+};
+
+// Deletes every native cookie the URL would send.
+export const clearSiteCookies = async (url: string): Promise<void> => {
+  const objects = await getCookieObjects(url);
+  for (const cookie of objects) {
+    await deleteCookie(url, cookie.name, cookie.domain);
   }
 };
 

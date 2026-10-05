@@ -19,6 +19,8 @@ type Injector = (script: string) => void;
 
 interface PendingInvoke {
   providerValue: string;
+  /** Source author of the running code; scopes its storage and cookies. */
+  author: string;
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -154,7 +156,12 @@ class SandboxBridge {
         if (!entry) {
           return;
         }
-        handleProviderRpc(entry.providerValue, message.operation, message.args)
+        handleProviderRpc(
+          entry.providerValue,
+          entry.author,
+          message.operation,
+          message.args,
+        )
           .then(result => {
             this.post({
               type: 'rpc-result',
@@ -180,7 +187,7 @@ class SandboxBridge {
         } else {
           const entry = this.pending.get(message.token);
           if (entry && message.state) {
-            onStateSaved?.(entry.providerValue, message.state);
+            onStateSaved?.(entry.providerValue, entry.author, message.state);
           }
           this.settle(message.token, null, message.result);
         }
@@ -191,12 +198,14 @@ class SandboxBridge {
   invoke<T>(params: {
     moduleCode: string;
     providerValue: string;
+    author: string;
     exportName?: string;
     args?: Record<string, unknown>;
     state: Record<string, unknown>;
     signal?: AbortSignal;
   }): Promise<T> {
-    const {moduleCode, providerValue, exportName, args, state, signal} = params;
+    const {moduleCode, providerValue, author, exportName, args, state, signal} =
+      params;
 
     if (moduleCode.length > MAX_MODULE_SIZE) {
       return Promise.reject(new Error('Provider module is too large'));
@@ -223,6 +232,7 @@ class SandboxBridge {
 
       this.pending.set(token, {
         providerValue,
+        author,
         resolve: resolve as (value: unknown) => void,
         reject,
         timer,
@@ -250,12 +260,20 @@ class SandboxBridge {
 }
 
 let onStateSaved:
-  | ((providerValue: string, state: Record<string, unknown>) => void)
+  | ((
+      providerValue: string,
+      author: string,
+      state: Record<string, unknown>,
+    ) => void)
   | null = null;
 
 /** ProviderManager registers here so provider state survives across invokes. */
 export const setSandboxStateHandler = (
-  handler: (providerValue: string, state: Record<string, unknown>) => void,
+  handler: (
+    providerValue: string,
+    author: string,
+    state: Record<string, unknown>,
+  ) => void,
 ): void => {
   onStateSaved = handler;
 };

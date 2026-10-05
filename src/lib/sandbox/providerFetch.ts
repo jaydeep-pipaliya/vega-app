@@ -1,7 +1,7 @@
 import {NativeModules, Platform} from 'react-native';
 import axios, {type AxiosRequestConfig} from 'axios';
 import {headers as commonHeaders} from '../providers/headers';
-import {getCookieHeader, setCookieString} from '../services/cookieManager';
+import {buildRequestCookieHeader, storeSetCookies} from './providerCookieJar';
 import {bytesToBase64, base64ToBytes} from './base64';
 import {providerRateLimiter} from './rateLimiter';
 import {
@@ -90,7 +90,12 @@ const flattenResponseHeaders = (raw: unknown): Array<[string, string]> => {
   return entries;
 };
 
+/**
+ * Sends a provider request. Cookies come from, and go to, the jar of the
+ * provider's source author only; the shared native cookie store is not used.
+ */
 export const providerFetch = async (
+  author: string,
   rawUrl: unknown,
   request: SerializedRequest,
 ): Promise<SerializedResponse> => {
@@ -110,30 +115,16 @@ export const providerFetch = async (
     const cookieKey = Object.keys(headers).find(
       key => key.toLowerCase() === 'cookie',
     );
-    if (cookieKey && headers[cookieKey]) {
-      // Sync manual Cookie header into native Android CookieManager so OkHttpClient sends it
-      await setCookieString(url.toString(), headers[cookieKey]);
+    const cookieHeader = buildRequestCookieHeader(
+      author,
+      url.toString(),
+      cookieKey ? headers[cookieKey] : undefined,
+    );
+    if (cookieKey) {
+      delete headers[cookieKey];
     }
-    const nativeCookieHeader = await getCookieHeader(url.toString());
-    if (nativeCookieHeader) {
-      if (cookieKey && headers[cookieKey]) {
-        const suppliedCookieNames = new Set(
-          headers[cookieKey]
-            .split(';')
-            .map(cookie => cookie.split('=', 1)[0]?.trim())
-            .filter(Boolean),
-        );
-        const missingNativeCookies = nativeCookieHeader
-          .split(';')
-          .map(cookie => cookie.trim())
-          .filter(cookie => !suppliedCookieNames.has(cookie.split('=', 1)[0]));
-        if (missingNativeCookies.length) {
-          headers[cookieKey] =
-            `${headers[cookieKey]}; ${missingNativeCookies.join('; ')}`;
-        }
-      } else {
-        headers.Cookie = nativeCookieHeader;
-      }
+    if (cookieHeader) {
+      headers.Cookie = cookieHeader;
     }
 
     if (Platform.OS === 'android' && NativeModules.ProviderHttpModule?.fetch) {
@@ -153,6 +144,12 @@ export const providerFetch = async (
 
       const res = await NativeModules.ProviderHttpModule.fetch(url.toString(), options);
       const finalUrl: string = res.url || url.toString();
+      // Set-Cookie of every response, redirects included, with its URL.
+      for (const pair of (res.cookies || []) as Array<[string, string]>) {
+        if (pair && pair.length >= 2) {
+          storeSetCookies(author, pair[0], [pair[1]]);
+        }
+      }
       try {
         const resolved = new URL(finalUrl);
         if (isPrivateHostname(resolved.hostname)) {
@@ -168,19 +165,18 @@ export const providerFetch = async (
         status: res.status,
         statusText: res.statusText || '',
         url: finalUrl,
-        headers: await (async () => {
-        const out: Array<[string, string]> = [];
-        for (const pair of (res.headers || [])) {
-          if (pair && pair.length >= 2) {
-            out.push(pair);
-            if (pair[0].toLowerCase() === 'set-cookie') {
-              out.push(['x-set-cookie', pair[1]]);
-              await setCookieString(url.toString(), pair[1]);
+        headers: (() => {
+          const out: Array<[string, string]> = [];
+          for (const pair of res.headers || []) {
+            if (pair && pair.length >= 2) {
+              out.push(pair);
+              if (pair[0].toLowerCase() === 'set-cookie') {
+                out.push(['x-set-cookie', pair[1]]);
+              }
             }
           }
-        }
-        return out;
-      })(),
+          return out;
+        })(),
         bodyBase64: res.bodyBase64 || '',
       };
     }
@@ -201,6 +197,8 @@ export const providerFetch = async (
       timeout: REQUEST_TIMEOUT_MS,
       maxRedirects: isManualRedirect ? 0 : 5,
       signal: abortController.signal,
+      // Keep the shared native cookie store out of provider requests.
+      withCredentials: false,
       // Providers inspect non-2xx responses (WAF detection), so never throw.
       validateStatus: () => true,
       transformResponse: [],
@@ -255,6 +253,15 @@ export const providerFetch = async (
     const bytes = toBytes(response.data);
     if (bytes.byteLength > MAX_RESPONSE_BYTES) {
       throw new Error('Provider response is too large');
+    }
+
+    const setCookie = response.headers?.['set-cookie'];
+    if (setCookie) {
+      storeSetCookies(
+        author,
+        finalUrl,
+        Array.isArray(setCookie) ? setCookie.map(String) : [String(setCookie)],
+      );
     }
 
     const resHeaders = flattenResponseHeaders(response.headers);

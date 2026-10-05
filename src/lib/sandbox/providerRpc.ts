@@ -7,17 +7,14 @@ import {providerFetch} from './providerFetch';
 import type {RpcOperation, SerializedRequest} from './protocol';
 import {validateProviderUrl} from './urlGuard';
 import {providerKvStorage} from '../storage/StorageService';
+import {
+  getProviderKvPrefix,
+  getScopedKvKey,
+  migrateLegacyProviderKv,
+} from './providerScope';
 
 const MAX_KV_KEY_LENGTH = 256;
 const MAX_KV_VALUE_BYTES = 1_000_000;
-
-export const getScopedKvKey = (providerValue: string, key: string): string => {
-  return `${providerValue}:${key}`;
-};
-
-export const getProviderKvPrefix = (providerValue: string): string => {
-  return `${providerValue}:`;
-};
 
 const validateKvKey = (key: unknown): string => {
   if (typeof key !== 'string' || !key.trim() || key.length > MAX_KV_KEY_LENGTH) {
@@ -28,9 +25,14 @@ const validateKvKey = (key: unknown): string => {
   return key;
 };
 
-const handleKvGet = async (providerValue: string, args: any): Promise<unknown> => {
+const handleKvGet = async (
+  author: string,
+  providerValue: string,
+  args: any,
+): Promise<unknown> => {
   const key = validateKvKey(args?.key);
-  const scopedKey = getScopedKvKey(providerValue, key);
+  await migrateLegacyProviderKv();
+  const scopedKey = getScopedKvKey(author, providerValue, key);
   const raw = providerKvStorage.getString(scopedKey);
   if (raw === undefined || raw === null) {
     return undefined;
@@ -42,9 +44,14 @@ const handleKvGet = async (providerValue: string, args: any): Promise<unknown> =
   }
 };
 
-const handleKvSet = async (providerValue: string, args: any): Promise<void> => {
+const handleKvSet = async (
+  author: string,
+  providerValue: string,
+  args: any,
+): Promise<void> => {
   const key = validateKvKey(args?.key);
-  const scopedKey = getScopedKvKey(providerValue, key);
+  await migrateLegacyProviderKv();
+  const scopedKey = getScopedKvKey(author, providerValue, key);
   const value = args?.value;
   if (value === undefined) {
     providerKvStorage.delete(scopedKey);
@@ -60,26 +67,38 @@ const handleKvSet = async (providerValue: string, args: any): Promise<void> => {
   providerKvStorage.setString(scopedKey, serialized);
 };
 
-const handleKvDelete = async (providerValue: string, args: any): Promise<boolean> => {
+const handleKvDelete = async (
+  author: string,
+  providerValue: string,
+  args: any,
+): Promise<boolean> => {
   const key = validateKvKey(args?.key);
-  const scopedKey = getScopedKvKey(providerValue, key);
+  await migrateLegacyProviderKv();
+  const scopedKey = getScopedKvKey(author, providerValue, key);
   const exists = providerKvStorage.contains(scopedKey);
   providerKvStorage.delete(scopedKey);
   return exists;
 };
 
-const handleKvKeys = async (providerValue: string): Promise<string[]> => {
+const handleKvKeys = async (
+  author: string,
+  providerValue: string,
+): Promise<string[]> => {
+  await migrateLegacyProviderKv();
   const allKeys = await providerKvStorage.getKeys();
-  const prefix = getProviderKvPrefix(providerValue);
+  const prefix = getProviderKvPrefix(author, providerValue);
   return allKeys
     .filter(k => k.startsWith(prefix))
     .map(k => k.slice(prefix.length));
 };
 
-const handleKvClear = async (providerValue: string): Promise<void> => {
-  const keys = await handleKvKeys(providerValue);
+const handleKvClear = async (
+  author: string,
+  providerValue: string,
+): Promise<void> => {
+  const keys = await handleKvKeys(author, providerValue);
   for (const k of keys) {
-    providerKvStorage.delete(getScopedKvKey(providerValue, k));
+    providerKvStorage.delete(getScopedKvKey(author, providerValue, k));
   }
 };
 
@@ -125,7 +144,7 @@ const handleCrypto = async (args: any): Promise<unknown> => {
 };
 
 const handleOpenWebView = async (
-  providerValue: string,
+  author: string,
   args: any,
 ): Promise<OpenWebViewResult> => {
   const url = validateProviderUrl(args?.url);
@@ -133,18 +152,20 @@ const handleOpenWebView = async (
     | OpenWebViewOptions
     | undefined;
 
-  const result = await openWebView(url.toString(), options);
+  const result = await openWebView(url.toString(), options, author);
   return {...result, cookie: result.cookies};
 };
 
 export const handleProviderRpc = async (
   providerValue: string,
+  author: string,
   operation: RpcOperation,
   args: any,
 ): Promise<unknown> => {
   switch (operation) {
     case 'fetch':
       return providerFetch(
+        author,
         args?.url,
         (args?.init ?? {
           headers: [],
@@ -156,25 +177,25 @@ export const handleProviderRpc = async (
       return getBaseUrl(String(args?.providerValue ?? providerValue));
 
     case 'openWebView':
-      return handleOpenWebView(providerValue, args);
+      return handleOpenWebView(author, args);
 
     case 'crypto':
       return handleCrypto(args);
 
     case 'kvGet':
-      return handleKvGet(providerValue, args);
+      return handleKvGet(author, providerValue, args);
 
     case 'kvSet':
-      return handleKvSet(providerValue, args);
+      return handleKvSet(author, providerValue, args);
 
     case 'kvDelete':
-      return handleKvDelete(providerValue, args);
+      return handleKvDelete(author, providerValue, args);
 
     case 'kvKeys':
-      return handleKvKeys(providerValue);
+      return handleKvKeys(author, providerValue);
 
     case 'kvClear':
-      return handleKvClear(providerValue);
+      return handleKvClear(author, providerValue);
 
     default:
       throw new Error(`Unsupported provider operation: ${operation}`);

@@ -11,6 +11,9 @@ import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.ReactPackage
 import com.facebook.react.uimanager.ViewManager
 import com.facebook.react.modules.network.OkHttpClientProvider
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -30,7 +33,21 @@ class ProviderHttpModule(reactContext: ReactApplicationContext) : ReactContextBa
                 val followRedirects = if (options.hasKey("redirect")) options.getString("redirect") != "manual" else true
                 val timeoutMs = if (options.hasKey("timeoutMs")) options.getInt("timeoutMs").toLong() else 30_000L
 
+                // Provider cookies live in per-author jars on the JS side. Keep
+                // the shared app cookie store out of these requests and hand
+                // every Set-Cookie (redirects included) back to JS instead.
+                val receivedCookies = mutableListOf<Pair<String, String>>()
+                val recordingJar = object : CookieJar {
+                    override fun loadForRequest(url: HttpUrl): List<Cookie> = emptyList()
+                    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                        synchronized(receivedCookies) {
+                            cookies.forEach { receivedCookies.add(url.toString() to it.toString()) }
+                        }
+                    }
+                }
+
                 val client = OkHttpClientProvider.getOkHttpClient().newBuilder()
+                    .cookieJar(recordingJar)
                     .followRedirects(followRedirects)
                     .followSslRedirects(followRedirects)
                     .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
@@ -122,6 +139,16 @@ class ProviderHttpModule(reactContext: ReactApplicationContext) : ReactContextBa
                 result.putString("url", finalUrl)
                 result.putArray("headers", responseHeaders)
                 result.putString("bodyBase64", bodyBase64)
+                val cookies = Arguments.createArray()
+                synchronized(receivedCookies) {
+                    for ((cookieUrl, cookie) in receivedCookies) {
+                        val pair = Arguments.createArray()
+                        pair.pushString(cookieUrl)
+                        pair.pushString(cookie)
+                        cookies.pushArray(pair)
+                    }
+                }
+                result.putArray("cookies", cookies)
 
                 promise.resolve(result)
             } catch (e: Exception) {

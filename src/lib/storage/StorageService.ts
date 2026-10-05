@@ -136,11 +136,14 @@ export class StorageService implements IStorageService {
 export const mainStorage: IStorageService = new StorageService();
 export const cacheStorage: IStorageService = new StorageService('cache');
 export const providerKvStorage: IStorageService = new StorageService('provider_kv');
+// Cookies saved by providers, one jar per source author.
+export const providerCookieStorage: IStorageService = new StorageService('provider_cookies');
 
 export const clearAllMMKVStorage = (): void => {
   cacheStorage.clearAll();
   mainStorage.clearAll();
   providerKvStorage.clearAll();
+  providerCookieStorage.clearAll();
 };
 
 export const createZustandStorage = (

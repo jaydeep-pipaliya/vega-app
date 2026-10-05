@@ -13,11 +13,16 @@ import {headers as commonHeaders} from '../lib/providers/headers';
 import type {OpenWebViewResult} from '../lib/providers/types';
 import {
   buildCookieString,
+  clearSiteCookies,
   getCookieObjects,
   getCookies,
   pickUserAgent,
+  setCookieString,
 } from '../lib/services/cookieManager';
-import {updateGlobalCookies} from '../lib/services/cookieStore';
+import {
+  getJarCookieHeader,
+  storeJarCookies,
+} from '../lib/sandbox/providerCookieJar';
 import {useM3Colors} from '../theme/M3PaletteContext';
 import AppText from './ui/Text';
 import TVTouchable from './tv/TVTouchable';
@@ -31,6 +36,9 @@ const WafWebViewDialog = () => {
   const {primary, onPrimary} = useM3Colors();
 
   const [loading, setLoading] = useState(true);
+  // The WebView mounts only after the site's native cookies are swapped for
+  // the requesting author's, so it never sees another author's session.
+  const [prepared, setPrepared] = useState(false);
   const webViewRef = useRef<WebView>(null);
   // Guards against settling the same request more than once.
   const settledRef = useRef(false);
@@ -51,20 +59,32 @@ const WafWebViewDialog = () => {
     pendingResolveRef.current = false;
     htmlRef.current = '';
     setLoading(true);
+    setPrepared(false);
     webViewReadyRef.current = false;
     initialCookieValuesRef.current = {};
     let cancelled = false;
 
-    // Snapshot existing cookies so we can detect new or updated cookies
     if (request) {
       (async () => {
+        // The WebView shares the native cookie store, so start from this
+        // author's cookies only.
+        await clearSiteCookies(request.url).catch(() => {});
+        const seed = getJarCookieHeader(request.author, request.url);
+        if (seed) {
+          await setCookieString(request.url, seed).catch(() => {});
+        }
+        // Snapshot existing cookies so we can detect new or updated cookies
         const cookieMap = await getCookies(request.url);
         if (!cancelled) {
           initialCookieValuesRef.current = cookieMap;
           webViewReadyRef.current = true;
+          setPrepared(true);
         }
       })();
     }
+    return () => {
+      cancelled = true;
+    };
   }, [request?.id]);
 
   // Resolve the active request with the captured page response + cookies.
@@ -90,9 +110,23 @@ const WafWebViewDialog = () => {
             }
           }
         }
-        if (cookies) {
-          updateGlobalCookies(req.url, cookies, expiresAt);
-        }
+        let host = '';
+        try {
+          host = new URL(req.url).hostname;
+        } catch {}
+        storeJarCookies(
+          req.author,
+          req.url,
+          cookieObjects.map(cookie => {
+            const expires = cookie.expires ? Date.parse(cookie.expires) : NaN;
+            return {
+              name: cookie.name,
+              value: cookie.value,
+              domain: cookie.domain || host,
+              expiresAt: isNaN(expires) ? null : expires,
+            };
+          }),
+        );
         const result: OpenWebViewResult = {
           data: htmlRef.current,
           cookies,
@@ -107,6 +141,9 @@ const WafWebViewDialog = () => {
           e instanceof Error ? e : new Error('Failed to read page response'),
         );
       } finally {
+        // Leave nothing of this author's session in the shared store before
+        // the next request (maybe another author's) is shown.
+        await clearSiteCookies(req.url).catch(() => {});
         remove(req.id);
       }
     },
@@ -123,7 +160,10 @@ const WafWebViewDialog = () => {
       fallbackTimerRef.current = null;
     }
     request.reject(new Error('WAF_DIALOG_CANCELLED'));
-    remove(request.id);
+    const id = request.id;
+    clearSiteCookies(request.url)
+      .catch(() => {})
+      .finally(() => remove(id));
   }, [request, remove]);
 
   const resolveWithPage = useCallback(() => {
@@ -257,6 +297,7 @@ const WafWebViewDialog = () => {
 
           {/* WebView */}
           <View className="flex-1">
+            {prepared ? (
             <WebView
               ref={webViewRef}
               source={{uri: request.url, headers: request.headers}}
@@ -282,6 +323,7 @@ const WafWebViewDialog = () => {
                 webViewRef.current?.injectJavaScript(GRAB_HTML_JS);
               }}
             />
+            ) : null}
             {loading && (
               <View
                 style={StyleSheet.absoluteFill}
