@@ -1,9 +1,10 @@
 import React, {useCallback, useRef, useState} from 'react';
-import {findNodeHandle, Pressable, Switch, View} from 'react-native';
+import {findNodeHandle, Platform, Pressable, Switch, View} from 'react-native';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {isTV} from '../../lib/tv';
 import {TVFocusable} from '../tv';
 import AppText from './Text';
+import {rippleColor} from './rippleColor';
 
 interface SettingsSwitchRowProps {
   title: string;
@@ -103,8 +104,14 @@ const SettingsSwitchRow = React.forwardRef<View, SettingsSwitchRowProps>(({
       accessibilityState={{checked: value}}
       accessibilityLabel={title}
       onPress={() => onValueChange(!value)}
+      // Ripple keeps playing after a quick tap, unlike a pressed-state
+      // opacity change that flips back before it can be seen.
+      android_ripple={{color: rippleColor(colors.onSurface)}}
       style={({pressed}) => ({
-        opacity: pressed ? 0.8 : 1,
+        backgroundColor:
+          pressed && Platform.OS !== 'android'
+            ? colors.surfaceContainerHighest
+            : 'transparent',
       })}>
       {renderContent(false)}
     </Pressable>

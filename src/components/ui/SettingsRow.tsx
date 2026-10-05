@@ -1,10 +1,11 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import React, {ReactNode} from 'react';
-import {findNodeHandle, Pressable, View} from 'react-native';
+import {findNodeHandle, Platform, Pressable, View} from 'react-native';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {isTV} from '../../lib/tv';
 import {TVFocusable} from '../tv';
 import AppText from './Text';
+import {rippleColor} from './rippleColor';
 
 import useTVNavigationStore from '../../lib/zustand/tvNavigationStore';
 import {useSafeIsNavFocused} from '../../lib/tv/useTVNavFocusMemory';
@@ -130,8 +131,14 @@ const SettingsRow = React.forwardRef<View, SettingsRowProps>(({
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
+      // Ripple keeps playing after a quick tap, unlike a pressed-state
+      // opacity change that flips back before it can be seen.
+      android_ripple={{color: rippleColor(colors.onSurface)}}
       style={({pressed}) => ({
-        opacity: pressed ? 0.75 : 1,
+        backgroundColor:
+          pressed && Platform.OS !== 'android'
+            ? colors.surfaceContainerHighest
+            : 'transparent',
       })}>
       {renderContent(false)}
     </Pressable>

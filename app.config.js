@@ -74,6 +74,9 @@ module.exports = () => {
       'expo-build-properties',
       {
         android: {
+          // libtorrent4j's native library is built for API 28 and calls libc
+          // functions (getentropy, aligned_alloc) missing before Android 9.
+          minSdkVersion: 28,
           usePrecompiledHeaders: true,
           // ByeDPI and WARP run bundled binaries from nativeLibraryDir, so the
           // .so files must be extracted on install.
@@ -148,7 +151,6 @@ module.exports = () => {
         ...(!IS_PLAYSTORE && hasAndroidGoogleServices
           ? {googleServicesFile: androidGoogleServicesFile}
           : {}),
-        minSdkVersion: 28,
         package: PACKAGE_NAME,
         versionCode: 200,
         permissions: [
