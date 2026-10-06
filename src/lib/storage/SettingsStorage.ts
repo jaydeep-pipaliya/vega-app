@@ -38,6 +38,7 @@ export enum SettingsKeys {
   ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
   FORWARD_BUFFER_MB = 'forwardBufferMB',
   BACK_BUFFER_MB = 'backBufferMB',
+  SEEK_INTERVAL = 'seekInterval',
   PLAYBACK_SPEED = 'playbackSpeed',
 
   // Quality settings
@@ -114,6 +115,12 @@ const isValidConnectionCount = (value: number | undefined): value is number =>
   (value as number) >= MIN_DOWNLOAD_CONNECTIONS &&
   (value as number) <= MAX_DOWNLOAD_CONNECTIONS;
 
+/** Seek step choices in seconds; 85 skips a typical anime opening. */
+export const SEEK_INTERVAL_OPTIONS = [5, 10, 15, 30, 60, 85] as const;
+const DEFAULT_SEEK_INTERVAL = 10;
+
+const isValidSeekInterval = (value: number | undefined): value is number =>
+  (SEEK_INTERVAL_OPTIONS as readonly number[]).includes(value as number);
 /** Speeds offered by the player speed picker. */
 export const PLAYBACK_SPEEDS = [
   0.25, 0.5, 1.0, 1.25, 1.35, 1.5, 1.75, 2,
@@ -333,6 +340,17 @@ export class SettingsStorage {
 
   setSwipeGestureEnabled(enabled: boolean): void {
     mainStorage.setBool(SettingsKeys.ENABLE_SWIPE_GESTURE, enabled);
+  }
+
+  getSeekInterval(): number {
+    const value = mainStorage.getNumber(SettingsKeys.SEEK_INTERVAL);
+    return isValidSeekInterval(value) ? value : DEFAULT_SEEK_INTERVAL;
+  }
+
+  setSeekInterval(seconds: number): void {
+    if (isValidSeekInterval(seconds)) {
+      mainStorage.setNumber(SettingsKeys.SEEK_INTERVAL, seconds);
+    }
   }
 
   // Quality settings

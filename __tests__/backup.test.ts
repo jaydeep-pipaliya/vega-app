@@ -78,6 +78,7 @@ describe('backup', () => {
     mockValues.set('hapticFeedback', false);
     mockValues.set('useExternalPlayer', true);
     mockValues.set('subtitleFontSize', 20);
+    mockValues.set('seekInterval', 30);
     mockValues.set('playbackSpeed', 1.5);
     mockValues.set('excludedQualities', ['480p']);
     mockValues.set('downloadLocation', 'content://tree/primary');
@@ -91,6 +92,7 @@ describe('backup', () => {
       hapticFeedback: false,
       useExternalPlayer: true,
       subtitleFontSize: 20,
+      seekInterval: 30,
       playbackSpeed: 1.5,
       excludedQualities: ['480p'],
     });
