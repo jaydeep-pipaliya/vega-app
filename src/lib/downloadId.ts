@@ -39,6 +39,23 @@ export const sanitizeDownloadFileName = (value: string): string => {
   return sanitized || 'download';
 };
 
+const MAX_STAGING_PREFIX_LENGTH = 100;
+
+const hashDownloadId = (value: string): string => {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 33 + value.charCodeAt(index)) % 4294967296;
+  }
+  return hash.toString(16).padStart(8, '0');
+};
+
+export const createDownloadStagingDirectoryName = (
+  downloadId: string,
+): string =>
+  `${sanitizeDownloadFileName(downloadId)
+    .slice(0, MAX_STAGING_PREFIX_LENGTH)
+    .trim()}-${hashDownloadId(downloadId)}`;
+
 export const createDownloadFileName = (
   downloadId: string,
   episodeName?: string,
