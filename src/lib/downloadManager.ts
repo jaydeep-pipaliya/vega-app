@@ -278,6 +278,7 @@ export const startDownload = async (
   activeDownloads.add(downloadId);
   occupiedDownloadSlots.add(downloadId);
   cancelledDownloads.delete(downloadId);
+  pauseFailedDownloads.delete(downloadId);
   store.markStarting(downloadId);
   const subscriptions: Array<() => void> = [];
   let destination: PreparedDownloadDestination | undefined;
@@ -423,7 +424,9 @@ const failPausedDownload = async (
   const backend = getDownloadBackend(record.sourceType);
   const detail = error instanceof Error ? error.message : String(error);
   const message = `Unable to ${operation} this download. Partial download data was deleted. ${detail}`;
-  pauseFailedDownloads.add(downloadId);
+  if (activeDownloads.has(downloadId)) {
+    pauseFailedDownloads.add(downloadId);
+  }
   await backend.cancel(downloadId).catch(() => undefined);
   await backend.cleanup(downloadId, record).catch(() => undefined);
   useDownloadsStore.getState().markError(downloadId, {
@@ -476,11 +479,9 @@ export const resumeDownload = async (downloadId: string): Promise<void> => {
   if (!backend.resume || !record.canResume || record.status !== 'paused') {
     return;
   }
-  if (
-    !activeDownloads.has(downloadId) &&
-    backend.directToSaf &&
-    Boolean(record.finalDocumentUri)
-  ) {
+  // With no live job (for example after an app restart) the backend has
+  // nothing to resume, so start the download again from the queue.
+  if (!activeDownloads.has(downloadId)) {
     useDownloadsStore.getState().updateDownload(downloadId, {
       status: 'queued',
       canPause: false,

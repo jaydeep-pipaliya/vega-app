@@ -293,7 +293,16 @@ describe('download manager foreground lifecycle', () => {
   });
 
   it('pauses and resumes an active supported download', async () => {
+    let resolveStart: (() => void) | undefined;
+    mockBackendStart.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          resolveStart = resolve;
+        }),
+    );
     enqueueDownload();
+    const start = startDownload('movie_direct_0', location);
+    await flushAsyncWork();
     useDownloadsStore.getState().updateDownload('movie_direct_0', {
       status: 'downloading',
       canPause: true,
@@ -320,6 +329,9 @@ describe('download manager foreground lifecycle', () => {
         canResume: false,
       },
     );
+
+    resolveStart?.();
+    await start;
   });
 
   it('deletes partial data and shows a non-retryable error when pause fails', async () => {
@@ -357,6 +369,51 @@ describe('download manager foreground lifecycle', () => {
       'movie_direct_0',
       'http',
       '#ffffff',
+    );
+  });
+
+  it('restarts a paused download that has no live job after an app restart', async () => {
+    enqueueDownload();
+    useDownloadsStore.getState().updateDownload('movie_direct_0', {
+      status: 'paused',
+      canPause: false,
+      canResume: true,
+      downloadLocation: location,
+    });
+    mockBackendResume.mockRejectedValueOnce(
+      new Error('Paused torrent cannot be resumed'),
+    );
+
+    await resumeDownload('movie_direct_0');
+    await flushAsyncWork();
+
+    expect(mockBackendResume).not.toHaveBeenCalled();
+    expect(mockBackendStart).toHaveBeenCalledTimes(1);
+    expect(mockShowFailed).not.toHaveBeenCalled();
+    expect(useDownloadsStore.getState().downloads.movie_direct_0.status).toBe(
+      'completed',
+    );
+  });
+
+  it('does not leave a stale pause failure that hides later start errors', async () => {
+    enqueueDownload();
+    useDownloadsStore.getState().updateDownload('movie_direct_0', {
+      status: 'downloading',
+      canPause: true,
+    });
+    mockBackendPause.mockRejectedValueOnce(new Error('No active torrent'));
+    await pauseDownload('movie_direct_0');
+    mockBackendStart.mockRejectedValueOnce(new Error('Tracker unreachable'));
+
+    await expect(startDownload('movie_direct_0', location)).rejects.toThrow(
+      'Tracker unreachable',
+    );
+
+    expect(useDownloadsStore.getState().downloads.movie_direct_0).toMatchObject(
+      {
+        status: 'error',
+        retryable: true,
+      },
     );
   });
 
