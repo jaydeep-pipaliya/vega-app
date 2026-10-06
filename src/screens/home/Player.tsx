@@ -116,6 +116,12 @@ import {getValidImageUri} from '../../components/EpisodeRowContent';
 import {Feather} from '@expo/vector-icons';
 import {isTV, usePlayerTVControls} from '../../lib/tv';
 import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import AutoNextOverlay from '../../components/AutoNextOverlay';
+import {
+  AUTO_NEXT_COUNTDOWN_SECONDS,
+  isSeekAwayFromEnd,
+  shouldAutoPlayNext,
+} from '../../lib/player/autoNext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Player'>;
 
@@ -944,6 +950,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     });
 
   const [isPaused, setIsPaused] = useState(false);
+  const [autoNextVisible, setAutoNextVisible] = useState(false);
   const handleTogglePlayPause = useCallback(() => {
     if (isTV) {
       setIsPaused(prev => !prev);
@@ -981,6 +988,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     primaryColor: primary,
     onTogglePlayPause: handleTogglePlayPause,
     onSeekNotification: handleSeekNotification,
+    remoteSuspended: autoNextVisible,
   });
 
   const handleProgressWithTime = useCallback(
@@ -1579,6 +1587,29 @@ const Player = ({route}: Props): React.JSX.Element => {
       currentEpisodeIndex < (route.params?.episodeList?.length || 0) - 1
     );
   }, [currentEpisodeIndex, route.params?.episodeList]);
+
+  const handleVideoEnd = useCallback(() => {
+    const allowed = shouldAutoPlayNext({
+      enabled: settingsStorage.isAutoPlayNextEpisodeEnabled(),
+      hasNext: hasNextEpisode,
+      isCasting,
+      isMovie: route.params?.type === 'movie',
+    });
+    if (allowed) setAutoNextVisible(true);
+  }, [hasNextEpisode, isCasting, route.params?.type]);
+
+  // Going back in the video means the viewer is not done with it yet.
+  const handleVideoSeek = useCallback(
+    (e: {currentTime: number; seekTime: number}) => {
+      const target = e.seekTime ?? e.currentTime;
+      if (isSeekAwayFromEnd(target, videoPositionRef.current.duration)) {
+        setAutoNextVisible(false);
+      }
+    },
+    [videoPositionRef],
+  );
+
+  useEffect(() => setAutoNextVisible(false), [activeEpisode]);
 
   // Memoized error handler
   const selectedStreamRef = useRef(selectedStream);
@@ -2696,6 +2727,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       hideAllControlls:
         isTV || isPlayerLocked || showSettings || showEpisodeSidebar,
       onSeekSnap: handleSeekSnap,
+      onEnd: handleVideoEnd,
+      onSeek: handleVideoSeek,
       ...(isTV
         ? {
             paused: isPaused,
@@ -2730,6 +2763,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       handleVideoTracks,
       selectedVideoTrack,
       handleSeekSnap,
+      handleVideoEnd,
+      handleVideoSeek,
       processedStreamUrl,
       torrentStartMs,
       enableSwipeGesture,
@@ -2969,6 +3004,7 @@ const Player = ({route}: Props): React.JSX.Element => {
         !isPlayerLocked &&
         !showSettings &&
         !showEpisodeSidebar &&
+        !autoNextVisible &&
         !showControls && (
           <Pressable
             ref={videoSurfaceTVRef}
@@ -3398,6 +3434,20 @@ const Player = ({route}: Props): React.JSX.Element => {
             onPress={handleSkip}
           />
         </NativeAnimated.View>
+      )}
+
+      {autoNextVisible && !isCasting && !streamLoading && (
+        <View style={{position: 'absolute', bottom: 95, right: 28, zIndex: 70}}>
+          <AutoNextOverlay
+            seconds={AUTO_NEXT_COUNTDOWN_SECONDS}
+            focusColor={primary}
+            onPlayNow={() => {
+              setAutoNextVisible(false);
+              handleNextEpisode();
+            }}
+            onCancel={() => setAutoNextVisible(false)}
+          />
+        </View>
       )}
 
       {/* Toast message */}

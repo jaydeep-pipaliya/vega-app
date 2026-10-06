@@ -105,6 +105,7 @@ const AnimatedVideoPlayer = (
   const tapActionTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [_resizeMode, setResizeMode] = useState<ResizeMode>(ResizeMode.CONTAIN);
   const [_paused, setPaused] = useState<boolean>(paused);
+  const endedRef = useRef(false);
   const [_muted, setMuted] = useState<boolean>(muted);
   const [_volume, setVolume] = useState<number>(volume);
   const [_isFullscreen, setIsFullscreen] = useState<boolean>(
@@ -260,6 +261,7 @@ const AnimatedVideoPlayer = (
   );
 
   const _onEnd = useCallback(() => {
+    endedRef.current = true;
     if (currentTimeRef.current < durationRef.current) {
       setCurrentTime(durationRef.current);
       setPaused(!props.repeat);
@@ -771,6 +773,14 @@ const AnimatedVideoPlayer = (
     }
     return String(source);
   }, [source]);
+
+  // The end of a video pauses the player. When a new source replaces it
+  // (next episode), follow the paused prop again so the new video plays.
+  useEffect(() => {
+    if (!endedRef.current) return;
+    endedRef.current = false;
+    setPaused(paused);
+  }, [sourceUri]);
 
   const thumbnailSource = useMemo(() => {
     if (!source) return null;

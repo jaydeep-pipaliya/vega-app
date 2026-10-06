@@ -44,6 +44,7 @@ describe('settings defaults', () => {
     expect(settingsStorage.isDohEnabled()).toBe(true);
     expect(settingsStorage.showTabBarLabels()).toBe(true);
     expect(settingsStorage.showPlayerEpisodeSidebar()).toBe(true);
+    expect(settingsStorage.isAutoPlayNextEpisodeEnabled()).toBe(true);
   });
 
   it('keeps intentional default-off preferences disabled', () => {
@@ -96,6 +97,15 @@ describe('settings defaults', () => {
 
     expect(settingsStorage.hideDownloadsTab()).toBe(true);
     expect(mockBooleanValues.get(SettingsKeys.HIDE_DOWNLOADS_TAB)).toBe(true);
+  });
+
+  it('persists the auto play next episode preference', () => {
+    settingsStorage.setAutoPlayNextEpisode(false);
+
+    expect(settingsStorage.isAutoPlayNextEpisodeEnabled()).toBe(false);
+    expect(mockBooleanValues.get(SettingsKeys.AUTO_PLAY_NEXT_EPISODE)).toBe(
+      false,
+    );
   });
 
   it('persists the skip in-app webview preference', () => {
