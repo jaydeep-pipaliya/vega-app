@@ -1,6 +1,7 @@
 import {create} from 'zustand';
 import {createJSONStorage, persist} from 'zustand/middleware';
 import type {EpisodeLink} from '../providers/types';
+import {getEpisodeIdentity} from '../utils/episodeIdentity';
 import {createZustandStorage} from '../storage/StorageService';
 
 export interface ContinueWatchingItem {
@@ -23,7 +24,12 @@ export interface ContinueWatchingItem {
 interface ContinueWatchingState {
   items: ContinueWatchingItem[];
   upsertItem: (item: ContinueWatchingItem) => void;
-  updateProgress: (id: string, position: number, duration: number) => void;
+  updateProgress: (
+    id: string,
+    position: number,
+    duration: number,
+    episode?: EpisodeLink,
+  ) => void;
   removeItem: (id: string) => void;
 }
 
@@ -43,11 +49,16 @@ const useContinueWatchingStore = create<ContinueWatchingState>()(
               .slice(0, 29),
           ].sort((a, b) => b.updatedAt - a.updatedAt),
         })),
-      updateProgress: (id, position, duration) =>
+      updateProgress: (id, position, duration, episode) =>
         set(state => ({
           items: state.items
             .map(item =>
-              item.id === id
+              // The entry is per show. Skip it while it still holds another
+              // episode, or that episode would get this one's position.
+              item.id === id &&
+              (!episode ||
+                getEpisodeIdentity(item.episode) ===
+                  getEpisodeIdentity(episode))
                 ? {...item, position, duration, updatedAt: Date.now()}
                 : item,
             )

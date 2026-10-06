@@ -857,10 +857,15 @@ const Player = ({route}: Props): React.JSX.Element => {
   const saveContinueWatchingProgress = useCallback(
     (position: number, duration: number) => {
       if (continueWatchingId) {
-        updateContinueWatchingProgress(continueWatchingId, position, duration);
+        updateContinueWatchingProgress(
+          continueWatchingId,
+          position,
+          duration,
+          activeEpisode,
+        );
       }
     },
-    [continueWatchingId, updateContinueWatchingProgress],
+    [activeEpisode, continueWatchingId, updateContinueWatchingProgress],
   );
 
   // currentPlaybackTime is render state. The video reports progress every
