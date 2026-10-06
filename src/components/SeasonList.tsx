@@ -55,6 +55,7 @@ import {LEGACY_TERTIARY_BACKGROUND} from '../theme/seeds';
 import Text from './ui/Text';
 import EpisodeRowContent, {getValidImageUri} from './EpisodeRowContent';
 import {setSyncedEpisodeProgress} from '../lib/sync/syncService';
+import {episodesUpTo, markEpisodesWatched} from '../lib/utils/episodeProgress';
 import {TVFocusable, TVFocusGuide, TVTouchable} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
 import useContinueWatchingStore from '../lib/zustand/continueWatchingStore';
@@ -952,6 +953,58 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     type,
   ]);
 
+  // The long-pressed episode's list, in episode order (not the sort order).
+  const stickyMenuEpisodes = useMemo(() => {
+    const link = stickyMenu.link;
+    if (!link) return [];
+    if (validEpisodes.some(item => item.link === link)) return validEpisodes;
+    return validDirectLinks.some(item => item.link === link)
+      ? validDirectLinks
+      : [];
+  }, [stickyMenu.link, validEpisodes, validDirectLinks]);
+
+  const markEpisodes = useCallback(
+    (episodes: EpisodeLink[], watched: boolean, syncEpisode?: EpisodeLink) => {
+      markEpisodesWatched(episodes, watched, {
+        sync: {
+          title: metaTitle,
+          poster: poster.poster,
+          background: poster.background,
+          provider: providerValue,
+          infoUrl: routeParams.link,
+          type,
+          seasonTitle: activeSeason.title,
+        },
+        syncEpisode,
+      });
+      setStickyMenu({active: false});
+    },
+    [
+      activeSeason.title,
+      metaTitle,
+      poster.background,
+      poster.poster,
+      providerValue,
+      routeParams.link,
+      type,
+    ],
+  );
+
+  const markPreviousAsWatched = useCallback(() => {
+    if (stickyMenu.link) {
+      markEpisodes(episodesUpTo(stickyMenuEpisodes, stickyMenu.link), true);
+    }
+  }, [markEpisodes, stickyMenu.link, stickyMenuEpisodes]);
+
+  // Syncs only the long-pressed episode, like the single unwatched action.
+  const markSeasonAsUnwatched = useCallback(() => {
+    markEpisodes(
+      stickyMenuEpisodes,
+      false,
+      stickyMenuEpisodes.find(item => item.link === stickyMenu.link),
+    );
+  }, [markEpisodes, stickyMenu.link, stickyMenuEpisodes]);
+
   // Memoized sticky menu external player handler
   const handleStickyMenuExternalPlayer = useCallback(() => {
     setStickyMenu({active: false});
@@ -1800,6 +1853,59 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               onPress={markAsWatched}>
               <Ionicons name="checkmark" size={25} color={primary} />
               <Text style={{color: colors.onSurface}}>Mark as watched</Text>
+            </TVFocusable>
+          )}
+          {stickyMenuEpisodes.length > 1 &&
+            stickyMenuEpisodes[0].link !== stickyMenu.link && (
+              <TVFocusable
+                accessibilityRole="button"
+                borderRadius={18}
+                focusScale={1}
+                focusBorderColor={focusBorderColor}
+                style={{
+                  height: 48,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  paddingHorizontal: 16,
+                  backgroundColor: colors.surfaceContainerHighest,
+                  borderRadius: 18,
+                }}
+                onPress={markPreviousAsWatched}>
+                <MaterialCommunityIcons
+                  name="check-all"
+                  size={24}
+                  color={primary}
+                />
+                <Text style={{color: colors.onSurface}}>
+                  Mark previous as watched
+                </Text>
+              </TVFocusable>
+            )}
+          {stickyMenuEpisodes.length > 1 && (
+            <TVFocusable
+              accessibilityRole="button"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
+              style={{
+                height: 48,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
+                backgroundColor: colors.surfaceContainerHighest,
+                borderRadius: 18,
+              }}
+              onPress={markSeasonAsUnwatched}>
+              <MaterialCommunityIcons
+                name="eye-off-outline"
+                size={24}
+                color={primary}
+              />
+              <Text style={{color: colors.onSurface}}>
+                Mark season as unwatched
+              </Text>
             </TVFocusable>
           )}
           <TVFocusable

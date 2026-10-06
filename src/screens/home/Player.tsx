@@ -32,7 +32,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RootStackParamList} from '../../App';
-import {cacheStorage, settingsStorage} from '../../lib/storage';
+import {
+  cacheStorage,
+  PLAYBACK_SPEEDS,
+  settingsStorage,
+} from '../../lib/storage';
 import Orientation, {
   OrientationLocker,
   PORTRAIT,
@@ -46,10 +50,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   VideoRef,
-  SelectedVideoTrack,
   SelectedVideoTrackType,
   ResizeMode,
-  SelectedTrack,
   SelectedTrackType,
   BufferingStrategyType,
 } from 'react-native-video';
@@ -67,6 +69,7 @@ import {
   useStream,
   useVideoSettings,
 } from '../../lib/hooks/useStream';
+import {useStreamTrackSelections} from '../../lib/hooks/useStreamTrackSelections';
 import {
   usePlayerProgress,
   usePlayerSettings,
@@ -74,6 +77,11 @@ import {
 import * as NavigationBar from 'expo-navigation-bar';
 import {StatusBar} from 'react-native';
 import {torrentManager} from '../../lib/torrentManager';
+import {
+  isDummyTorrentLink,
+  isTorrentStream,
+  resolveTorrentStream,
+} from '../../lib/torrentStream';
 import {syncFromSharedFolder} from '../../lib/sync/syncService';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
@@ -108,6 +116,12 @@ import {getValidImageUri} from '../../components/EpisodeRowContent';
 import {Feather} from '@expo/vector-icons';
 import {isTV, usePlayerTVControls} from '../../lib/tv';
 import {TVFocusable, TVFocusGuide} from '../../components/tv';
+import AutoNextOverlay from '../../components/AutoNextOverlay';
+import {
+  AUTO_NEXT_COUNTDOWN_SECONDS,
+  isSeekAwayFromEnd,
+  shouldAutoPlayNext,
+} from '../../lib/player/autoNext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Player'>;
 
@@ -653,7 +667,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     setActiveTab,
     resizeMode,
     playbackRate,
-    setPlaybackRate,
+    selectPlaybackRate,
     isPlayerLocked,
     showUnlockButton,
     toastMessage,
@@ -857,10 +871,15 @@ const Player = ({route}: Props): React.JSX.Element => {
   const saveContinueWatchingProgress = useCallback(
     (position: number, duration: number) => {
       if (continueWatchingId) {
-        updateContinueWatchingProgress(continueWatchingId, position, duration);
+        updateContinueWatchingProgress(
+          continueWatchingId,
+          position,
+          duration,
+          activeEpisode,
+        );
       }
     },
-    [continueWatchingId, updateContinueWatchingProgress],
+    [activeEpisode, continueWatchingId, updateContinueWatchingProgress],
   );
 
   // currentPlaybackTime is render state. The video reports progress every
@@ -931,6 +950,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     });
 
   const [isPaused, setIsPaused] = useState(false);
+  const [autoNextVisible, setAutoNextVisible] = useState(false);
   const handleTogglePlayPause = useCallback(() => {
     if (isTV) {
       setIsPaused(prev => !prev);
@@ -968,6 +988,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     primaryColor: primary,
     onTogglePlayPause: handleTogglePlayPause,
     onSeekNotification: handleSeekNotification,
+    remoteSuspended: autoNextVisible,
   });
 
   const handleProgressWithTime = useCallback(
@@ -1139,10 +1160,7 @@ const Player = ({route}: Props): React.JSX.Element => {
   }, [activeSkip]);
 
   // Memoized values
-  const playbacks = useMemo(
-    () => [0.25, 0.5, 1.0, 1.25, 1.35, 1.5, 1.75, 2],
-    [],
-  );
+  const playbacks = PLAYBACK_SPEEDS;
   const hideSeekButtons = useMemo(
     () => settingsStorage.hideSeekButtons() || false,
     [],
@@ -1217,20 +1235,15 @@ const Player = ({route}: Props): React.JSX.Element => {
     }
   }, [videoPositionRef, watchedDuration]);
 
-  // Memoized selected tracks
-  const [selectedAudioTrack, setSelectedAudioTrack] = useState<SelectedTrack>({
-    type: SelectedTrackType.INDEX,
-    value: 0,
-  });
-
-  const [selectedTextTrack, setSelectedTextTrack] = useState<SelectedTrack>({
-    type: SelectedTrackType.DISABLED,
-  });
-
-  const [selectedVideoTrack, setSelectedVideoTrack] =
-    useState<SelectedVideoTrack>({
-      type: SelectedVideoTrackType.AUTO,
-    });
+  // Selected tracks, reset to the defaults whenever the stream changes
+  const {
+    selectedAudioTrack,
+    setSelectedAudioTrack,
+    selectedTextTrack,
+    setSelectedTextTrack,
+    selectedVideoTrack,
+    setSelectedVideoTrack,
+  } = useStreamTrackSelections(selectedStream);
 
   const [processedStreamUrl, setProcessedStreamUrl] = useState<string>('');
   // Resume point handed to the player with a torrent source, fixed per stream so
@@ -1367,65 +1380,58 @@ const Player = ({route}: Props): React.JSX.Element => {
       setTorrentStartMs(undefined);
       setIsResolvingStream(true);
 
-      const isTorrent =
-        selectedStream.type === 'torrent' ||
-        selectedStream.link.startsWith('magnet:');
-      if (isTorrent) {
+      if (isTorrentStream(selectedStream)) {
         try {
-          if (
-            !selectedStream.link ||
-            selectedStream.link.includes(
-              'd41d0cfbf8baa3ce04a7074b0c486243dd5fbd00',
-            ) ||
-            selectedStream.link.includes('d41d8cd98f00b204e9800998ecf8427e')
-          ) {
+          if (isDummyTorrentLink(selectedStream.link)) {
             console.warn(
               'Ignoring empty or dummy torrent hash:',
               selectedStream.link,
             );
-            switchToNextStream();
+            if (!switchToNextStream()) {
+              setIsResolvingStream(false);
+              ToastAndroid.show('Failed to load torrent', ToastAndroid.SHORT);
+            }
             return;
           }
           console.log('Adding torrent link:', selectedStream.link);
           setTorrentState('Fetching Metadata...');
           setTorrentDownloaded(0);
           setTorrentDownloadSpeed(0);
-          const addData = await torrentManager.addTorrent(selectedStream.link);
-          const infoHash = addData.infoHash;
-          if (!isMounted) {
-            torrentManager.deleteTorrent(infoHash, true).catch(() => {});
-            return;
-          }
-          activeTorrentRef.current = infoHash;
+          const resolved = await resolveTorrentStream(selectedStream.link, {
+            addTorrent: link => torrentManager.addTorrent(link),
+            deleteTorrent: hash => torrentManager.deleteTorrent(hash, true),
+            findVideoFileIndex,
+            prepareVideoFile: (hash, fileIndex) =>
+              torrentManager.prepareVideoFile(
+                hash,
+                fileIndex,
+                watchedDurationRef.current > 0,
+                settingsStorage.isTorrentFullDownload(),
+              ),
+            getStreamUrl: (hash, fileIndex) =>
+              torrentManager.getStreamUrl(hash, fileIndex),
+            onAdded: infoHash => {
+              activeTorrentRef.current = infoHash;
 
-          if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-          }
-          if (isMounted) {
-            progressIntervalRef.current = setInterval(async () => {
-              try {
-                const stats = await torrentManager.getStats(infoHash);
-                if (isMounted) {
-                  setTorrentState(stats.state || '');
-                  setTorrentDownloaded((stats.totalDone || 0) / 1024 / 1024);
-                  setTorrentDownloadSpeed(stats.downloadRate || 0);
-                }
-              } catch {}
-            }, 1000);
-          }
+              if (progressIntervalRef.current) {
+                clearInterval(progressIntervalRef.current);
+              }
+              progressIntervalRef.current = setInterval(async () => {
+                try {
+                  const stats = await torrentManager.getStats(infoHash);
+                  if (isMounted) {
+                    setTorrentState(stats.state || '');
+                    setTorrentDownloaded((stats.totalDone || 0) / 1024 / 1024);
+                    setTorrentDownloadSpeed(stats.downloadRate || 0);
+                  }
+                } catch {}
+              }, 1000);
+            },
+            isCancelled: () => !isMounted,
+          });
 
-          if (isMounted) {
-            const videoFileIndex = await findVideoFileIndex(infoHash);
-            const preparation = torrentManager.prepareVideoFile(
-              infoHash,
-              videoFileIndex,
-              watchedDurationRef.current > 0,
-              settingsStorage.isTorrentFullDownload(),
-            );
-            const streamUrl = await torrentManager.getStreamUrl(
-              infoHash,
-              videoFileIndex,
-            );
+          if (resolved) {
+            const {streamUrl, preparation} = resolved;
             console.log('Torrent stream URL:', streamUrl);
             setTorrentStartMs(
               watchedDurationRef.current > 5
@@ -1451,7 +1457,9 @@ const Player = ({route}: Props): React.JSX.Element => {
       }
     };
 
-    cleanupPreviousTorrent().then(() => resolveStream());
+    cleanupPreviousTorrent().then(() => {
+      if (isMounted) resolveStream();
+    });
 
     return () => {
       isMounted = false;
@@ -1579,6 +1587,29 @@ const Player = ({route}: Props): React.JSX.Element => {
       currentEpisodeIndex < (route.params?.episodeList?.length || 0) - 1
     );
   }, [currentEpisodeIndex, route.params?.episodeList]);
+
+  const handleVideoEnd = useCallback(() => {
+    const allowed = shouldAutoPlayNext({
+      enabled: settingsStorage.isAutoPlayNextEpisodeEnabled(),
+      hasNext: hasNextEpisode,
+      isCasting,
+      isMovie: route.params?.type === 'movie',
+    });
+    if (allowed) setAutoNextVisible(true);
+  }, [hasNextEpisode, isCasting, route.params?.type]);
+
+  // Going back in the video means the viewer is not done with it yet.
+  const handleVideoSeek = useCallback(
+    (e: {currentTime: number; seekTime: number}) => {
+      const target = e.seekTime ?? e.currentTime;
+      if (isSeekAwayFromEnd(target, videoPositionRef.current.duration)) {
+        setAutoNextVisible(false);
+      }
+    },
+    [videoPositionRef],
+  );
+
+  useEffect(() => setAutoNextVisible(false), [activeEpisode]);
 
   // Memoized error handler
   const selectedStreamRef = useRef(selectedStream);
@@ -2017,7 +2048,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       return;
     }
 
-    const canonicalStreamUrl = selectedStream.link.startsWith('magnet:')
+    const canonicalStreamUrl = isTorrentStream(selectedStream)
       ? processedStreamUrl
       : selectedStream.link;
     const mediaKey = `${targetDevice.id}:${getEpisodeIdentity(activeEpisode)}:${canonicalStreamUrl}`;
@@ -2604,7 +2635,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       source: {
         textTracks: externalSubs,
         uri:
-          (selectedStream.link.startsWith('magnet:')
+          (isTorrentStream(selectedStream)
             ? processedStreamUrl
             : selectedStream.link) || '',
         startPosition: torrentStartMs,
@@ -2696,6 +2727,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       hideAllControlls:
         isTV || isPlayerLocked || showSettings || showEpisodeSidebar,
       onSeekSnap: handleSeekSnap,
+      onEnd: handleVideoEnd,
+      onSeek: handleVideoSeek,
       ...(isTV
         ? {
             paused: isPaused,
@@ -2730,6 +2763,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       handleVideoTracks,
       selectedVideoTrack,
       handleSeekSnap,
+      handleVideoEnd,
+      handleVideoSeek,
       processedStreamUrl,
       torrentStartMs,
       enableSwipeGesture,
@@ -2969,6 +3004,7 @@ const Player = ({route}: Props): React.JSX.Element => {
         !isPlayerLocked &&
         !showSettings &&
         !showEpisodeSidebar &&
+        !autoNextVisible &&
         !showControls && (
           <Pressable
             ref={videoSurfaceTVRef}
@@ -3398,6 +3434,20 @@ const Player = ({route}: Props): React.JSX.Element => {
             onPress={handleSkip}
           />
         </NativeAnimated.View>
+      )}
+
+      {autoNextVisible && !isCasting && !streamLoading && (
+        <View style={{position: 'absolute', bottom: 95, right: 28, zIndex: 70}}>
+          <AutoNextOverlay
+            seconds={AUTO_NEXT_COUNTDOWN_SECONDS}
+            focusColor={primary}
+            onPlayNow={() => {
+              setAutoNextVisible(false);
+              handleNextEpisode();
+            }}
+            onCancel={() => setAutoNextVisible(false)}
+          />
+        </View>
       )}
 
       {/* Toast message */}
@@ -3861,7 +3911,7 @@ const Player = ({route}: Props): React.JSX.Element => {
                         accentColor={primary}
                         icon="speed"
                         onPress={() => {
-                          setPlaybackRate(rate);
+                          selectPlaybackRate(rate);
                           setShowSettings(false);
                         }}
                       />

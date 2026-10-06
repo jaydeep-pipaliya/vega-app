@@ -538,6 +538,54 @@ describe('Vega sync manifest', () => {
     expect(parseSyncManifest('{"schemaVersion":2}')).toBeNull();
   });
 
+  it('skips malformed records instead of failing the whole merge', () => {
+    const movie = {
+      id: 'movie',
+      title: 'Movie',
+      type: 'movie' as const,
+      relativePath: 'movie.mp4',
+      totalBytes: 100,
+      completedAt: 10,
+      updatedAt: 10,
+    };
+    const broken = JSON.parse(
+      JSON.stringify(
+        manifest('desktop', {
+          downloads: {movie},
+          watchlist: {
+            movie: {
+              title: 'Movie',
+              poster: '',
+              link: 'movie',
+              provider: 'p',
+              updatedAt: 5,
+            },
+          },
+        }),
+      ),
+    );
+    broken.downloads.noId = {...movie, id: undefined};
+    broken.downloads.nullItem = null;
+    broken.watchlist.nullItem = null;
+    broken.history.nullItem = null;
+    broken.history.noTime = {id: 'noTime', title: 'T', link: '/t'};
+    broken.collections = {nullItem: null};
+    broken.tombstones.nullItem = null;
+    broken.tombstones.noTime = {kind: 'watchlist', id: 'movie'};
+    const parsed = parseSyncManifest(JSON.stringify(broken));
+    expect(parsed).not.toBeNull();
+
+    const merged = mergeSyncManifests([parsed!]);
+
+    expect(Object.values(merged.downloads)).toEqual([
+      {...movie, mediaKey: getDownloadMediaKey(movie)},
+    ]);
+    expect(Object.keys(merged.watchlist)).toEqual(['movie']);
+    expect(merged.history).toEqual({});
+    expect(merged.collections).toEqual({});
+    expect(merged.tombstones).toEqual({});
+  });
+
   it('accepts older manifests without a watchlist field', () => {
     const legacyManifest = manifest('legacy');
     delete legacyManifest.watchlist;

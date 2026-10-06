@@ -118,6 +118,46 @@ describe('download destination service', () => {
     expect(first.stagingPath).toContain('Show_SSeason 1_E1');
   });
 
+  it('keeps staging directories apart for long and similar download IDs', async () => {
+    const season =
+      'Season 1 (2022) Dual Audio {Hindi-English} 480p [150MB] || 720p [400MB] || 1080p [1.2GB] WEB-DL x264 ESubs';
+    const show =
+      'A Very Long Show Title That Keeps Going For A While (2022) Complete Series';
+    const ids = [
+      `${show}_S${season}_E1`,
+      `${show}_S${season}_E2`,
+      'Show:Part_direct_0',
+      'Show?Part_direct_0',
+    ];
+    const directories = ids.map(getDownloadStagingDirectory);
+
+    expect(new Set(directories).size).toBe(ids.length);
+    for (const directory of directories) {
+      expect(directory.length).toBeLessThan(140);
+    }
+
+    const location = {
+      type: 'saf' as const,
+      uri: 'content://downloads/tree',
+      label: 'Downloads',
+    };
+    const first = await prepareDownloadDestination({
+      downloadId: ids[0],
+      location,
+      fileName: 'episode_one',
+      fileType: 'mp4',
+    });
+    mockFiles.set(first.stagingPath, 1024);
+    await prepareDownloadDestination({
+      downloadId: ids[1],
+      location,
+      fileName: 'episode_two',
+      fileType: 'mp4',
+    });
+
+    expect(mockFiles.get(first.stagingPath)).toBe(1024);
+  });
+
   it('creates an HTTP target directly inside the selected SAF hierarchy', async () => {
     const destination = await prepareDownloadDestination({
       downloadId: 'direct-http',
@@ -182,8 +222,9 @@ describe('download destination service', () => {
   it('moves a TV download into Vega app storage', async () => {
     (Platform as any).isTV = true;
     expect(getTVDefaultDownloadLocation().path).toBe('/app-files/Vega Downloads');
-    const stagingPath = '/cache/downloads/movie/movie.mp4.part';
-    mockDirectories.add('/cache/downloads/movie');
+    const stagingDirectory = getDownloadStagingDirectory('movie');
+    const stagingPath = `${stagingDirectory}/movie.mp4.part`;
+    mockDirectories.add(stagingDirectory);
     mockFiles.set(stagingPath, 2048);
 
     const output = await finalizeDownloadOutput({
@@ -204,7 +245,7 @@ describe('download destination service', () => {
       size: 2048,
     });
     expect(mockFiles.has(stagingPath)).toBe(false);
-    expect(mockDirectories.has('/cache/downloads/movie')).toBe(false);
+    expect(mockDirectories.has(stagingDirectory)).toBe(false);
   });
 
   it('copies and verifies a SAF destination', async () => {

@@ -75,6 +75,10 @@ const Preferences = ({navigation}: any) => {
     settingsStorage.showPlayerEpisodeSidebar(),
   );
 
+  const [autoPlayNextEpisode, setAutoPlayNextEpisode] = useState<boolean>(
+    settingsStorage.isAutoPlayNextEpisodeEnabled(),
+  );
+
   const [_enable2xGesture, _setEnable2xGesture] = useState<boolean>(
     settingsStorage.isEnable2xGestureEnabled(),
   );
@@ -345,6 +349,15 @@ const Preferences = ({navigation}: any) => {
             onValueChange={next => {
               settingsStorage.setShowPlayerEpisodeSidebar(next);
               setShowEpisodeSidebar(next);
+            }}
+          />
+          <SettingsSwitchRow
+            title="Auto play next episode"
+            description="Start the next episode after a short countdown"
+            value={autoPlayNextEpisode}
+            onValueChange={next => {
+              settingsStorage.setAutoPlayNextEpisode(next);
+              setAutoPlayNextEpisode(next);
             }}
           />
           <SettingsSwitchRow

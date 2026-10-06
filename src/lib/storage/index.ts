@@ -15,6 +15,7 @@ export {
   MAX_DOWNLOAD_CONNECTIONS,
   MIN_DOWNLOAD_CONNECTIONS,
   SEEK_INTERVAL_OPTIONS,
+  PLAYBACK_SPEEDS,
 } from './SettingsStorage';
 export type {SettingsKeys} from './SettingsStorage';
 

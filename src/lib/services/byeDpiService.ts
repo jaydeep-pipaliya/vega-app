@@ -65,6 +65,18 @@ export const stopByeDpi = async (): Promise<ByeDpiStatus> => {
   return await ByeDpiModule.stopByeDpi();
 };
 
+export const restartByeDpi = async (
+  customArgs?: string,
+): Promise<ByeDpiStatus> => {
+  if (!isByeDpiSupported()) {
+    return { running: false };
+  }
+  // The native start returns the existing process if one is running,
+  // so stop it first to apply the new arguments.
+  await stopByeDpi();
+  return await startByeDpi(customArgs);
+};
+
 export const getByeDpiStatus = async (): Promise<ByeDpiStatus> => {
   if (!isByeDpiSupported()) {
     return { running: false };

@@ -25,6 +25,8 @@ interface UsePlayerTVControlsOptions {
   primaryColor: string;
   onTogglePlayPause?: () => void;
   onSeekNotification?: (text: string) => void;
+  /** Leave remote keys to native focus while an overlay owns the screen. */
+  remoteSuspended?: boolean;
 }
 
 export const usePlayerTVControls = ({
@@ -39,6 +41,7 @@ export const usePlayerTVControls = ({
   primaryColor,
   onTogglePlayPause,
   onSeekNotification,
+  remoteSuspended = false,
 }: UsePlayerTVControlsOptions) => {
   const focusBorderColor = useTVFocusBorderColor(primaryColor);
   const [isTVControlsVisible, setIsTVControlsVisible] = useState(false);
@@ -154,7 +157,7 @@ export const usePlayerTVControls = ({
   useTVRemote(
     useCallback(
       evt => {
-        if (!isTV) {
+        if (!isTV || remoteSuspended) {
           return;
         }
         const eventType = evt?.eventType;
@@ -264,6 +267,7 @@ export const usePlayerTVControls = ({
         setShowSettings,
         setShowEpisodeSidebar,
         setShowControls,
+        remoteSuspended,
       ],
     ),
     isTV,

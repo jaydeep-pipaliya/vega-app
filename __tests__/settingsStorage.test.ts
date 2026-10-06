@@ -44,6 +44,7 @@ describe('settings defaults', () => {
     expect(settingsStorage.isDohEnabled()).toBe(true);
     expect(settingsStorage.showTabBarLabels()).toBe(true);
     expect(settingsStorage.showPlayerEpisodeSidebar()).toBe(true);
+    expect(settingsStorage.isAutoPlayNextEpisodeEnabled()).toBe(true);
   });
 
   it('keeps intentional default-off preferences disabled', () => {
@@ -87,11 +88,47 @@ describe('settings defaults', () => {
     }
   });
 
+  it('defaults playback speed to 1x when nothing is saved', () => {
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
+  it('remembers a playback speed from the picker list', () => {
+    settingsStorage.setPlaybackSpeed(1.5);
+
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1.5);
+    expect(mockNumberValues.get(SettingsKeys.PLAYBACK_SPEED)).toBe(1.5);
+  });
+
+  it('ignores playback speeds that the picker does not offer', () => {
+    settingsStorage.setPlaybackSpeed(3);
+    settingsStorage.setPlaybackSpeed(Number.NaN);
+
+    expect(mockNumberValues.has(SettingsKeys.PLAYBACK_SPEED)).toBe(false);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
+  it('falls back to 1x for invalid saved playback speeds', () => {
+    mockNumberValues.set(SettingsKeys.PLAYBACK_SPEED, 1.1);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+
+    mockNumberValues.set(SettingsKeys.PLAYBACK_SPEED, Number.NaN);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
   it('persists the Downloads tab preference', () => {
     settingsStorage.setHideDownloadsTab(true);
 
     expect(settingsStorage.hideDownloadsTab()).toBe(true);
     expect(mockBooleanValues.get(SettingsKeys.HIDE_DOWNLOADS_TAB)).toBe(true);
+  });
+
+  it('persists the auto play next episode preference', () => {
+    settingsStorage.setAutoPlayNextEpisode(false);
+
+    expect(settingsStorage.isAutoPlayNextEpisodeEnabled()).toBe(false);
+    expect(mockBooleanValues.get(SettingsKeys.AUTO_PLAY_NEXT_EPISODE)).toBe(
+      false,
+    );
   });
 
   it('persists the skip in-app webview preference', () => {

@@ -1,5 +1,6 @@
 import {
   finalizeDownloadOutput,
+  PreparedDownloadDestination,
   prepareDownloadDestination,
 } from './downloadDestination';
 import {
@@ -277,8 +278,15 @@ export const startDownload = async (
   activeDownloads.add(downloadId);
   occupiedDownloadSlots.add(downloadId);
   cancelledDownloads.delete(downloadId);
+  pauseFailedDownloads.delete(downloadId);
   store.markStarting(downloadId);
   const subscriptions: Array<() => void> = [];
+  let destination: PreparedDownloadDestination | undefined;
+  const throwIfCancelled = (): void => {
+    if (cancelledDownloads.has(downloadId)) {
+      throw new Error('Download cancelled');
+    }
+  };
 
   try {
     try {
@@ -299,6 +307,7 @@ export const startDownload = async (
       record.sourceType,
       await getDownloadNotificationColor(record),
     );
+    throwIfCancelled();
     subscriptions.push(
       useDownloadsStore.subscribe(state => {
         const updatedRecord = state.downloads[downloadId];
@@ -312,7 +321,7 @@ export const startDownload = async (
         }
       }),
     );
-    const destination = await prepareDownloadDestination({
+    destination = await prepareDownloadDestination({
       downloadId,
       location,
       fileName: getOutputName(record),
@@ -321,16 +330,14 @@ export const startDownload = async (
       existingFinalDocumentUri: record.finalDocumentUri,
       outputDirectoryNames: getOutputDirectoryNames(record),
     });
+    throwIfCancelled();
     store.updateDownload(downloadId, {
       stagingPath: destination.stagingPath,
       finalDocumentUri: destination.directFinalDocumentUri,
       downloadLocation: location,
     });
     await startBackendWithRetry(backend, {record, destination});
-
-    if (cancelledDownloads.has(downloadId)) {
-      throw new Error('Download cancelled');
-    }
+    throwIfCancelled();
 
     store.markFinalizing(downloadId);
     const output = await finalizeDownloadOutput({
@@ -358,9 +365,20 @@ export const startDownload = async (
     const pauseFailed = pauseFailedDownloads.has(downloadId);
     if (!backend.preservePartialOnFailure || !isSafDownloadLocation(location)) {
       await backend.cleanup(downloadId, record).catch(() => undefined);
+    } else if (cancelled && destination) {
+      await backend
+        .cleanup(downloadId, {
+          ...record,
+          downloadLocation: location,
+          finalDocumentUri: destination.directFinalDocumentUri,
+        })
+        .catch(() => undefined);
     }
     if (cancelled) {
-      store.removeDownload(downloadId);
+      // A new download with the same id may have been queued after cancel.
+      if (store.getDownload(downloadId)?.status === 'canceling') {
+        store.removeDownload(downloadId);
+      }
       await notificationService.cancelNotification(downloadId);
       return;
     }
@@ -406,7 +424,9 @@ const failPausedDownload = async (
   const backend = getDownloadBackend(record.sourceType);
   const detail = error instanceof Error ? error.message : String(error);
   const message = `Unable to ${operation} this download. Partial download data was deleted. ${detail}`;
-  pauseFailedDownloads.add(downloadId);
+  if (activeDownloads.has(downloadId)) {
+    pauseFailedDownloads.add(downloadId);
+  }
   await backend.cancel(downloadId).catch(() => undefined);
   await backend.cleanup(downloadId, record).catch(() => undefined);
   useDownloadsStore.getState().markError(downloadId, {
@@ -459,11 +479,9 @@ export const resumeDownload = async (downloadId: string): Promise<void> => {
   if (!backend.resume || !record.canResume || record.status !== 'paused') {
     return;
   }
-  if (
-    !activeDownloads.has(downloadId) &&
-    backend.directToSaf &&
-    Boolean(record.finalDocumentUri)
-  ) {
+  // With no live job (for example after an app restart) the backend has
+  // nothing to resume, so start the download again from the queue.
+  if (!activeDownloads.has(downloadId)) {
     useDownloadsStore.getState().updateDownload(downloadId, {
       status: 'queued',
       canPause: false,

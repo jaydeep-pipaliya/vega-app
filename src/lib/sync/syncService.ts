@@ -268,7 +268,9 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
         .filter((key): key is string => Boolean(key))
         .forEach(key => cacheStorage.setString(key, progress));
     }
-    if (!item.link || !item.provider) {
+    // Mark watched/unwatched saves a 1/1 or 0/1 entry. It sets episode
+    // progress only and is not playback, so it must not add a show here.
+    if (!item.link || !item.provider || duration === 1) {
       return;
     }
     const existing = latestByInfoUrl.get(item.link);
@@ -277,10 +279,10 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
     }
   });
 
-  const items: ContinueWatchingItem[] = [...latestByInfoUrl.values()]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 30)
-    .map(item => {
+  const currentItems = useContinueWatchingStore.getState().items;
+  const itemsById = new Map(currentItems.map(item => [item.id, item]));
+  [...latestByInfoUrl.values()]
+    .map((item): ContinueWatchingItem => {
       const episode = item.episode || {
         id: item.id,
         title: item.episodeTitle || item.title,
@@ -306,14 +308,23 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
         duration,
         updatedAt: item.updatedAt,
       };
+    })
+    .forEach(item => {
+      const existing = itemsById.get(item.id);
+      if (!existing || item.updatedAt > existing.updatedAt) {
+        itemsById.set(item.id, item);
+      }
     });
+  // Synced history holds only the latest 50 episodes. Merge it into the list
+  // instead of replacing it, so older shows are not dropped. Removed shows
+  // were already filtered out by their tombstones.
+  const items = [...itemsById.values()]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 30);
 
   // Periodic sync usually finds nothing new. Skip the store update then, so
   // screens do not re-render and the store is not persisted again.
-  if (
-    JSON.stringify(items) !==
-    JSON.stringify(useContinueWatchingStore.getState().items)
-  ) {
+  if (JSON.stringify(items) !== JSON.stringify(currentItems)) {
     useContinueWatchingStore.setState({items});
   }
 };
@@ -393,44 +404,73 @@ export const setSyncedEpisodeProgress = ({
   schedulePublish();
 };
 
-const applyRemoteDownloads = async (
+const findLocalDownloads = (item: SyncedDownload) => {
+  const store = useDownloadsStore.getState();
+  const isItemSubtitle = Boolean(
+    item.isSubtitle || item.id.includes('_subtitle_'),
+  );
+  const equivalentEntries = Object.entries(store.downloads).filter(
+    ([, candidate]) =>
+      candidate.status === 'completed' &&
+      Boolean(
+        candidate.isSubtitle ||
+          candidate.id.includes('_subtitle_') ||
+          isSubtitleDownloadItem(candidate),
+      ) === isItemSubtitle &&
+      getLocalDownloadMediaKey(candidate) === item.mediaKey,
+  );
+  const existing = equivalentEntries
+    .map(([, candidate]) => candidate)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const isLocalNewer =
+    existing?.status === 'completed' && existing.updatedAt >= item.updatedAt;
+  return {store, isItemSubtitle, equivalentEntries, existing, isLocalNewer};
+};
+
+// Finds the files of remote downloads. This is the slow SAF part, so it runs
+// before any store is touched and local edits made meanwhile stay intact.
+const resolveRemoteDownloadPaths = async (
   downloads: Record<string, SyncedDownload>,
+): Promise<Map<string, string | null>> => {
+  const paths = new Map<string, string | null>();
+  const location = settingsStorage.getDownloadLocationConfig();
+  if (!location || !isSafDownloadLocation(location)) {
+    return paths;
+  }
+  for (const item of Object.values(downloads)) {
+    if (paths.has(item.relativePath) || findLocalDownloads(item).isLocalNewer) {
+      continue;
+    }
+    paths.set(
+      item.relativePath,
+      await resolveMobileSyncFileWithLegacyFallback(
+        location,
+        item.relativePath,
+      ),
+    );
+  }
+  return paths;
+};
+
+const applyRemoteDownloads = (
+  downloads: Record<string, SyncedDownload>,
+  filePaths: Map<string, string | null>,
 ) => {
   const location = settingsStorage.getDownloadLocationConfig();
   if (!location || !isSafDownloadLocation(location)) {
     return;
   }
   for (const item of Object.values(downloads)) {
-    const store = useDownloadsStore.getState();
-    const isItemSubtitle = Boolean(
-      item.isSubtitle || item.id.includes('_subtitle_'),
-    );
-    const equivalentEntries = Object.entries(store.downloads).filter(
-      ([, candidate]) =>
-        candidate.status === 'completed' &&
-        Boolean(
-          candidate.isSubtitle ||
-            candidate.id.includes('_subtitle_') ||
-            isSubtitleDownloadItem(candidate),
-        ) === isItemSubtitle &&
-        getLocalDownloadMediaKey(candidate) === item.mediaKey,
-    );
-    const existing = equivalentEntries
-      .map(([, candidate]) => candidate)
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
-    if (
-      existing?.status === 'completed' &&
-      existing.updatedAt >= item.updatedAt
-    ) {
+    const {store, isItemSubtitle, equivalentEntries, existing, isLocalNewer} =
+      findLocalDownloads(item);
+    if (isLocalNewer) {
       equivalentEntries
         .filter(([id]) => id !== existing.id)
         .forEach(([id]) => store.removeDownload(id));
       continue;
     }
-    const filePath = await resolveMobileSyncFileWithLegacyFallback(
-      location,
-      item.relativePath,
-    );
+    // A path missing here was not resolved yet; the next sync picks it up.
+    const filePath = filePaths.get(item.relativePath);
     if (!filePath) {
       continue;
     }
@@ -544,13 +584,18 @@ const runSharedFolderSync = async (): Promise<void> => {
     return;
   }
   const manifests = await readMobileSyncManifests(location);
+  const filePaths = await resolveRemoteDownloadPaths(
+    mergeSyncManifests(manifests).downloads,
+  );
+  // Snapshot local state only after all awaits, so edits made while the
+  // folder was read are merged instead of overwritten.
   const localManifest = buildManifest();
   const merged = mergeSyncManifests([...manifests, localManifest]);
   applyingRemoteState = true;
   try {
     saveTombstones(merged.tombstones);
     applyTombstones(merged.tombstones);
-    await applyRemoteDownloads(merged.downloads);
+    applyRemoteDownloads(merged.downloads, filePaths);
     applyRemoteHistory(merged.history);
     applyRemoteCollections(merged.collections);
     applyRemoteWatchList(merged.watchlist);

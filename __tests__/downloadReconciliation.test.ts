@@ -96,6 +96,7 @@ import {
   reconcileCompletedDownloadOutputs,
   reconcileDownloadState,
 } from '../src/lib/downloadReconciliation';
+import {getDownloadStagingDirectory} from '../src/lib/downloadDestination';
 import {notificationService} from '../src/lib/services/Notification';
 import useDownloadsStore from '../src/lib/zustand/downloadsStore';
 
@@ -287,6 +288,29 @@ describe('download startup reconciliation', () => {
     await reconcileDownloadState();
 
     expect(mockScheduleQueuedDownloads).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps staging directories that belong to known downloads', async () => {
+    const id =
+      'A Very Long Show Title_SSeason 1 (2022) Dual Audio {Hindi-English} 480p [150MB] || 720p [400MB] || 1080p [1.2GB]_E1';
+    const stagingDirectory = getDownloadStagingDirectory(id);
+    mockDirectories.add('/cache/downloads');
+    mockDirectories.add(stagingDirectory);
+    mockDirectories.add('/cache/downloads/orphan');
+    useDownloadsStore.getState().enqueueDownload({
+      id,
+      title: 'Episode 1',
+      type: 'series',
+      url: 'https://example.com/episode.m3u8',
+      videoType: 'm3u8',
+      status: 'queued',
+      downloadLocation: location,
+    });
+
+    await reconcileDownloadState();
+
+    expect(mockDirectories.has(stagingDirectory)).toBe(true);
+    expect(mockDirectories.has('/cache/downloads/orphan')).toBe(false);
   });
 
   it('removes orphan app-private staging directories', async () => {
