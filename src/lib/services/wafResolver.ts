@@ -52,9 +52,13 @@ export const openWebView = (
   const userAgent =
     pickUserAgent(options?.headers) || commonHeaders['User-Agent'];
 
-  // Extract domain/hostname so parallel requests to different paths on the same site are coalesced
+  // Requests waiting for the same cookie on a site share one dialog. Without
+  // waitForCookie the caller needs the page itself, so only the same URL is
+  // shared.
   const hostname = url.includes('://') ? url.split('/')[2] : url;
-  const siteKey = options?.waitForCookie ? `${hostname}:${options.waitForCookie}` : hostname;
+  const siteKey = options?.waitForCookie
+    ? `${hostname}:${options.waitForCookie}`
+    : url;
   const cacheKey = `${author}|${siteKey}`;
   
   // Request coalescing: if a WAF resolution is already pending for this URL/cookie, return its promise
@@ -99,11 +103,14 @@ export const openWebView = (
   // Always register the promise for coalescing, even if force: true
   pendingRequests[cacheKey] = promise;
 
-  promise.finally(() => {
+  // Clean up on both outcomes. `then(cleanup, cleanup)` handles the
+  // rejection, unlike `finally`, whose derived promise would reject unhandled.
+  const cleanup = () => {
     if (pendingRequests[cacheKey] === promise) {
       delete pendingRequests[cacheKey];
     }
-  });
+  };
+  promise.then(cleanup, cleanup);
 
   return promise;
 };
