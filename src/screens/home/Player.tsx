@@ -74,6 +74,11 @@ import {
 import * as NavigationBar from 'expo-navigation-bar';
 import {StatusBar} from 'react-native';
 import {torrentManager} from '../../lib/torrentManager';
+import {
+  isDummyTorrentLink,
+  isTorrentStream,
+  resolveTorrentStream,
+} from '../../lib/torrentStream';
 import {syncFromSharedFolder} from '../../lib/sync/syncService';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
@@ -1367,65 +1372,58 @@ const Player = ({route}: Props): React.JSX.Element => {
       setTorrentStartMs(undefined);
       setIsResolvingStream(true);
 
-      const isTorrent =
-        selectedStream.type === 'torrent' ||
-        selectedStream.link.startsWith('magnet:');
-      if (isTorrent) {
+      if (isTorrentStream(selectedStream)) {
         try {
-          if (
-            !selectedStream.link ||
-            selectedStream.link.includes(
-              'd41d0cfbf8baa3ce04a7074b0c486243dd5fbd00',
-            ) ||
-            selectedStream.link.includes('d41d8cd98f00b204e9800998ecf8427e')
-          ) {
+          if (isDummyTorrentLink(selectedStream.link)) {
             console.warn(
               'Ignoring empty or dummy torrent hash:',
               selectedStream.link,
             );
-            switchToNextStream();
+            if (!switchToNextStream()) {
+              setIsResolvingStream(false);
+              ToastAndroid.show('Failed to load torrent', ToastAndroid.SHORT);
+            }
             return;
           }
           console.log('Adding torrent link:', selectedStream.link);
           setTorrentState('Fetching Metadata...');
           setTorrentDownloaded(0);
           setTorrentDownloadSpeed(0);
-          const addData = await torrentManager.addTorrent(selectedStream.link);
-          const infoHash = addData.infoHash;
-          if (!isMounted) {
-            torrentManager.deleteTorrent(infoHash, true).catch(() => {});
-            return;
-          }
-          activeTorrentRef.current = infoHash;
+          const resolved = await resolveTorrentStream(selectedStream.link, {
+            addTorrent: link => torrentManager.addTorrent(link),
+            deleteTorrent: hash => torrentManager.deleteTorrent(hash, true),
+            findVideoFileIndex,
+            prepareVideoFile: (hash, fileIndex) =>
+              torrentManager.prepareVideoFile(
+                hash,
+                fileIndex,
+                watchedDurationRef.current > 0,
+                settingsStorage.isTorrentFullDownload(),
+              ),
+            getStreamUrl: (hash, fileIndex) =>
+              torrentManager.getStreamUrl(hash, fileIndex),
+            onAdded: infoHash => {
+              activeTorrentRef.current = infoHash;
 
-          if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-          }
-          if (isMounted) {
-            progressIntervalRef.current = setInterval(async () => {
-              try {
-                const stats = await torrentManager.getStats(infoHash);
-                if (isMounted) {
-                  setTorrentState(stats.state || '');
-                  setTorrentDownloaded((stats.totalDone || 0) / 1024 / 1024);
-                  setTorrentDownloadSpeed(stats.downloadRate || 0);
-                }
-              } catch {}
-            }, 1000);
-          }
+              if (progressIntervalRef.current) {
+                clearInterval(progressIntervalRef.current);
+              }
+              progressIntervalRef.current = setInterval(async () => {
+                try {
+                  const stats = await torrentManager.getStats(infoHash);
+                  if (isMounted) {
+                    setTorrentState(stats.state || '');
+                    setTorrentDownloaded((stats.totalDone || 0) / 1024 / 1024);
+                    setTorrentDownloadSpeed(stats.downloadRate || 0);
+                  }
+                } catch {}
+              }, 1000);
+            },
+            isCancelled: () => !isMounted,
+          });
 
-          if (isMounted) {
-            const videoFileIndex = await findVideoFileIndex(infoHash);
-            const preparation = torrentManager.prepareVideoFile(
-              infoHash,
-              videoFileIndex,
-              watchedDurationRef.current > 0,
-              settingsStorage.isTorrentFullDownload(),
-            );
-            const streamUrl = await torrentManager.getStreamUrl(
-              infoHash,
-              videoFileIndex,
-            );
+          if (resolved) {
+            const {streamUrl, preparation} = resolved;
             console.log('Torrent stream URL:', streamUrl);
             setTorrentStartMs(
               watchedDurationRef.current > 5
@@ -1451,7 +1449,9 @@ const Player = ({route}: Props): React.JSX.Element => {
       }
     };
 
-    cleanupPreviousTorrent().then(() => resolveStream());
+    cleanupPreviousTorrent().then(() => {
+      if (isMounted) resolveStream();
+    });
 
     return () => {
       isMounted = false;
@@ -2017,7 +2017,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       return;
     }
 
-    const canonicalStreamUrl = selectedStream.link.startsWith('magnet:')
+    const canonicalStreamUrl = isTorrentStream(selectedStream)
       ? processedStreamUrl
       : selectedStream.link;
     const mediaKey = `${targetDevice.id}:${getEpisodeIdentity(activeEpisode)}:${canonicalStreamUrl}`;
@@ -2604,7 +2604,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       source: {
         textTracks: externalSubs,
         uri:
-          (selectedStream.link.startsWith('magnet:')
+          (isTorrentStream(selectedStream)
             ? processedStreamUrl
             : selectedStream.link) || '',
         startPosition: torrentStartMs,
