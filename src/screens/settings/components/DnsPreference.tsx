@@ -21,6 +21,7 @@ import {
   DEFAULT_BYEDPI_ARGS,
   BYEDPI_PRESETS,
   getByeDpiStatus,
+  restartByeDpi,
   toggleByeDpi,
 } from '../../../lib/services/byeDpiService';
 import { useM3Colors } from '../../../theme/M3PaletteContext';
@@ -188,9 +189,16 @@ const DnsPreference = () => {
     if (byeDpiEnabled) {
       setIsByeDpiBusy(true);
       try {
-        await toggleByeDpi(true, trimmed);
-        ToastAndroid.show('ByeDPI restarted with new parameters', ToastAndroid.SHORT);
+        const res = await restartByeDpi(trimmed);
+        setByeDpiPort(res.running ? res.port || null : null);
+        if (res.running) {
+          ToastAndroid.show(
+            'ByeDPI restarted with new parameters',
+            ToastAndroid.SHORT,
+          );
+        }
       } catch (e: any) {
+        setByeDpiPort(null);
         ToastAndroid.show(`ByeDPI error: ${e?.message}`, ToastAndroid.LONG);
       } finally {
         setIsByeDpiBusy(false);

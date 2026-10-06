@@ -55,6 +55,7 @@ import {
   isByeDpiSupported,
   startByeDpi,
   stopByeDpi,
+  restartByeDpi,
   toggleByeDpi,
   syncByeDpiSettings,
   DEFAULT_BYEDPI_ARGS,
@@ -126,6 +127,31 @@ describe('ByeDPI service & storage', () => {
     expect(settingsStorage.isByeDpiEnabled()).toBe(false);
     expect(mockStopByeDpi).toHaveBeenCalledTimes(1);
     expect(status).toEqual({running: false});
+  });
+
+  it('stops the running process before starting with new args', async () => {
+    const calls: string[] = [];
+    mockStopByeDpi.mockImplementationOnce(async () => {
+      calls.push('stop');
+      return {running: false};
+    });
+    mockStartByeDpi.mockImplementationOnce(async (args?: string) => {
+      calls.push(`start:${args}`);
+      return {running: true, port: 1081};
+    });
+
+    const status = await restartByeDpi('--split 2');
+    expect(calls).toEqual(['stop', 'start:--split 2']);
+    expect(status).toEqual({running: true, port: 1081});
+  });
+
+  it('does not start again when stopping fails during restart', async () => {
+    mockStopByeDpi.mockImplementationOnce(async () => {
+      throw new Error('stop failed');
+    });
+
+    await expect(restartByeDpi('--split 2')).rejects.toThrow('stop failed');
+    expect(mockStartByeDpi).not.toHaveBeenCalled();
   });
 
   it('syncs byedpi settings on startup when enabled', async () => {
