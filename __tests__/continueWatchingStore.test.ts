@@ -68,4 +68,34 @@ describe('continue watching store', () => {
       createItem('show', 20),
     ]);
   });
+
+  it('does not write progress onto a different episode', () => {
+    const {upsertItem, updateProgress} = useContinueWatchingStore.getState();
+    upsertItem({
+      ...createItem('show', 10),
+      episode: {title: 'Episode 3', link: 'https://example.com/e3'},
+      position: 1200,
+      duration: 2400,
+    });
+
+    updateProgress('show', 900, 2400, {
+      title: 'Episode 4',
+      link: 'https://example.com/e4',
+    });
+
+    expect(useContinueWatchingStore.getState().items[0]).toMatchObject({
+      episode: {link: 'https://example.com/e3'},
+      position: 1200,
+      updatedAt: 10,
+    });
+
+    updateProgress('show', 1300, 2400, {
+      title: 'Episode 3',
+      link: 'https://example.com/e3',
+    });
+
+    expect(useContinueWatchingStore.getState().items[0]).toMatchObject({
+      position: 1300,
+    });
+  });
 });
