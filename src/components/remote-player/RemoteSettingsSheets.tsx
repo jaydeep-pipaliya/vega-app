@@ -1,6 +1,11 @@
 import {isRemotePlaybackCanceled} from '../../lib/remote/remotePlaybackErrors';
 import * as DocumentPicker from 'expo-document-picker';
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
+import {Pressable, View} from 'react-native';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
+import {MAX_PLAYER_DELAY_MS, formatDelay} from '../PlayerDelayControl';
+import AppText from '../ui/Text';
+import {useM3Colors} from '../../theme/M3PaletteContext';
 import SearchSubtitles, {FoundSubtitle} from '../SearchSubtitles';
 import {useRemoteStore} from '../../lib/remote/remoteStore';
 import {remotePlaybackManager} from '../../lib/remote/remotePlaybackManager';
@@ -75,6 +80,203 @@ const TITLES: Record<RemoteSheetType, string> = {
 
 const languageLabel = (language?: string) =>
   language && language !== 'und' ? language.toUpperCase() : '';
+
+const DELAY_STEP_MS = 50;
+const DELAY_LONG_STEP_MS = 500;
+
+const DelayStepButton: React.FC<{
+  icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+  label: string;
+  disabled?: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
+}> = ({icon, label, disabled, onPress, onLongPress}) => {
+  const colors = useM3Colors();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{disabled}}
+      disabled={disabled}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      android_ripple={{color: colors.onSecondaryContainer, borderless: true}}
+      style={{
+        alignItems: 'center',
+        backgroundColor: colors.secondaryContainer,
+        borderRadius: 20,
+        height: 40,
+        justifyContent: 'center',
+        opacity: disabled ? 0.38 : 1,
+        width: 40,
+      }}>
+      <MaterialCommunityIcons
+        name={icon}
+        size={20}
+        color={colors.onSecondaryContainer}
+      />
+    </Pressable>
+  );
+};
+
+/**
+ * Delay row laid out like the sheet's list rows. The value is a draft until
+ * Apply, because applying reloads the stream at the current position.
+ * Tap moves 0.05s, long press 0.5s.
+ */
+const RemoteDelayRow: React.FC<{
+  kind: 'audio' | 'subtitle';
+  disabledText?: string;
+}> = ({kind, disabledText}) => {
+  const colors = useM3Colors();
+  const applied = useRemoteStore(state =>
+    kind === 'audio' ? state.audioDelayMs : state.subtitleDelayMs,
+  );
+  const [draft, setDraft] = useState(applied);
+  const [applying, setApplying] = useState(false);
+  useEffect(() => setDraft(applied), [applied]);
+  const disabled = Boolean(disabledText) || applying;
+  const changed = draft !== applied;
+
+  const step = (amount: number) =>
+    setDraft(current =>
+      Math.max(
+        -MAX_PLAYER_DELAY_MS,
+        Math.min(MAX_PLAYER_DELAY_MS, current + amount),
+      ),
+    );
+
+  const apply = () => {
+    const {audioDelayMs, subtitleDelayMs} = useRemoteStore.getState();
+    setApplying(true);
+    remotePlaybackManager
+      .applyDelays(
+        kind === 'subtitle' ? draft : subtitleDelayMs,
+        kind === 'audio' ? draft : audioDelayMs,
+      )
+      .catch((error: Error) => {
+        if (!isRemotePlaybackCanceled(error))
+          useRemoteStore
+            .getState()
+            .setErrorMessage(error?.message || 'Unable to apply the delay');
+      })
+      .finally(() => setApplying(false));
+  };
+
+  const later = kind === 'audio' ? 'Sound plays later' : 'Text shows later';
+  const earlier =
+    kind === 'audio' ? 'Sound plays earlier' : 'Text shows earlier';
+  const supportingText =
+    disabledText ||
+    (applying
+      ? 'Reloading the stream\u2026'
+      : draft === 0
+        ? 'In sync'
+        : draft > 0
+          ? later
+          : earlier);
+
+  return (
+    <>
+      <View
+        style={{
+          alignItems: 'center',
+          flexDirection: 'row',
+          gap: 16,
+          minHeight: 56,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+        }}>
+        <MaterialCommunityIcons
+          name={kind === 'audio' ? 'timer-sync-outline' : 'closed-caption-outline'}
+          size={22}
+          color={colors.onSurfaceVariant}
+        />
+        <View style={{flex: 1, minWidth: 0}}>
+          <AppText
+            role="bodyLarge"
+            numberOfLines={1}
+            style={{color: colors.onSurface}}>
+            {kind === 'audio' ? 'Audio delay' : 'Subtitle delay'}
+          </AppText>
+          <AppText
+            role="bodyMedium"
+            numberOfLines={1}
+            style={{color: colors.onSurfaceVariant}}>
+            {supportingText}
+          </AppText>
+        </View>
+        <View style={{alignItems: 'center', flexDirection: 'row'}}>
+          <DelayStepButton
+            icon="minus"
+            label="0.05 seconds earlier"
+            disabled={disabled || draft <= -MAX_PLAYER_DELAY_MS}
+            onPress={() => step(-DELAY_STEP_MS)}
+            onLongPress={() => step(-DELAY_LONG_STEP_MS)}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${formatDelay(draft)}. Reset to zero`}
+            disabled={disabled}
+            onPress={() => setDraft(0)}
+            style={{minWidth: 68, paddingVertical: 8}}>
+            <AppText
+              role="titleMedium"
+              style={{
+                color: draft === 0 ? colors.onSurface : colors.primary,
+                fontVariant: ['tabular-nums'],
+                textAlign: 'center',
+              }}>
+              {formatDelay(draft)}
+            </AppText>
+          </Pressable>
+          <DelayStepButton
+            icon="plus"
+            label="0.05 seconds later"
+            disabled={disabled || draft >= MAX_PLAYER_DELAY_MS}
+            onPress={() => step(DELAY_STEP_MS)}
+            onLongPress={() => step(DELAY_LONG_STEP_MS)}
+          />
+        </View>
+      </View>
+      {changed && !disabledText ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            gap: 8,
+            justifyContent: 'flex-end',
+            paddingBottom: 8,
+            paddingHorizontal: 16,
+          }}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={applying}
+            onPress={() => setDraft(applied)}
+            style={{borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10}}>
+            <AppText role="labelLarge" style={{color: colors.primary}}>
+              Cancel
+            </AppText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={applying}
+            onPress={apply}
+            style={{
+              backgroundColor: colors.primary,
+              borderRadius: 20,
+              opacity: applying ? 0.6 : 1,
+              paddingHorizontal: 24,
+              paddingVertical: 10,
+            }}>
+            <AppText role="labelLarge" style={{color: colors.onPrimary}}>
+              {applying ? 'Applying\u2026' : 'Apply'}
+            </AppText>
+          </Pressable>
+        </View>
+      ) : null}
+    </>
+  );
+};
 
 export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
   sheetType,
@@ -231,35 +433,41 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
         );
 
       case 'audio':
-        return audioTracks.length === 0 ? (
-          <RemoteSheetEmpty text="Reading audio tracksâ€¦" />
-        ) : (
-          audioTracks.map((track, i) => {
-            const language = languageLabel(track.language);
-            return (
-              <RemoteSheetOption
-                key={track.id || i}
-                title={track.title || language || `Track ${i + 1}`}
-                supportingText={[language, track.codec]
-                  .filter(Boolean)
-                  .join(' · ')}
-                selected={
-                  activeAudioTrackId
-                    ? track.id === activeAudioTrackId
-                    : Boolean(track.isSelected)
-                }
-                onPress={() =>
-                  select(() =>
-                    onSelectAudio
-                      ? onSelectAudio(track)
-                      : remotePlaybackManager
-                          .switchAudioTrack(track)
-                          .catch(() => {}),
-                  )
-                }
-              />
-            );
-          })
+        return (
+          <>
+            {audioTracks.length === 0 ? (
+              <RemoteSheetEmpty text="Reading audio tracksâ€¦" />
+            ) : (
+              audioTracks.map((track, i) => {
+                const language = languageLabel(track.language);
+                return (
+                  <RemoteSheetOption
+                    key={track.id || i}
+                    title={track.title || language || `Track ${i + 1}`}
+                    supportingText={[language, track.codec]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    selected={
+                      activeAudioTrackId
+                        ? track.id === activeAudioTrackId
+                        : Boolean(track.isSelected)
+                    }
+                    onPress={() =>
+                      select(() =>
+                        onSelectAudio
+                          ? onSelectAudio(track)
+                          : remotePlaybackManager
+                              .switchAudioTrack(track)
+                              .catch(() => {}),
+                      )
+                    }
+                  />
+                );
+              })
+            )}
+            <RemoteSheetSectionLabel text="Sync" />
+            <RemoteDelayRow kind="audio" />
+          </>
         );
 
       case 'subtitles':
@@ -287,6 +495,13 @@ export const RemoteSettingsSheets: React.FC<RemoteSettingsSheetsProps> = ({
                 />
               );
             })}
+            <RemoteSheetSectionLabel text="Sync" />
+            <RemoteDelayRow
+              kind="subtitle"
+              disabledText={
+                activeSubtitleTrackId ? undefined : 'Turn on a subtitle first'
+              }
+            />
             <RemoteSheetSectionLabel text="Add subtitles" />
             <RemoteSheetOption
               icon="file-document-outline"

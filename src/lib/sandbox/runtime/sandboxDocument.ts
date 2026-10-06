@@ -9,7 +9,6 @@
  *
  * The worker bundle is inlined at build time as `__WORKER_SOURCE__`.
  */
-import {base64ToUtf8} from '../base64';
 import type {HostMessage, SandboxMessage} from '../protocol';
 
 declare const __WORKER_SOURCE__: string;
@@ -172,14 +171,15 @@ const handleHostMessage = (message: HostMessage): void => {
 };
 
 /**
- * Native entry point. Frames arrive base64 encoded so no quoting or line
- * separator (U+2028/U+2029) can break out of the injected script.
+ * Native entry point. Frames arrive as a JSON-quoted string literal, so no
+ * quoting or line separator (U+2028/U+2029) can break out of the injected
+ * script.
  */
 (window as unknown as Record<string, unknown>).__sandboxReceive = (
   encoded: string,
 ) => {
   try {
-    handleHostMessage(JSON.parse(base64ToUtf8(encoded)) as HostMessage);
+    handleHostMessage(JSON.parse(encoded) as HostMessage);
   } catch (error) {
     send({
       type: 'log',

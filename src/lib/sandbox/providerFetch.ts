@@ -110,7 +110,10 @@ export const providerFetch = async (
   request: SerializedRequest,
 ): Promise<SerializedResponse> => {
   const url = validateProviderUrl(rawUrl);
+  // Timings for finding where a slow source spends its time.
+  const queuedAt = Date.now();
   const release = await providerRateLimiter.acquire(url.hostname);
+  const startedAt = Date.now();
 
   try {
     const headers = normalizeHeaders(request.headers ?? []);
@@ -162,6 +165,13 @@ export const providerFetch = async (
         const res = await NativeModules.ProviderHttpModule.fetch(
           hopUrl.toString(),
           options,
+        );
+        console.log(
+          `[ProviderPerf] fetch ${hopUrl.hostname} ${res.status} wait=${
+            startedAt - queuedAt
+          }ms net=${Date.now() - startedAt}ms body=${Math.round(
+            ((res.bodyBase64?.length || 0) * 3) / 4 / 1024,
+          )}KB`,
         );
         const finalUrl: string = res.url || hopUrl.toString();
         // Set-Cookie of every response, redirects included, with its URL.

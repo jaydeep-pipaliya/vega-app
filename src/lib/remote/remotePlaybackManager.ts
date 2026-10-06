@@ -74,6 +74,13 @@ function isServableExternalSubtitle(uri?: string): uri is string {
   return Boolean(uri && /^(?:https?|file):\/\//i.test(uri));
 }
 
+/** Adds the user subtitle delay to a phone server subtitle URL. */
+function withSubtitleDelay(url: string): string {
+  const delayMs = Math.round(useRemoteStore.getState().subtitleDelayMs);
+  if (!delayMs) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}delay=${delayMs}`;
+}
+
 function isLoopbackUrl(url: string): boolean {
   return /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?\//i.test(url);
 }
@@ -131,7 +138,11 @@ class RemotePlaybackManager {
     const owned = this.operationSessions.get(token) || new Set<string>();
     owned.add(options.sessionId);
     this.operationSessions.set(token, owned);
-    return remoteDeliveryService.prepareStream(options);
+    return remoteDeliveryService.prepareStream({
+      ...options,
+      audioDelayMs:
+        options.audioDelayMs ?? useRemoteStore.getState().audioDelayMs,
+    });
   }
 
   private async cleanupCanceledOperation(token: number): Promise<void> {
@@ -451,6 +462,27 @@ class RemotePlaybackManager {
   }
 
   /**
+   * Applies new subtitle and audio delays by reloading the stream at the
+   * current position. The phone shifts the cues and remuxes the sound, so this
+   * works whatever the receiver supports. Restores the old delays on failure.
+   */
+  async applyDelays(subtitleDelayMs: number, audioDelayMs: number): Promise<void> {
+    if (isTV || !this.lastRequest) return;
+    const store = useRemoteStore.getState();
+    const previous = {sub: store.subtitleDelayMs, audio: store.audioDelayMs};
+    if (previous.sub === subtitleDelayMs && previous.audio === audioDelayMs) return;
+    store.setDelays(subtitleDelayMs, audioDelayMs);
+    try {
+      await this.retry();
+    } catch (e) {
+      if (!isRemotePlaybackCanceled(e)) {
+        useRemoteStore.getState().setDelays(previous.sub, previous.audio);
+      }
+      throw e;
+    }
+  }
+
+  /**
    * True while a load or reload swaps the stream. Receiver progress in this window
    * may belong to either stream, so it cannot be mapped with the current offset.
    */
@@ -511,6 +543,14 @@ class RemotePlaybackManager {
 
     const previousPayload = this.activePayload;
     const previousSessionId = this.currentSessionId;
+    // Delays belong to one title; a quality, audio or delay reload keeps them.
+    if (
+      !previousPayload ||
+      previousPayload.title !== payload.title ||
+      previousPayload.subtitle !== payload.subtitle
+    ) {
+      useRemoteStore.getState().setDelays(0, 0);
+    }
     this.activePayload = payload;
     this.releaseOwnedTorrent(payload.sourceUrl);
     const operationSessionId = `session_${Crypto.randomUUID()}`;
@@ -642,7 +682,11 @@ class RemotePlaybackManager {
         (isDlna && (isManifest || isWebm)) ||
         (device.type === 'cast' && isManifest && hasCustomHeaders) ||
         audioTracks.length > 1 ||
-        Boolean(selectedAudio && selectedAudio.index > 0);
+        Boolean(selectedAudio && selectedAudio.index > 0) ||
+        // The sound can only be shifted while it is re-encoded.
+        useRemoteStore.getState().audioDelayMs !== 0;
+      // Shifted subtitles are served by the phone, so the stream needs a session.
+      const hasSubtitleDelay = useRemoteStore.getState().subtitleDelayMs !== 0;
       console.info('Remote delivery route', {
         device: device.type,
         sourceType: sourceType || 'unknown',
@@ -659,7 +703,13 @@ class RemotePlaybackManager {
       const mediaDuration = inspected.durationSeconds || payload.duration || 0;
       if (device.type === 'cast') {
         let usedEngine: 'hls' | 'ffmpeg' | null = null;
-        if (needsRemux || isLocalFile || isLoopbackSource || hasCustomHeaders) {
+        if (
+          needsRemux ||
+          isLocalFile ||
+          isLoopbackSource ||
+          hasCustomHeaders ||
+          hasSubtitleDelay
+        ) {
           const preferredMode: 'hls' | 'ffmpeg' =
             this.isCastHlsEnabled() && !isManifest ? 'hls' : 'ffmpeg';
 
@@ -1123,7 +1173,9 @@ class RemotePlaybackManager {
         const parts = parsed.pathname.split('/');
         const sessionId = parts[2];
         if (sessionId) {
-          resolvedUrl = `${parsed.origin}/subtitle/${sessionId}/${sub.index}.vtt`;
+          resolvedUrl = withSubtitleDelay(
+            `${parsed.origin}/subtitle/${sessionId}/${sub.index}.vtt`,
+          );
         }
       } catch {}
     } else if (isServableExternalSubtitle(sub.uri)) {
@@ -1137,7 +1189,9 @@ class RemotePlaybackManager {
           /^\/(ffmpeg|hlsout|dlna|proxy)\//.test(parsed.pathname)
         ) {
           const ordinal = Math.max(0, subs.indexOf(sub));
-          resolvedUrl = `${parsed.origin}/extsub/${sessionId}/${ordinal}.vtt?u=${encodeURIComponent(sub.uri)}`;
+          resolvedUrl = withSubtitleDelay(
+            `${parsed.origin}/extsub/${sessionId}/${ordinal}.vtt?u=${encodeURIComponent(sub.uri)}`,
+          );
         }
       } catch {}
       // The receiver cannot open a file on the phone.
@@ -1197,12 +1251,12 @@ class RemotePlaybackManager {
     const validSubs = subtitles.map((sub, ordinal) => {
       if (!sessionId) return undefined;
       if (sub.isEmbedded && sub.index !== undefined) {
-        return {...sub, uri: `${parsedDelivery.origin}/subtitle/${sessionId}/${sub.index}.vtt`, contentType: 'text/vtt'};
+        return {...sub, uri: withSubtitleDelay(`${parsedDelivery.origin}/subtitle/${sessionId}/${sub.index}.vtt`), contentType: 'text/vtt'};
       }
       if (!sub.isEmbedded && isServableExternalSubtitle(sub.uri)) {
         const isTtml = /\.(?:ttml|dfxp)(?:[?#]|$)/i.test(sub.uri);
         return {...sub,
-          uri: `${parsedDelivery.origin}/extsub/${sessionId}/${ordinal}.${isTtml ? 'ttml' : 'vtt'}?u=${encodeURIComponent(sub.uri)}`,
+          uri: withSubtitleDelay(`${parsedDelivery.origin}/extsub/${sessionId}/${ordinal}.${isTtml ? 'ttml' : 'vtt'}?u=${encodeURIComponent(sub.uri)}`),
           contentType: isTtml ? 'application/ttml+xml' : 'text/vtt',
         };
       }

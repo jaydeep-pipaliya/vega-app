@@ -521,7 +521,7 @@ const DownloadBottomSheet = ({
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{
               alignItems: 'center',
-              backgroundColor: colors.primaryContainer,
+              backgroundColor: colors.surfaceContainerHighest,
               borderRadius: 10,
               justifyContent: 'center',
               padding: 8,
@@ -529,7 +529,7 @@ const DownloadBottomSheet = ({
             <MaterialCommunityIcons
               name={isAlwaysExternal ? 'download-outline' : 'open-in-new'}
               size={18}
-              color={colors.onPrimaryContainer}
+              color={colors.onSurfaceVariant}
             />
           </SheetButton>
         </View>

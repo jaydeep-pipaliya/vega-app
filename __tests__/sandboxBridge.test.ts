@@ -4,18 +4,41 @@ jest.mock('../src/lib/sandbox/providerRpc', () => ({
   handleProviderRpc: jest.fn(),
 }));
 
-import {base64ToUtf8} from '../src/lib/sandbox/base64';
 import {sandboxBridge} from '../src/lib/sandbox/sandboxBridge';
 
+const PREFIX = 'window.__sandboxReceive(';
+const SUFFIX = ');true;';
+
+// The frame is a JSON string literal holding the JSON message.
 const decodeInjected = (script: string) => {
-  const encoded = script.match(/__sandboxReceive\("([A-Za-z0-9+/=]+)"\)/)?.[1];
-  if (!encoded) {
+  if (!script.startsWith(PREFIX) || !script.endsWith(SUFFIX)) {
     throw new Error(`Unexpected injected script: ${script}`);
   }
-  return JSON.parse(base64ToUtf8(encoded));
+  const literal = script.slice(PREFIX.length, -SUFFIX.length);
+  return JSON.parse(JSON.parse(literal));
 };
 
 describe('sandboxBridge', () => {
+  it('injects frames that provider data cannot break out of', () => {
+    const injected: string[] = [];
+    sandboxBridge.register(script => injected.push(script), () => {});
+    sandboxBridge.handleSandboxMessage(JSON.stringify({type: 'ready'}));
+    const tricky = 'a"b\\c\u2028d\u2029e</script>);alert(1);//';
+    sandboxBridge
+      .invoke({
+        moduleCode: tricky,
+        providerValue: 'p',
+        author: 'x',
+        args: {},
+        state: {},
+      } as any)
+      .catch(() => {});
+    const script = injected[injected.length - 1];
+    expect(script).not.toMatch(/[\u2028\u2029]/);
+    // Evaluating the literal must give back exactly the frame that was sent.
+    expect(decodeInjected(script).moduleCode).toBe(tricky);
+  });
+
   afterEach(() => {
     sandboxBridge.unregister();
     jest.useRealTimers();

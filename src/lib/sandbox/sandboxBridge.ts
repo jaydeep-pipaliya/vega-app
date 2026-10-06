@@ -4,7 +4,6 @@ import {
   type HostMessage,
   type SandboxMessage,
 } from './protocol';
-import {utf8ToBase64} from './base64';
 import {handleProviderRpc} from './providerRpc';
 
 /**
@@ -72,10 +71,24 @@ class SandboxBridge {
       this.queue.push(message);
       return;
     }
-    // base64 so no quote or U+2028/U+2029 in provider data can break out of
-    // the injected script.
-    const encoded = utf8ToBase64(JSON.stringify(message));
-    this.injector(`window.__sandboxReceive("${encoded}");true;`);
+    // The frame goes in as a JSON-quoted string literal: JSON.stringify
+    // escapes quotes and backslashes, so provider data cannot break out of
+    // the injected script. U+2028/U+2029 are escaped by hand because older
+    // WebViews (Chrome < 66) reject them inside string literals. This used to
+    // be base64, which costs a slow per-character pass on Hermes for every
+    // response body.
+    const encodeStart = Date.now();
+    const frame = JSON.stringify(message)
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+    this.injector(`window.__sandboxReceive(${JSON.stringify(frame)});true;`);
+    if (frame.length > 64 * 1024) {
+      console.log(
+        `[ProviderPerf] post ${message.type} ${Math.round(
+          frame.length / 1024,
+        )}KB ${Date.now() - encodeStart}ms`,
+      );
+    }
   }
 
   private flush(): void {

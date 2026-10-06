@@ -659,7 +659,7 @@ const DownloadComponent = ({
             disabled={serverLoading}
             onPress={() => fetchAndOpenSheet(false)}
             onLongPress={() => {
-              if (settingsStorage.getBool('hapticFeedback') !== false) {
+              if (settingsStorage.isHapticFeedbackEnabled()) {
                 ReactNativeHapticFeedback.trigger('effectHeavyClick', {
                   enableVibrateFallback: true,
                   ignoreAndroidSystemSettings: false,
@@ -682,7 +682,7 @@ const DownloadComponent = ({
             isTVSelectable={!serverLoading}
             onPress={() => fetchAndOpenSheet(false)}
             onLongPress={() => {
-              if (settingsStorage.getBool('hapticFeedback') !== false) {
+              if (settingsStorage.isHapticFeedbackEnabled()) {
                 ReactNativeHapticFeedback.trigger('effectHeavyClick', {
                   enableVibrateFallback: true,
                   ignoreAndroidSystemSettings: false,

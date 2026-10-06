@@ -107,6 +107,7 @@ import {
 import {takePersistableUriPermission} from '../../lib/uriPermission';
 import AnimatedHourglass from '../../components/AnimatedHourglass';
 import PlayerMenuRow from '../../components/PlayerMenuRow';
+import PlayerDelayControl from '../../components/PlayerDelayControl';
 import {extractImageAccent} from '../../lib/imageAccent';
 import {mixHex} from '../../theme/seeds';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
@@ -1244,6 +1245,15 @@ const Player = ({route}: Props): React.JSX.Element => {
     selectedVideoTrack,
     setSelectedVideoTrack,
   } = useStreamTrackSelections(selectedStream);
+
+  // Sync fixes for the current video. Each source can be off by a different
+  // amount, so both reset when the stream changes.
+  const [subtitleDelayMs, setSubtitleDelayMs] = useState(0);
+  const [audioDelayMs, setAudioDelayMs] = useState(0);
+  useEffect(() => {
+    setSubtitleDelayMs(0);
+    setAudioDelayMs(0);
+  }, [selectedStream.link]);
 
   const [processedStreamUrl, setProcessedStreamUrl] = useState<string>('');
   // Resume point handed to the player with a torrent source, fixed per stream so
@@ -2671,6 +2681,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       onLoad: handleVideoLoadCallback,
       videoRef: playerRef,
       rate: playbackRate,
+      subtitleDelayMs,
+      audioDelayMs,
       subtitleStyle: {
         fontSize: settingsStorage.getSubtitleFontSize() ?? 16,
         opacity: settingsStorage.getSubtitleOpacity() ?? 1,
@@ -2748,6 +2760,8 @@ const Player = ({route}: Props): React.JSX.Element => {
       combinedSkips,
       handleVideoLoadCallback,
       playbackRate,
+      subtitleDelayMs,
+      audioDelayMs,
       primary,
       navigation,
       handleShowControls,
@@ -3536,6 +3550,16 @@ const Player = ({route}: Props): React.JSX.Element => {
                     <Text className="mb-2 text-lg font-bold text-center text-white">
                       Audio
                     </Text>
+                    <PlayerDelayControl
+                      title="Audio delay"
+                      icon="av-timer"
+                      laterLabel="Sound plays later"
+                      earlierLabel="Sound plays earlier"
+                      delayMs={audioDelayMs}
+                      accentColor={primary}
+                      onChange={setAudioDelayMs}
+                      onTVFocus={() => setSettingsCloseFocused(false)}
+                    />
                     {audioTracks.length === 0 && (
                       <View className="flex justify-center items-center">
                         <Text className="text-white text-xs">
@@ -3592,6 +3616,18 @@ const Player = ({route}: Props): React.JSX.Element => {
                         <Text className="mb-2 text-lg font-bold text-center text-white">
                           Subtitle
                         </Text>
+                        {selectedTextTrackIndex !== 1000 ? (
+                          <PlayerDelayControl
+                            title="Subtitle delay"
+                            icon="closed-caption"
+                            laterLabel="Text shows later"
+                            earlierLabel="Text shows earlier"
+                            delayMs={subtitleDelayMs}
+                            accentColor={primary}
+                            onChange={setSubtitleDelayMs}
+                            onTVFocus={() => setSettingsCloseFocused(false)}
+                          />
+                        ) : null}
                         <PlayerMenuRow
                           onTVFocus={() => setSettingsCloseFocused(false)}
                           ref={

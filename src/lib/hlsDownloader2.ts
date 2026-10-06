@@ -10,6 +10,11 @@ interface NativeFileFetcher {
     headers: Record<string, string>,
   ): Promise<{statusCode: number}>;
   cancelFetches(tag: string): void;
+  muxAudioVideo(
+    videoPath: string,
+    audioPath: string,
+    outputPath: string,
+  ): Promise<void>;
 }
 
 // Segments go through the app's OkHttp client so DNS over HTTPS, WARP and
@@ -21,6 +26,7 @@ const nativeFetcher = NativeModules.HttpDownloadModule as
 const canFetchNatively =
   typeof nativeFetcher?.fetchToFile === 'function' &&
   typeof nativeFetcher?.cancelFetches === 'function';
+const canMuxNatively = typeof nativeFetcher?.muxAudioVideo === 'function';
 
 interface SegmentInfo {
   duration: number;
@@ -33,7 +39,15 @@ interface M3U8Data {
   initSegmentUrl?: string;
   totalDuration: number;
   isLive: boolean;
+  // Separate audio rendition of the chosen variant (#EXT-X-MEDIA TYPE=AUDIO).
+  audio?: M3U8Data;
 }
+
+/** Reads one attribute from an HLS tag line, quoted or not. */
+const tagAttribute = (line: string, name: string): string | undefined => {
+  const match = line.match(new RegExp(`[:,]${name}=("([^"]*)"|[^,]*)`));
+  return match ? match[2] ?? match[1] : undefined;
+};
 
 const MAX_SEGMENT_ATTEMPTS = 5;
 const SEGMENT_RETRY_BASE_MS = 1000;
@@ -115,6 +129,7 @@ const parseM3U8Playlist = async (
       );
 
       let bestQualityUrl: string | null = null;
+      let bestAudioGroup: string | undefined;
       let highestBandwidth = 0;
 
       for (let i = 0; i < lines.length; i++) {
@@ -141,6 +156,7 @@ const parseM3U8Playlist = async (
             if (bandwidth > highestBandwidth || !bestQualityUrl) {
               highestBandwidth = bandwidth;
               bestQualityUrl = resolvedUrl;
+              bestAudioGroup = tagAttribute(line, 'AUDIO');
             }
           }
         }
@@ -153,7 +169,36 @@ const parseM3U8Playlist = async (
           'with bandwidth:',
           highestBandwidth,
         );
-        return await parseM3U8Playlist(bestQualityUrl, headers);
+        const video = await parseM3U8Playlist(bestQualityUrl, headers);
+        // Audio in its own playlist is not inside the video segments; without
+        // it the saved file is silent. Prefer the default rendition.
+        const renditions = bestAudioGroup
+          ? lines.filter(
+              (candidate: string) =>
+                candidate.startsWith('#EXT-X-MEDIA:') &&
+                tagAttribute(candidate, 'TYPE') === 'AUDIO' &&
+                tagAttribute(candidate, 'GROUP-ID') === bestAudioGroup &&
+                !!tagAttribute(candidate, 'URI'),
+            )
+          : [];
+        const rendition =
+          renditions.find(
+            (candidate: string) => tagAttribute(candidate, 'DEFAULT') === 'YES',
+          ) || renditions[0];
+        if (rendition) {
+          const audioUrl = resolveUrl(tagAttribute(rendition, 'URI')!, url);
+          console.log('Found separate audio rendition:', audioUrl);
+          // Any audio problem falls back to the video alone, as before.
+          try {
+            const audio = await parseM3U8Playlist(audioUrl, headers);
+            if (audio.segments.length > 0) {
+              video.audio = audio;
+            }
+          } catch (error) {
+            console.warn('Audio rendition unavailable, video only:', error);
+          }
+        }
+        return video;
       } else {
         throw new Error('No valid stream found in master playlist');
       }
@@ -343,25 +388,41 @@ export const hlsDownloader2 = async ({
       `Found ${m3u8Data.segments.length} segments, total duration: ${m3u8Data.totalDuration}s`,
     );
 
-    const segmentPaths: string[] = [];
+    // Builds without the native muxer keep the old video-only download.
+    const audioData = canMuxNatively ? m3u8Data.audio : undefined;
 
-    // Download init segment (fMP4 EXT-X-MAP) if present
-    if (m3u8Data.initSegmentUrl) {
-      const initPath = `${tempDir}/init_segment.mp4`;
-      console.log('Downloading fMP4 init segment...');
-      await downloadSegment(downloadId, m3u8Data.initSegmentUrl, initPath, headers);
-      segmentPaths.push(initPath);
+    // Each track is merged on its own: an init segment (fMP4 EXT-X-MAP) first,
+    // then its segments in order.
+    type Track = {name: string; data: M3U8Data; paths: string[]};
+    const tracks: Track[] = [{name: 'video', data: m3u8Data, paths: []}];
+    if (audioData) {
+      tracks.push({name: 'audio', data: audioData, paths: []});
+    }
+    const jobs: {url: string; path: string}[] = [];
+    for (const track of tracks) {
+      if (track.data.initSegmentUrl) {
+        const initPath = `${tempDir}/${track.name}_init.mp4`;
+        console.log(`Downloading ${track.name} init segment...`);
+        await downloadSegment(
+          downloadId,
+          track.data.initSegmentUrl,
+          initPath,
+          headers,
+        );
+        track.paths.push(initPath);
+      }
+      for (const segment of track.data.segments) {
+        const segmentPath = `${tempDir}/${track.name}_${segment.index}.ts`;
+        track.paths.push(segmentPath);
+        jobs.push({url: segment.url, path: segmentPath});
+      }
     }
 
     // A pool of workers takes segments in order. Each 429 or 503 removes a
     // worker, so a server that limits connections gets fewer of them.
-    const offset = m3u8Data.initSegmentUrl ? 1 : 0;
     let downloadedSegments = 0;
-    let nextSegment = 0;
-    let workerLimit = Math.max(
-      1,
-      Math.min(connections, m3u8Data.segments.length),
-    );
+    let nextJob = 0;
+    let workerLimit = Math.max(1, Math.min(connections, jobs.length));
     let failed = false;
 
     const downloadWithRetry = async (url: string, segmentPath: string) => {
@@ -398,21 +459,19 @@ export const hlsDownloader2 = async ({
         if (cancelledDownloads.has(downloadId)) {
           throw new Error('Download cancelled by user');
         }
-        const segment = m3u8Data.segments[nextSegment++];
-        if (!segment) {
+        const job = jobs[nextJob++];
+        if (!job) {
           return;
         }
-        const segmentPath = `${tempDir}/segment_${segment.index}.ts`;
-        segmentPaths[segment.index + offset] = segmentPath;
         try {
-          await downloadWithRetry(segment.url, segmentPath);
+          await downloadWithRetry(job.url, job.path);
         } catch (error) {
           failed = true;
-          console.error(`Failed to download segment ${segment.index}:`, error);
+          console.error(`Failed to download segment ${job.path}:`, error);
           throw error;
         }
         downloadedSegments++;
-        onProgress?.(downloadedSegments, m3u8Data.segments.length);
+        onProgress?.(downloadedSegments, jobs.length);
       }
     };
 
@@ -424,9 +483,34 @@ export const hlsDownloader2 = async ({
       throw new Error('Download cancelled by user');
     }
 
-    // Merge all segments into final file
     console.log('Merging segments...');
-    await mergeSegments(segmentPaths, path);
+    if (audioData) {
+      // Join each track, then put both in one MP4 without re-encoding. The
+      // muxed file is written locally first because the destination can be a
+      // SAF document.
+      const videoPath = `${tempDir}/video_merged`;
+      const audioPath = `${tempDir}/audio_merged`;
+      const muxedPath = `${tempDir}/muxed.mp4`;
+      await mergeSegments(tracks[0].paths, videoPath);
+      await mergeSegments(tracks[1].paths, audioPath);
+      if (cancelledDownloads.has(downloadId)) {
+        throw new Error('Download cancelled by user');
+      }
+      let output = muxedPath;
+      try {
+        await nativeFetcher!.muxAudioVideo!(videoPath, audioPath, muxedPath);
+      } catch (error) {
+        // Keep the video rather than failing the whole download.
+        console.warn('Joining audio failed, saving video only:', error);
+        output = videoPath;
+      }
+      if (await RNFS.exists(path)) {
+        await RNFS.unlink(path).catch(() => undefined);
+      }
+      await RNFS.copyFile(output, path);
+    } else {
+      await mergeSegments(tracks[0].paths, path);
+    }
 
     // Clean up temp directory
     if (await RNFS.exists(tempDir)) {

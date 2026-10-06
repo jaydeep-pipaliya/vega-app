@@ -132,6 +132,13 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
     return list;
   }, [group, selectedSeason, searchText, sortOrder]);
 
+  // Posters and small images are blurred behind the header, with the sharp
+  // poster shown above the title instead of stretched across it. Hooks stay
+  // above the early return: the group disappears when its last file is deleted.
+  const artworkUri = group?.items[0]?.background || group?.items[0]?.poster;
+  const {ready: backdropReady, posterLike} = useArtworkShape(artworkUri);
+  const [titleHeight, setTitleHeight] = useState(0);
+
   if (!group) {
     return (
       <View className="flex-1 items-center justify-center bg-black px-6">
@@ -213,13 +220,7 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
     metadata.background ||
     metadata.poster ||
     'https://placehold.jp/24/171717/ffffff/800x450.png?text=Vega';
-  // Posters and small images are blurred behind the header, with the sharp
-  // poster shown above the title instead of stretched across it.
-  const {ready: backdropReady, posterLike} = useArtworkShape(
-    metadata.background || metadata.poster,
-  );
   const hasArtwork = !!(metadata.background || metadata.poster);
-  const [titleHeight, setTitleHeight] = useState(0);
   const posterTop = isTV ? 24 : insets.top + 12;
   const posterBottom = 12 + titleHeight + 12;
   const showPoster =

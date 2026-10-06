@@ -30,7 +30,9 @@ class HlsSegmentPackager(
     private val headers: Map<String, String>,
     private val audioTrackIndex: Int,
     private val durationSeconds: Double,
-    keyframesUs: LongArray
+    keyframesUs: LongArray,
+    // Shifts the sound against the picture; positive plays it later.
+    private val audioDelayMs: Int = 0
 ) {
     companion object {
         private const val TAG = "HlsSegmentPackager"
@@ -258,6 +260,7 @@ class HlsSegmentPackager(
         } else inputUrl)
 
         args += listOf("-map", "0:v:0", "-map", "0:a:$audioTrackIndex?", "-c:v", "copy")
+        FFmpegMp4Packager.audioDelayFilter(audioDelayMs)?.let { args += listOf("-af", it) }
         // Same audio as the MP4 route: receivers cannot play AC3, EAC3 or DTS.
         args += listOf("-c:a", "aac", "-b:a", "192k", "-ac", "2")
         args += listOf("-sn", "-dn", "-map_chapters", "-1")

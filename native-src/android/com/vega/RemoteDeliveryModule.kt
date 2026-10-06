@@ -475,6 +475,7 @@ class RemoteDeliveryModule(
         durationSeconds: Double,
         totalSizeBytes: Double,
         audioUrl: String?,
+        audioDelayMs: Int,
         promise: Promise
     ) {
         Thread {
@@ -524,7 +525,8 @@ class RemoteDeliveryModule(
                     } else sourceUrl,
                     audioInputUrl = audioUrl?.takeIf { it.isNotBlank() }?.let {
                         if (isRemoteHls && server != null) hlsProxyUrl(sessionId, it, playlist = true) else it
-                    }
+                    },
+                    audioDelayMs = audioDelayMs
                 )
             } else null
 
@@ -540,7 +542,7 @@ class RemoteDeliveryModule(
                     VegaLog.w(TAG, "Keyframe index unavailable for HLS output: ${e.message}")
                     null
                 } ?: throw IllegalStateException("No keyframe index for HLS output")
-                HlsSegmentPackager(reactContext, sourceUrl, isLocal, headers, audioTrackIndex, resolvedDuration, keyframes)
+                HlsSegmentPackager(reactContext, sourceUrl, isLocal, headers, audioTrackIndex, resolvedDuration, keyframes, audioDelayMs)
             } else null
 
             val timelineOffsetUs = if (mode == "ffmpeg") (ffmpegStart * 1_000_000.0).toLong() else 0L
@@ -1605,11 +1607,13 @@ class RemoteDeliveryModule(
                 parms?.containsKey("t") == true -> parms["t"]?.toDoubleOrNull()
                 else -> null
             }
-            val offsetUs = if (paramOffset != null) {
+            // User subtitle delay in milliseconds; positive shows each cue later.
+            val delayUs = (parms?.get("delay")?.toLongOrNull() ?: 0L) * 1000L
+            val offsetUs = (if (paramOffset != null) {
                 (paramOffset * 1_000_000.0).toLong()
             } else {
                 session.activeStreamOffsetUs ?: session.timelineOffsetUs
-            }
+            }) - delayUs
             val mimeType = if (isSrt) "text/plain; charset=utf-8" else "text/vtt; charset=utf-8"
             val body = if (isSrt) EmbeddedSubtitleVtt.toSrt(lines, offsetUs) else EmbeddedSubtitleVtt.toVtt(lines, offsetUs)
             return addCors(newFixedLengthResponse(Response.Status.OK, mimeType, body), corsHeaders).apply {

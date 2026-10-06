@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.Uri
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -299,6 +301,40 @@ class HttpDownloadModule(
     @ReactMethod
     fun cancelFetches(tag: String) {
         fileCalls.remove(tag)?.forEach { it.cancel() }
+    }
+
+    /**
+     * Joins a downloaded HLS video track and its separate audio rendition into
+     * one MP4 without re-encoding. Sites that serve audio as its own playlist
+     * would otherwise give a silent file.
+     */
+    @ReactMethod
+    fun muxAudioVideo(videoPath: String, audioPath: String, outputPath: String, promise: Promise) {
+        Thread {
+            try {
+                File(outputPath).delete()
+                val session = FFmpegKit.executeWithArguments(arrayOf(
+                    "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", videoPath,
+                    "-i", audioPath,
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c", "copy",
+                    // The output name ends in .part, so the format is given.
+                    "-f", "mp4", "-movflags", "+faststart",
+                    outputPath,
+                ))
+                if (ReturnCode.isSuccess(session.returnCode)) {
+                    promise.resolve(null)
+                } else {
+                    File(outputPath).delete()
+                    val log = session.allLogsAsString?.takeLast(400)?.trim().orEmpty()
+                    promise.reject("MUX_FAILED", "Could not join video and audio: $log")
+                }
+            } catch (error: Exception) {
+                File(outputPath).delete()
+                promise.reject("MUX_FAILED", error.message ?: error.toString(), error)
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     @ReactMethod

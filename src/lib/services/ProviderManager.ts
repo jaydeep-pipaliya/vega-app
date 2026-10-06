@@ -317,12 +317,18 @@ export class ProviderManager {
       throw new Error(`No stream module found for provider: ${providerValue}`);
     }
     try {
+      const startedAt = Date.now();
       const streams = await this.executeModule<Stream[]>(
         getStreamModule,
         providerValue,
         'getStream',
         {link, type, isDownload: Boolean(isDownload)},
         signal,
+      );
+      console.log(
+        `[ProviderPerf] getStream ${providerValue} ${
+          Array.isArray(streams) ? streams.length : 0
+        } streams in ${Date.now() - startedAt}ms`,
       );
       return this.withJarCookies(
         getStreamModule.author,

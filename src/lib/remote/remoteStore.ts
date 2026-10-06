@@ -23,6 +23,10 @@ interface RemoteStoreState {
   activeSubtitleTrackId?: string;
   activeQualityId?: string;
   activeServerId?: string;
+  // User delays in milliseconds, applied by reloading the stream.
+  // Positive shows subtitles later or plays the sound later.
+  subtitleDelayMs: number;
+  audioDelayMs: number;
   audioTracks: RemoteAudioTrack[];
   subtitleTracks: RemoteSubtitleTrack[];
   qualities: RemoteQuality[];
@@ -51,6 +55,7 @@ interface RemoteStoreState {
   setActiveSubtitleTrackId: (id?: string) => void;
   setActiveQualityId: (id?: string) => void;
   setActiveServerId: (id?: string) => void;
+  setDelays: (subtitleDelayMs: number, audioDelayMs: number) => void;
   setCapabilities: (capabilities: Partial<RemoteCapabilities>) => void;
   setErrorMessage: (msg?: string) => void;
   setAvailableDlnaDevices: (devices: RemoteDevice[]) => void;
@@ -95,6 +100,8 @@ export const useRemoteStore = create<RemoteStoreState>(set => ({
   activeSubtitleTrackId: undefined,
   activeQualityId: undefined,
   activeServerId: undefined,
+  subtitleDelayMs: 0,
+  audioDelayMs: 0,
   audioTracks: [],
   subtitleTracks: [],
   qualities: [],
@@ -174,6 +181,8 @@ export const useRemoteStore = create<RemoteStoreState>(set => ({
   setActiveSubtitleTrackId: id => set({activeSubtitleTrackId: id}),
   setActiveQualityId: id => set({activeQualityId: id}),
   setActiveServerId: id => set({activeServerId: id}),
+  setDelays: (subtitleDelayMs, audioDelayMs) =>
+    set({subtitleDelayMs, audioDelayMs}),
   setCapabilities: caps =>
     set(state => ({capabilities: {...state.capabilities, ...caps}})),
   setErrorMessage: errorMessage => set({errorMessage}),
@@ -212,6 +221,8 @@ export const useRemoteStore = create<RemoteStoreState>(set => ({
       activeAudioTrackId: undefined,
       activeSubtitleTrackId: undefined,
       activeQualityId: undefined,
+      subtitleDelayMs: 0,
+      audioDelayMs: 0,
       audioTracks: [],
       subtitleTracks: [],
       qualities: [],

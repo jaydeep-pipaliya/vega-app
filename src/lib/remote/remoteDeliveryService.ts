@@ -296,6 +296,8 @@ class RemoteDeliveryService {
     audioCodec?: string;
     durationSeconds?: number;
     totalSizeBytes?: number;
+    // Remuxed modes only; positive plays the sound later.
+    audioDelayMs?: number;
   }): Promise<PreparedStreamResult> {
     await this.ensureServerStarted();
 
@@ -310,6 +312,7 @@ class RemoteDeliveryService {
       audioCodec = null,
       durationSeconds = 0,
       totalSizeBytes = 0,
+      audioDelayMs = 0,
     } = options;
     let {sourceUrl} = options;
     let mappedAudioIndex = audioTrackIndex;
@@ -339,6 +342,7 @@ class RemoteDeliveryService {
       durationSeconds,
       totalSizeBytes,
       audioUrl,
+      Math.round(audioDelayMs),
     );
 
     this.activeSessionId = sessionId;

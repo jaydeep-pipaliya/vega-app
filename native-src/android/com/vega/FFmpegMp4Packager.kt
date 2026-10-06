@@ -40,10 +40,27 @@ class FFmpegMp4Packager(
     // HLS goes through the local proxy, which resolves hosts with the app's DNS.
     private val inputUrl: String = sourceUrl,
     // Separate HLS audio rendition, added as a second input when set.
-    private val audioInputUrl: String? = null
+    private val audioInputUrl: String? = null,
+    // Shifts the sound against the picture; positive plays it later.
+    private val audioDelayMs: Int = 0
 ) {
     companion object {
         private const val TAG = "FFmpegMp4Packager"
+
+        /**
+         * Audio filter for a user audio delay, or null for none. The video is
+         * copied, so only the audio can move:
+         * - Later: adelay puts silence in front, so each sound comes later.
+         * - Earlier: timestamps move back and the part before zero is cut, so
+         *   each sound comes sooner.
+         */
+        fun audioDelayFilter(delayMs: Int): String? = when {
+            delayMs > 0 -> "adelay=delays=$delayMs:all=1"
+            delayMs < 0 -> String.format(
+                java.util.Locale.US, "asetpts=PTS-%.3f/TB,atrim=start=0", -delayMs / 1000.0
+            )
+            else -> null
+        }
         private const val RING_BYTES = 64L * 1024 * 1024
         private const val CHUNK = 64 * 1024
         // How far past the produced data a reconnect may ask and still wait for it.
@@ -344,6 +361,10 @@ class FFmpegMp4Packager(
         // or DTS, and one output format keeps receivers predictable. 5.1 is downmixed.
         args.add("-map")
         args.add(if (audioInputUrl != null) "1:a:0" else "0:a:$audioTrackIndex?")
+        audioDelayFilter(audioDelayMs)?.let {
+            args.add("-af")
+            args.add(it)
+        }
         args.add("-c:a")
         args.add("aac")
         args.add("-b:a")
