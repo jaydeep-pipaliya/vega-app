@@ -25,6 +25,7 @@ import {QueryErrorBoundary} from '../../components/ErrorBoundary';
 import SeasonList from '../../components/SeasonList';
 import SkeletonLoader from '../../components/Skeleton';
 import {useContentDetails} from '../../lib/hooks/useContentInfo';
+import {useArtworkShape} from '../../lib/hooks/useHomePageData';
 import {extractImageAccent, getCachedImageAccent} from '../../lib/imageAccent';
 import type {Link} from '../../lib/providers/types';
 import {settingsStorage} from '../../lib/storage';
@@ -152,6 +153,10 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
     meta?.background ||
     info?.image ||
     'https://placehold.jp/24/363636/ffffff/900x1200.png?text=Vega';
+  // Posters and small images are blurred behind the page, with the sharp
+  // poster shown in the header instead of stretched across it.
+  const {ready: backdropReady, posterLike: backdropPosterLike} =
+    useArtworkShape(backgroundImage);
 
   // Register only while this screen is focused. A hidden screen in a
   // mounted tab or stack must not swallow back presses.
@@ -357,12 +362,19 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
               right: 0,
               top: 0,
             }}>
-            <Image
-              source={{uri: backgroundImage}}
-              resizeMode="cover"
-              resizeMethod="resize"
-              style={{height: 340, width: '100%'}}
-            />
+            {backdropReady ? (
+              <Image
+                source={{uri: backgroundImage}}
+                resizeMode="cover"
+                resizeMethod="resize"
+                blurRadius={backdropPosterLike ? 18 : 0}
+                style={{
+                  height: 340,
+                  opacity: backdropPosterLike ? 0.75 : 1,
+                  width: '100%',
+                }}
+              />
+            ) : null}
           </View>
           <StatusBarScrim visible={statusBarScrimVisible} />
           <StatusBar style="light" />
@@ -376,6 +388,7 @@ export default function Info({route, navigation}: Props): React.JSX.Element {
               <>
                 <ContentOverview
                   backgroundImage={backgroundImage}
+                  headerPoster={backdropPosterLike ? backgroundImage : undefined}
                   genres={meta?.genres}
                   inLibrary={inLibrary}
                   isLoading={isLoading && !info}

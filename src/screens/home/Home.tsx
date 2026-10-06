@@ -10,7 +10,7 @@ import useHeroStore from '../../lib/zustand/herostore';
 import {syncFromSharedFolder} from '../../lib/sync/syncService';
 import {
   useHomePageData,
-  getRandomHeroPost,
+  getRandomHeroPosts,
   clearHeroCache,
 } from '../../lib/hooks/useHomePageData';
 import ProviderDrawer from '../../components/ProviderDrawer';
@@ -70,7 +70,7 @@ const Home = ({}: Props) => {
 
   const provider = useContentStore(state => state.provider);
   const installedProviders = useContentStore(state => state.installedProviders);
-  const setHero = useHeroStore(state => state.setHero);
+  const setHeroes = useHeroStore(state => state.setHeroes);
 
   // React Query for home page data with better error handling
   const {
@@ -92,22 +92,15 @@ const Home = ({}: Props) => {
     setIsAtTop(offsetY <= 0);
   }, []);
 
-  // Stable hero post calculation - uses provider value for caching
-  const heroPost = useMemo(() => {
-    if (!homeData || homeData.length === 0) {
-      return null;
-    }
-    return getRandomHeroPost(homeData, provider?.value);
-  }, [homeData, provider?.value]);
+  // Heroes are kept per provider, so a refetch does not pick new ones.
+  const heroPosts = useMemo(
+    () => getRandomHeroPosts(homeData, provider?.value),
+    [homeData, provider?.value],
+  );
 
-  // Update hero only when hero post actually changes
   React.useEffect(() => {
-    if (heroPost) {
-      setHero(heroPost);
-    } else {
-      setHero({link: '', image: '', title: ''});
-    }
-  }, [heroPost, setHero]);
+    setHeroes(heroPosts);
+  }, [heroPosts, setHeroes]);
 
   useFocusEffect(
     useCallback(() => {

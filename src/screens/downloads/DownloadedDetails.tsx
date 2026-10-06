@@ -35,6 +35,7 @@ import useDownloadsStore, {
 } from '../../lib/zustand/downloadsStore';
 import {useShallow} from 'zustand/react/shallow';
 import {useM3Colors} from '../../theme/M3PaletteContext';
+import {useArtworkShape} from '../../lib/hooks/useHomePageData';
 import DownloadedEpisodeControls from './components/DownloadedEpisodeControls';
 import DownloadedEpisodeRow from './components/DownloadedEpisodeRow';
 import {deleteDownloadedItemAndSubtitles} from './utils/deleteDownloadedItem';
@@ -212,17 +213,32 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
     metadata.background ||
     metadata.poster ||
     'https://placehold.jp/24/171717/ffffff/800x450.png?text=Vega';
+  // Posters and small images are blurred behind the header, with the sharp
+  // poster shown above the title instead of stretched across it.
+  const {ready: backdropReady, posterLike} = useArtworkShape(
+    metadata.background || metadata.poster,
+  );
+  const hasArtwork = !!(metadata.background || metadata.poster);
+  const [titleHeight, setTitleHeight] = useState(0);
+  const posterTop = isTV ? 24 : insets.top + 12;
+  const posterBottom = 12 + titleHeight + 12;
+  const showPoster =
+    posterLike && titleHeight > 0 && 340 - posterTop - posterBottom >= 110;
 
   return (
     <TVFocusGuide autoFocus={true} trapFocusRight={true} style={{flex: 1, backgroundColor: '#000000'}}>
       <StatusBar translucent backgroundColor="transparent" />
       <View className="absolute h-[340px] w-full">
-        <Image
-          source={{uri: backgroundImage}}
-          className="h-[340px] w-full"
-          resizeMode="cover"
-          resizeMethod="resize"
-        />
+        {backdropReady || !hasArtwork ? (
+          <Image
+            source={{uri: backgroundImage}}
+            className="h-[340px] w-full"
+            resizeMode="cover"
+            resizeMethod="resize"
+            blurRadius={posterLike ? 18 : 0}
+            style={{opacity: posterLike ? 0.75 : 1}}
+          />
+        ) : null}
       </View>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View className="relative h-[340px] w-full">
@@ -231,6 +247,34 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
             locations={[0, 0.55, 1]}
             className="absolute h-full w-full"
           />
+          {showPoster ? (
+            <View
+              pointerEvents="none"
+              style={{
+                alignItems: 'center',
+                bottom: posterBottom,
+                left: 0,
+                position: 'absolute',
+                right: 0,
+                top: posterTop,
+              }}>
+              <View
+                style={{
+                  aspectRatio: 2 / 3,
+                  borderRadius: 12,
+                  elevation: 12,
+                  height: '100%',
+                  overflow: 'hidden',
+                }}>
+                <Image
+                  source={{uri: backgroundImage}}
+                  resizeMode="cover"
+                  resizeMethod="resize"
+                  style={{height: '100%', width: '100%'}}
+                />
+              </View>
+            </View>
+          ) : null}
           <TVFocusable
             hasTVPreferredFocus={isTV}
             accessibilityRole="button"
@@ -255,7 +299,9 @@ const DownloadedDetails = ({navigation, route}: DownloadedDetailsProps) => {
               color={colors.onSurface}
             />
           </TVFocusable>
-          <View className="absolute bottom-3 right-0 w-full px-5">
+          <View
+            className="absolute bottom-3 right-0 w-full px-5"
+            onLayout={event => setTitleHeight(event.nativeEvent.layout.height)}>
             <Text
               className="text-3xl font-bold capitalize"
               style={{color: colors.onBackground}}>

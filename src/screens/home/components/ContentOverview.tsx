@@ -12,6 +12,8 @@ import useTVNavigationStore from '../../../lib/zustand/tvNavigationStore';
 
 interface ContentOverviewProps {
   backgroundImage?: string;
+  /** Sharp poster drawn in the header when the backdrop is a poster. */
+  headerPoster?: string;
   genres?: string[];
   inLibrary: boolean;
   isLoading: boolean;
@@ -147,6 +149,7 @@ const CompactChip = ({label}: {label: string}) => {
 
 const ContentOverview = ({
   backgroundImage,
+  headerPoster,
   genres,
   inLibrary,
   isLoading,
@@ -212,6 +215,35 @@ const ContentOverview = ({
             top: 0,
           }}
         />
+
+        {headerPoster ? (
+          <View
+            pointerEvents="none"
+            style={{
+              alignItems: 'center',
+              bottom: 20,
+              left: 0,
+              position: 'absolute',
+              right: 0,
+              top: (isTV ? 42 : insets.top + 12) + 8,
+            }}>
+            <View
+              style={{
+                aspectRatio: 2 / 3,
+                borderRadius: 12,
+                elevation: 12,
+                height: '100%',
+                overflow: 'hidden',
+              }}>
+              <Image
+                source={{uri: headerPoster}}
+                resizeMode="cover"
+                resizeMethod="resize"
+                style={{height: '100%', width: '100%'}}
+              />
+            </View>
+          </View>
+        ) : null}
 
         <View
           style={{
