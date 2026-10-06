@@ -33,6 +33,7 @@ export enum SettingsKeys {
   SHOW_HAMBURGER_MENU = 'showHamburgerMenu',
   HIDE_SEEK_BUTTONS = 'hideSeekButtons',
   SHOW_PLAYER_EPISODE_SIDEBAR = 'showPlayerEpisodeSidebar',
+  AUTO_PLAY_NEXT_EPISODE = 'autoPlayNextEpisode',
   ENABLE_2X_GESTURE = 'enable2xGesture',
   ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
   FORWARD_BUFFER_MB = 'forwardBufferMB',
@@ -297,6 +298,14 @@ export class SettingsStorage {
 
   setShowPlayerEpisodeSidebar(show: boolean): void {
     mainStorage.setBool(SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR, show);
+  }
+
+  isAutoPlayNextEpisodeEnabled(): boolean {
+    return mainStorage.getBool(SettingsKeys.AUTO_PLAY_NEXT_EPISODE, true);
+  }
+
+  setAutoPlayNextEpisode(enabled: boolean): void {
+    mainStorage.setBool(SettingsKeys.AUTO_PLAY_NEXT_EPISODE, enabled);
   }
 
   isEnable2xGestureEnabled(): boolean {
