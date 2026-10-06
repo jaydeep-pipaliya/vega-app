@@ -81,6 +81,13 @@ describe('backup', () => {
     mockValues.set('seekInterval', 30);
     mockValues.set('playbackSpeed', 1.5);
     mockValues.set('excludedQualities', ['480p']);
+    mockValues.set('autoPlayNextEpisode', true);
+    mockValues.set('forwardBufferMB', 128);
+    mockValues.set('backBufferMB', 32);
+    mockValues.set('downloadConnections', 8);
+    mockValues.set('parallelStreaming', true);
+    mockValues.set('subtitleTextOpacity', 0.8);
+    mockValues.set('alwaysCastMode', true);
     mockValues.set('downloadLocation', 'content://tree/primary');
     mockValues.set('launcherIcon', 'dark');
 
@@ -95,6 +102,11 @@ describe('backup', () => {
       seekInterval: 30,
       playbackSpeed: 1.5,
       excludedQualities: ['480p'],
+      autoPlayNextEpisode: true,
+      downloadConnections: 8,
+      parallelStreaming: true,
+      subtitleTextOpacity: 0.8,
+      alwaysCastMode: true,
     });
   });
 

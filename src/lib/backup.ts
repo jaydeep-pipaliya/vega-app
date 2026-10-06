@@ -18,7 +18,8 @@ type SettingType = 'bool' | 'string' | 'number' | 'array';
 
 // Download location and launcher icon are left out because they point to
 // device state (a folder permission and an activity alias) that a restore
-// cannot bring back.
+// cannot bring back. Buffer sizes (forwardBufferMB, backBufferMB) are also
+// left out because their safe limits depend on the device's physical RAM and heap.
 const BACKUP_SETTINGS: Record<string, SettingType> = {
   [SettingsKeys.PRIMARY_COLOR]: 'string',
   [SettingsKeys.IS_CUSTOM_THEME]: 'bool',
@@ -36,15 +37,20 @@ const BACKUP_SETTINGS: Record<string, SettingType> = {
   [SettingsKeys.SHOW_HAMBURGER_MENU]: 'bool',
   [SettingsKeys.HIDE_SEEK_BUTTONS]: 'bool',
   [SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR]: 'bool',
+  [SettingsKeys.AUTO_PLAY_NEXT_EPISODE]: 'bool',
   [SettingsKeys.ENABLE_2X_GESTURE]: 'bool',
   [SettingsKeys.ENABLE_SWIPE_GESTURE]: 'bool',
   [SettingsKeys.SEEK_INTERVAL]: 'number',
   [SettingsKeys.PLAYBACK_SPEED]: 'number',
   [SettingsKeys.TORRENT_FULL_DOWNLOAD]: 'bool',
+  [SettingsKeys.ALWAYS_CAST_MODE]: 'bool',
   [SettingsKeys.EXCLUDED_QUALITIES]: 'array',
   [SettingsKeys.DOWNLOAD_CONCURRENCY]: 'number',
+  [SettingsKeys.DOWNLOAD_CONNECTIONS]: 'number',
+  [SettingsKeys.PARALLEL_STREAMING]: 'bool',
   [SettingsKeys.SUBTITLE_FONT_SIZE]: 'number',
   [SettingsKeys.SUBTITLE_OPACITY]: 'string',
+  [SettingsKeys.SUBTITLE_TEXT_OPACITY]: 'number',
   [SettingsKeys.SUBTITLE_BOTTOM_PADDING]: 'number',
   [SettingsKeys.SUBTITLE_TEXT_COLOR]: 'string',
   [SettingsKeys.SUBTITLE_FONT_FAMILY]: 'string',
