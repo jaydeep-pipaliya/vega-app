@@ -212,6 +212,21 @@ export const parseSyncManifest = (content: string): VegaSyncManifest | null => {
   return null;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object';
+
+const hasUpdatedAt = (value: unknown): boolean =>
+  isRecord(value) && typeof value.updatedAt === 'number';
+
+const isValidDownload = (value: unknown): value is SyncedDownload =>
+  hasUpdatedAt(value) && typeof (value as SyncedDownload).id === 'string';
+
+const isValidTombstone = (value: unknown): value is SyncTombstone =>
+  isRecord(value) &&
+  typeof value.kind === 'string' &&
+  typeof value.id === 'string' &&
+  typeof value.deletedAt === 'number';
+
 export const mergeSyncManifests = (
   manifests: VegaSyncManifest[],
 ): MergedSyncState => {
@@ -223,6 +238,9 @@ export const mergeSyncManifests = (
 
   for (const manifest of manifests) {
     for (const item of Object.values(manifest.downloads)) {
+      if (!isValidDownload(item)) {
+        continue;
+      }
       const mediaKey = getDownloadMediaKey(item);
       const normalizedItem = {...item, mediaKey};
       if (
@@ -233,16 +251,25 @@ export const mergeSyncManifests = (
       }
     }
     for (const [link, item] of Object.entries(manifest.watchlist || {})) {
+      if (!hasUpdatedAt(item)) {
+        continue;
+      }
       if (!watchlist[link] || item.updatedAt >= watchlist[link].updatedAt) {
         watchlist[link] = item;
       }
     }
     for (const [id, item] of Object.entries(manifest.collections || {})) {
+      if (!hasUpdatedAt(item)) {
+        continue;
+      }
       if (!collections[id] || item.updatedAt >= collections[id].updatedAt) {
         collections[id] = item;
       }
     }
     for (const [id, item] of Object.entries(manifest.history || {})) {
+      if (!hasUpdatedAt(item)) {
+        continue;
+      }
       const existing = history[id];
       if (!existing) {
         history[id] = item;
@@ -266,6 +293,9 @@ export const mergeSyncManifests = (
       }
     }
     for (const [key, tombstone] of Object.entries(manifest.tombstones)) {
+      if (!isValidTombstone(tombstone)) {
+        continue;
+      }
       if (!tombstones[key] || tombstone.deletedAt > tombstones[key].deletedAt) {
         tombstones[key] = tombstone;
       }
