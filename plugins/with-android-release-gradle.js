@@ -51,6 +51,14 @@ if (project.android) {
         abiFilters 'armeabi-v7a', 'arm64-v8a'
       }
     }
+    packagingOptions {
+      jniLibs {
+        useLegacyPackaging true
+      }
+      dex {
+        useLegacyPackaging true
+      }
+    }
   }
 }
 `;

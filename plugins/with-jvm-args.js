@@ -14,7 +14,7 @@ const GRADLE_PROPERTIES = {
   // Store the Hermes bundle uncompressed so it is memory-mapped at launch
   // instead of inflated into RAM first. Faster cold start and less memory on
   // low-end phones and TV boxes, for a slightly larger APK.
-  'android.enableBundleCompression': 'false',
+  'android.enableBundleCompression': 'true',
 };
 
 function upsertProperty(modResults, key, value) {
