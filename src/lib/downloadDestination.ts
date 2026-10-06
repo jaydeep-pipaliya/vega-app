@@ -12,7 +12,10 @@ import {
   isSafDownloadLocation,
   validateDownloadLocationAccess,
 } from './downloadLocation';
-import {sanitizeDownloadFileName} from './downloadId';
+import {
+  createDownloadStagingDirectoryName,
+  sanitizeDownloadFileName,
+} from './downloadId';
 
 const DOWNLOAD_STAGING_ROOT = `${RNFS.CachesDirectoryPath}/downloads`;
 
@@ -38,7 +41,7 @@ const getSafCopyModule = (): SafCopyModule | undefined =>
     | undefined;
 
 export const getDownloadStagingDirectory = (downloadId: string): string =>
-  `${DOWNLOAD_STAGING_ROOT}/${sanitizeDownloadFileName(downloadId)}`;
+  `${DOWNLOAD_STAGING_ROOT}/${createDownloadStagingDirectoryName(downloadId)}`;
 
 export const getDownloadStagingPath = (
   downloadId: string,
