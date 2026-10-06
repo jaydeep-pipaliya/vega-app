@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {cacheStorage} from '../storage';
+import {cacheStorage, settingsStorage} from '../storage';
 
 interface UsePlayerProgressOptions {
   activeEpisode: any;
@@ -81,7 +81,9 @@ export const usePlayerSettings = () => {
     'audio' | 'subtitle' | 'server' | 'quality' | 'speed'
   >('audio');
   const [resizeMode, setResizeMode] = useState<any>('none');
-  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [playbackRate, setPlaybackRate] = useState(() =>
+    settingsStorage.getPlaybackSpeed(),
+  );
   const [isPlayerLocked, setIsPlayerLocked] = useState(false);
   const [showUnlockButton, setShowUnlockButton] = useState(false);
   const [toastMessage, setToastMessage] = useState<string>('');
@@ -151,6 +153,12 @@ export const usePlayerSettings = () => {
     }, 10000);
   }, [showUnlockButton]);
 
+  // Speed picked by the user; temporary changes like the 2x hold skip this.
+  const selectPlaybackRate = useCallback((rate: number) => {
+    setPlaybackRate(rate);
+    settingsStorage.setPlaybackSpeed(rate);
+  }, []);
+
   // Memoized fullscreen toggle
   const toggleFullScreen = useCallback(() => {
     setIsFullScreen(prev => !prev);
@@ -167,6 +175,7 @@ export const usePlayerSettings = () => {
     setResizeMode,
     playbackRate,
     setPlaybackRate,
+    selectPlaybackRate,
     isPlayerLocked,
     showUnlockButton,
     toastMessage,
