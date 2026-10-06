@@ -14,6 +14,7 @@ export {
   BUFFER_LIMITS,
   MAX_DOWNLOAD_CONNECTIONS,
   MIN_DOWNLOAD_CONNECTIONS,
+  PLAYBACK_SPEEDS,
 } from './SettingsStorage';
 export type {SettingsKeys} from './SettingsStorage';
 

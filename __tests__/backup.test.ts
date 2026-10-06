@@ -78,6 +78,7 @@ describe('backup', () => {
     mockValues.set('hapticFeedback', false);
     mockValues.set('useExternalPlayer', true);
     mockValues.set('subtitleFontSize', 20);
+    mockValues.set('playbackSpeed', 1.5);
     mockValues.set('excludedQualities', ['480p']);
     mockValues.set('downloadLocation', 'content://tree/primary');
     mockValues.set('launcherIcon', 'dark');
@@ -90,6 +91,7 @@ describe('backup', () => {
       hapticFeedback: false,
       useExternalPlayer: true,
       subtitleFontSize: 20,
+      playbackSpeed: 1.5,
       excludedQualities: ['480p'],
     });
   });
@@ -134,6 +136,7 @@ describe('backup', () => {
       settings: {
         hapticFeedback: 'yes',
         subtitleFontSize: 18,
+        playbackSpeed: 1.25,
         downloadLocation: 'content://tree/primary',
         somethingElse: true,
       },
@@ -142,6 +145,7 @@ describe('backup', () => {
 
     expect(mockValues.has('hapticFeedback')).toBe(false);
     expect(mockValues.get('subtitleFontSize')).toBe(18);
+    expect(mockValues.get('playbackSpeed')).toBe(1.25);
     expect(mockValues.has('downloadLocation')).toBe(false);
     expect(mockValues.has('somethingElse')).toBe(false);
   });

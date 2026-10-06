@@ -64,6 +64,33 @@ describe('settings defaults', () => {
     expect(settingsStorage.getDownloadConcurrency()).toBe(1);
   });
 
+  it('defaults playback speed to 1x when nothing is saved', () => {
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
+  it('remembers a playback speed from the picker list', () => {
+    settingsStorage.setPlaybackSpeed(1.5);
+
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1.5);
+    expect(mockNumberValues.get(SettingsKeys.PLAYBACK_SPEED)).toBe(1.5);
+  });
+
+  it('ignores playback speeds that the picker does not offer', () => {
+    settingsStorage.setPlaybackSpeed(3);
+    settingsStorage.setPlaybackSpeed(Number.NaN);
+
+    expect(mockNumberValues.has(SettingsKeys.PLAYBACK_SPEED)).toBe(false);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
+  it('falls back to 1x for invalid saved playback speeds', () => {
+    mockNumberValues.set(SettingsKeys.PLAYBACK_SPEED, 1.1);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+
+    mockNumberValues.set(SettingsKeys.PLAYBACK_SPEED, Number.NaN);
+    expect(settingsStorage.getPlaybackSpeed()).toBe(1);
+  });
+
   it('persists the Downloads tab preference', () => {
     settingsStorage.setHideDownloadsTab(true);
 

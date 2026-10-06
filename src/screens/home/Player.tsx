@@ -32,7 +32,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {RootStackParamList} from '../../App';
-import {cacheStorage, settingsStorage} from '../../lib/storage';
+import {
+  cacheStorage,
+  PLAYBACK_SPEEDS,
+  settingsStorage,
+} from '../../lib/storage';
 import Orientation, {
   OrientationLocker,
   PORTRAIT,
@@ -653,7 +657,7 @@ const Player = ({route}: Props): React.JSX.Element => {
     setActiveTab,
     resizeMode,
     playbackRate,
-    setPlaybackRate,
+    selectPlaybackRate,
     isPlayerLocked,
     showUnlockButton,
     toastMessage,
@@ -1139,10 +1143,7 @@ const Player = ({route}: Props): React.JSX.Element => {
   }, [activeSkip]);
 
   // Memoized values
-  const playbacks = useMemo(
-    () => [0.25, 0.5, 1.0, 1.25, 1.35, 1.5, 1.75, 2],
-    [],
-  );
+  const playbacks = PLAYBACK_SPEEDS;
   const hideSeekButtons = useMemo(
     () => settingsStorage.hideSeekButtons() || false,
     [],
@@ -3861,7 +3862,7 @@ const Player = ({route}: Props): React.JSX.Element => {
                         accentColor={primary}
                         icon="speed"
                         onPress={() => {
-                          setPlaybackRate(rate);
+                          selectPlaybackRate(rate);
                           setShowSettings(false);
                         }}
                       />

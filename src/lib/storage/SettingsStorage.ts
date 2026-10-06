@@ -37,6 +37,7 @@ export enum SettingsKeys {
   ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
   FORWARD_BUFFER_MB = 'forwardBufferMB',
   BACK_BUFFER_MB = 'backBufferMB',
+  PLAYBACK_SPEED = 'playbackSpeed',
 
   // Quality settings
   EXCLUDED_QUALITIES = 'excludedQualities',
@@ -111,6 +112,16 @@ const isValidConnectionCount = (value: number | undefined): value is number =>
   Number.isInteger(value) &&
   (value as number) >= MIN_DOWNLOAD_CONNECTIONS &&
   (value as number) <= MAX_DOWNLOAD_CONNECTIONS;
+
+/** Speeds offered by the player speed picker. */
+export const PLAYBACK_SPEEDS = [
+  0.25, 0.5, 1.0, 1.25, 1.35, 1.5, 1.75, 2,
+] as const;
+const DEFAULT_PLAYBACK_SPEED = 1.0;
+
+const isAllowedPlaybackSpeed = (value: unknown): value is number =>
+  typeof value === 'number' &&
+  (PLAYBACK_SPEEDS as readonly number[]).includes(value);
 
 const DEFAULT_FORWARD_BUFFER_MB = 64;
 const DEFAULT_BACK_BUFFER_MB = 0;
@@ -380,6 +391,17 @@ export class SettingsStorage {
       SettingsKeys.BACK_BUFFER_MB,
       clampBufferMB(mb, 0, BUFFER_LIMITS.backMax, DEFAULT_BACK_BUFFER_MB),
     );
+  }
+
+  getPlaybackSpeed(): number {
+    const value = mainStorage.getNumber(SettingsKeys.PLAYBACK_SPEED);
+    return isAllowedPlaybackSpeed(value) ? value : DEFAULT_PLAYBACK_SPEED;
+  }
+
+  setPlaybackSpeed(speed: number): void {
+    if (isAllowedPlaybackSpeed(speed)) {
+      mainStorage.setNumber(SettingsKeys.PLAYBACK_SPEED, speed);
+    }
   }
 
   getDownloadConcurrency(): number {
