@@ -46,10 +46,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   VideoRef,
-  SelectedVideoTrack,
   SelectedVideoTrackType,
   ResizeMode,
-  SelectedTrack,
   SelectedTrackType,
   BufferingStrategyType,
 } from 'react-native-video';
@@ -67,6 +65,7 @@ import {
   useStream,
   useVideoSettings,
 } from '../../lib/hooks/useStream';
+import {useStreamTrackSelections} from '../../lib/hooks/useStreamTrackSelections';
 import {
   usePlayerProgress,
   usePlayerSettings,
@@ -1217,20 +1216,15 @@ const Player = ({route}: Props): React.JSX.Element => {
     }
   }, [videoPositionRef, watchedDuration]);
 
-  // Memoized selected tracks
-  const [selectedAudioTrack, setSelectedAudioTrack] = useState<SelectedTrack>({
-    type: SelectedTrackType.INDEX,
-    value: 0,
-  });
-
-  const [selectedTextTrack, setSelectedTextTrack] = useState<SelectedTrack>({
-    type: SelectedTrackType.DISABLED,
-  });
-
-  const [selectedVideoTrack, setSelectedVideoTrack] =
-    useState<SelectedVideoTrack>({
-      type: SelectedVideoTrackType.AUTO,
-    });
+  // Selected tracks, reset to the defaults whenever the stream changes
+  const {
+    selectedAudioTrack,
+    setSelectedAudioTrack,
+    selectedTextTrack,
+    setSelectedTextTrack,
+    selectedVideoTrack,
+    setSelectedVideoTrack,
+  } = useStreamTrackSelections(selectedStream);
 
   const [processedStreamUrl, setProcessedStreamUrl] = useState<string>('');
   // Resume point handed to the player with a torrent source, fixed per stream so
