@@ -268,7 +268,9 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
         .filter((key): key is string => Boolean(key))
         .forEach(key => cacheStorage.setString(key, progress));
     }
-    if (!item.link || !item.provider) {
+    // Mark watched/unwatched saves a 1/1 or 0/1 entry. It sets episode
+    // progress only and is not playback, so it must not add a show here.
+    if (!item.link || !item.provider || duration === 1) {
       return;
     }
     const existing = latestByInfoUrl.get(item.link);
@@ -277,10 +279,10 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
     }
   });
 
-  const items: ContinueWatchingItem[] = [...latestByInfoUrl.values()]
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 30)
-    .map(item => {
+  const currentItems = useContinueWatchingStore.getState().items;
+  const itemsById = new Map(currentItems.map(item => [item.id, item]));
+  [...latestByInfoUrl.values()]
+    .map((item): ContinueWatchingItem => {
       const episode = item.episode || {
         id: item.id,
         title: item.episodeTitle || item.title,
@@ -306,14 +308,23 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
         duration,
         updatedAt: item.updatedAt,
       };
+    })
+    .forEach(item => {
+      const existing = itemsById.get(item.id);
+      if (!existing || item.updatedAt > existing.updatedAt) {
+        itemsById.set(item.id, item);
+      }
     });
+  // Synced history holds only the latest 50 episodes. Merge it into the list
+  // instead of replacing it, so older shows are not dropped. Removed shows
+  // were already filtered out by their tombstones.
+  const items = [...itemsById.values()]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 30);
 
   // Periodic sync usually finds nothing new. Skip the store update then, so
   // screens do not re-render and the store is not persisted again.
-  if (
-    JSON.stringify(items) !==
-    JSON.stringify(useContinueWatchingStore.getState().items)
-  ) {
+  if (JSON.stringify(items) !== JSON.stringify(currentItems)) {
     useContinueWatchingStore.setState({items});
   }
 };
