@@ -12,6 +12,8 @@ import {
 import {isPrivateHostname, validateProviderUrl} from './urlGuard';
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_REDIRECTS = 10;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 /** `Set-Cookie` is response-only. `Cookie` remains allowed for provider WAF flows. */
 const BLOCKED_REQUEST_HEADERS = new Set(['set-cookie', 'set-cookie2']);
@@ -46,6 +48,14 @@ const normalizeHeaders = (
 
 const hasHeader = (headers: Record<string, string>, name: string): boolean =>
   Object.keys(headers).some(key => key.toLowerCase() === name.toLowerCase());
+
+const deleteHeader = (headers: Record<string, string>, name: string): void => {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === name.toLowerCase()) {
+      delete headers[key];
+    }
+  }
+};
 
 const toBytes = (data: unknown): Uint8Array => {
   if (data == null) {
@@ -128,57 +138,101 @@ export const providerFetch = async (
     }
 
     if (Platform.OS === 'android' && NativeModules.ProviderHttpModule?.fetch) {
-      const headerPairs: Array<[string, string]> = Object.entries(headers);
-      const options: Record<string, any> = {
-        method: (request.method || 'GET').toUpperCase(),
-        headers: headerPairs,
-        redirect: request.redirect || 'follow',
-        timeoutMs: REQUEST_TIMEOUT_MS,
-      };
-      if (body.kind === 'base64') {
-        options.bodyBase64 = body.value;
-        if (body.contentType) options.contentType = body.contentType;
-      } else if (body.kind === 'text') {
-        options.bodyText = body.value;
-      }
-
-      const res = await NativeModules.ProviderHttpModule.fetch(url.toString(), options);
-      const finalUrl: string = res.url || url.toString();
-      // Set-Cookie of every response, redirects included, with its URL.
-      for (const pair of (res.cookies || []) as Array<[string, string]>) {
-        if (pair && pair.length >= 2) {
-          storeSetCookies(author, pair[0], [pair[1]]);
+      // Native never follows redirects. Each hop is validated here first, so a
+      // public URL cannot bounce the request into the local network.
+      const followRedirects = request.redirect !== 'manual';
+      let hopUrl = url;
+      let method = (request.method || 'GET').toUpperCase();
+      let hopBody = body;
+      for (let redirects = 0; ; redirects++) {
+        const headerPairs: Array<[string, string]> = Object.entries(headers);
+        const options: Record<string, any> = {
+          method,
+          headers: headerPairs,
+          redirect: 'manual',
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        };
+        if (hopBody.kind === 'base64') {
+          options.bodyBase64 = hopBody.value;
+          if (hopBody.contentType) options.contentType = hopBody.contentType;
+        } else if (hopBody.kind === 'text') {
+          options.bodyText = hopBody.value;
         }
-      }
-      try {
-        const resolved = new URL(finalUrl);
-        if (isPrivateHostname(resolved.hostname)) {
+
+        const res = await NativeModules.ProviderHttpModule.fetch(
+          hopUrl.toString(),
+          options,
+        );
+        const finalUrl: string = res.url || hopUrl.toString();
+        // Set-Cookie of every response, redirects included, with its URL.
+        for (const pair of (res.cookies || []) as Array<[string, string]>) {
+          if (pair && pair.length >= 2) {
+            storeSetCookies(author, pair[0], [pair[1]]);
+          }
+        }
+
+        const location = ((res.headers || []) as Array<[string, string]>).find(
+          pair =>
+            pair && pair.length >= 2 && pair[0].toLowerCase() === 'location',
+        )?.[1];
+        if (
+          !followRedirects ||
+          !REDIRECT_STATUSES.has(res.status) ||
+          !location
+        ) {
+          return {
+            status: res.status,
+            statusText: res.statusText || '',
+            url: finalUrl,
+            headers: (() => {
+              const out: Array<[string, string]> = [];
+              for (const pair of res.headers || []) {
+                if (pair && pair.length >= 2) {
+                  out.push(pair);
+                  if (pair[0].toLowerCase() === 'set-cookie') {
+                    out.push(['x-set-cookie', pair[1]]);
+                  }
+                }
+              }
+              return out;
+            })(),
+            bodyBase64: res.bodyBase64 || '',
+          };
+        }
+
+        if (redirects >= MAX_REDIRECTS) {
+          throw new Error('Too many provider redirects');
+        }
+        let nextUrl: URL;
+        try {
+          nextUrl = validateProviderUrl(new URL(location, hopUrl).toString());
+        } catch {
           throw new Error('Provider request redirected to a blocked host');
         }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('blocked host')) {
-          throw error;
-        }
-      }
 
-      return {
-        status: res.status,
-        statusText: res.statusText || '',
-        url: finalUrl,
-        headers: (() => {
-          const out: Array<[string, string]> = [];
-          for (const pair of res.headers || []) {
-            if (pair && pair.length >= 2) {
-              out.push(pair);
-              if (pair[0].toLowerCase() === 'set-cookie') {
-                out.push(['x-set-cookie', pair[1]]);
-              }
-            }
+        if (
+          res.status === 303 ||
+          ((res.status === 301 || res.status === 302) &&
+            method !== 'GET' &&
+            method !== 'HEAD')
+        ) {
+          if (method !== 'HEAD') {
+            method = 'GET';
           }
-          return out;
-        })(),
-        bodyBase64: res.bodyBase64 || '',
-      };
+          hopBody = {kind: 'none'};
+          deleteHeader(headers, 'content-type');
+          deleteHeader(headers, 'content-length');
+        }
+        if (nextUrl.host !== hopUrl.host) {
+          deleteHeader(headers, 'authorization');
+        }
+        deleteHeader(headers, 'cookie');
+        const hopCookie = buildRequestCookieHeader(author, nextUrl.toString());
+        if (hopCookie) {
+          headers.Cookie = hopCookie;
+        }
+        hopUrl = nextUrl;
+      }
     }
 
     const abortController = new AbortController();
