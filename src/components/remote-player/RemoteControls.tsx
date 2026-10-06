@@ -1,11 +1,30 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import React from 'react';
+import React, {useState} from 'react';
 import {ActivityIndicator, Pressable, View} from 'react-native';
 import IconButton from '../ui/IconButton';
 import {useRemoteStore} from '../../lib/remote/remoteStore';
 import {remotePlaybackManager} from '../../lib/remote/remotePlaybackManager';
 import {useM3Colors} from '../../theme/M3PaletteContext';
 import {isTV} from '../../lib/tv';
+import {settingsStorage} from '../../lib/storage';
+
+type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+
+// MaterialCommunityIcons only has numbered seek glyphs for these steps.
+const SEEK_BACK_ICONS: Record<number, IconName> = {
+  5: 'rewind-5',
+  10: 'rewind-10',
+  15: 'rewind-15',
+  30: 'rewind-30',
+  60: 'rewind-60',
+};
+const SEEK_FORWARD_ICONS: Record<number, IconName> = {
+  5: 'fast-forward-5',
+  10: 'fast-forward-10',
+  15: 'fast-forward-15',
+  30: 'fast-forward-30',
+  60: 'fast-forward-60',
+};
 
 export const RemoteControls: React.FC = () => {
   const colors = useM3Colors();
@@ -14,6 +33,7 @@ export const RemoteControls: React.FC = () => {
   const currentTime = useRemoteStore(state => state.currentTime);
   const duration = useRemoteStore(state => state.duration);
   const connectedDevice = useRemoteStore(state => state.connectedDevice);
+  const [seekSeconds] = useState(() => settingsStorage.getSeekInterval());
 
   if (isTV) return null;
 
@@ -53,13 +73,13 @@ export const RemoteControls: React.FC = () => {
         justifyContent: 'center',
       }}>
       <IconButton
-        icon="rewind-10"
-        label="Back 10 seconds"
+        icon={SEEK_BACK_ICONS[seekSeconds] ?? 'rewind'}
+        label={`Back ${seekSeconds} seconds`}
         size={28}
         buttonSize={56}
         contentColor={colors.onSurface}
         disabled={!canControl}
-        onPress={() => handleSeekOffset(-10)}
+        onPress={() => handleSeekOffset(-seekSeconds)}
       />
 
       <Pressable
@@ -89,13 +109,13 @@ export const RemoteControls: React.FC = () => {
       </Pressable>
 
       <IconButton
-        icon="fast-forward-10"
-        label="Forward 10 seconds"
+        icon={SEEK_FORWARD_ICONS[seekSeconds] ?? 'fast-forward'}
+        label={`Forward ${seekSeconds} seconds`}
         size={28}
         buttonSize={56}
         contentColor={colors.onSurface}
         disabled={!canControl}
-        onPress={() => handleSeekOffset(10)}
+        onPress={() => handleSeekOffset(seekSeconds)}
       />
     </View>
   );

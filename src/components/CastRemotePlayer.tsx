@@ -16,6 +16,7 @@ import GoogleCast, {
   useMediaStatus,
   useStreamPosition,
 } from 'react-native-google-cast';
+import {settingsStorage} from '../lib/storage';
 
 type CastRemotePlayerProps = {
   client: RemoteMediaClient;
@@ -46,6 +47,20 @@ const formatTime = (seconds: number) => {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 };
 
+type IconName = React.ComponentProps<typeof MaterialIcons>['name'];
+
+// MaterialIcons only has numbered seek glyphs for these steps.
+const SEEK_BACK_ICONS: Record<number, IconName> = {
+  5: 'replay-5',
+  10: 'replay-10',
+  30: 'replay-30',
+};
+const SEEK_FORWARD_ICONS: Record<number, IconName> = {
+  5: 'forward-5',
+  10: 'forward-10',
+  30: 'forward-30',
+};
+
 const CastRemotePlayer = ({
   client,
   title,
@@ -58,6 +73,7 @@ const CastRemotePlayer = ({
   const device = useCastDevice({ignoreSessionUpdatesInBackground: true});
   const mediaStatus = useMediaStatus();
   const streamPosition = useStreamPosition(0.5) || 0;
+  const [seekSeconds] = useState(() => settingsStorage.getSeekInterval());
   const [seekBarWidth, setSeekBarWidth] = useState(0);
   const [pendingAction, setPendingAction] = useState(false);
 
@@ -221,11 +237,15 @@ const CastRemotePlayer = ({
 
         <View className="flex-row items-center justify-center mt-2 gap-7">
           <TouchableOpacity
-            accessibilityLabel="Seek backward 10 seconds"
+            accessibilityLabel={`Seek backward ${seekSeconds} seconds`}
             disabled={pendingAction}
-            onPress={() => seekBy(-10)}
+            onPress={() => seekBy(-seekSeconds)}
             className="w-11 h-11 rounded-full bg-white/10 items-center justify-center">
-            <MaterialIcons name="replay-10" size={26} color="white" />
+            <MaterialIcons
+              name={SEEK_BACK_ICONS[seekSeconds] ?? 'fast-rewind'}
+              size={26}
+              color="white"
+            />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -242,11 +262,15 @@ const CastRemotePlayer = ({
           </TouchableOpacity>
 
           <TouchableOpacity
-            accessibilityLabel="Seek forward 10 seconds"
+            accessibilityLabel={`Seek forward ${seekSeconds} seconds`}
             disabled={pendingAction}
-            onPress={() => seekBy(10)}
+            onPress={() => seekBy(seekSeconds)}
             className="w-11 h-11 rounded-full bg-white/10 items-center justify-center">
-            <MaterialIcons name="forward-10" size={26} color="white" />
+            <MaterialIcons
+              name={SEEK_FORWARD_ICONS[seekSeconds] ?? 'fast-forward'}
+              size={26}
+              color="white"
+            />
           </TouchableOpacity>
 
           <TouchableOpacity

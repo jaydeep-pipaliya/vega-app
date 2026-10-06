@@ -2,6 +2,7 @@ import {useState, useRef, useCallback, useEffect} from 'react';
 import {isTV} from './constants';
 import {useTVRemote} from './useTVRemote';
 import {useTVFocusBorderColor} from './useTVFocusBorderColor';
+import {settingsStorage} from '../storage';
 
 // Focused and idle controls share border width and padding, so focus only
 // changes the color and the control row does not reflow.
@@ -47,7 +48,7 @@ export const usePlayerTVControls = ({
   const pendingSeekPositionRef = useRef<number | null>(null);
   const seekDeltaAccumulatorRef = useRef<number>(0);
   const seekDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const TV_SEEK_AMOUNT = 10;
+  const [TV_SEEK_AMOUNT] = useState(() => settingsStorage.getSeekInterval());
   const TV_SCRUB_AMOUNT = 30;
   const focusedControlRef = useRef<string | null>(null);
   focusedControlRef.current = tvFocusedControl;

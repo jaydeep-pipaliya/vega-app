@@ -2672,7 +2672,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       fullscreenAutorotate: true,
       onShowControls: handleShowControls,
       onHideControls: handleHideControls,
-      rewindTime: 10,
+      rewindTime: settingsStorage.getSeekInterval(),
       isFullscreen: true,
       disableFullscreen: true,
       disableVolume: true,

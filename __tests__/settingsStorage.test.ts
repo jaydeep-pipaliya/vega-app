@@ -64,6 +64,29 @@ describe('settings defaults', () => {
     expect(settingsStorage.getDownloadConcurrency()).toBe(1);
   });
 
+  it('defaults the seek interval to ten seconds', () => {
+    expect(settingsStorage.getSeekInterval()).toBe(10);
+  });
+
+  it('saves every allowed seek interval', () => {
+    for (const seconds of [5, 10, 15, 30, 60, 85]) {
+      settingsStorage.setSeekInterval(seconds);
+      expect(settingsStorage.getSeekInterval()).toBe(seconds);
+      expect(mockNumberValues.get(SettingsKeys.SEEK_INTERVAL)).toBe(seconds);
+    }
+  });
+
+  it('ignores seek intervals outside the allowed list', () => {
+    settingsStorage.setSeekInterval(30);
+    settingsStorage.setSeekInterval(7);
+    expect(settingsStorage.getSeekInterval()).toBe(30);
+
+    for (const stored of [0, -10, 7, 10.5, 120, NaN]) {
+      mockNumberValues.set(SettingsKeys.SEEK_INTERVAL, stored);
+      expect(settingsStorage.getSeekInterval()).toBe(10);
+    }
+  });
+
   it('persists the Downloads tab preference', () => {
     settingsStorage.setHideDownloadsTab(true);
 

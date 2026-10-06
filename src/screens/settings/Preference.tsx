@@ -1,7 +1,7 @@
 import {useFocusEffect} from '@react-navigation/native';
 import {View, ScrollView, Pressable, ToastAndroid, BackHandler} from 'react-native';
 import React, {useState, useEffect, useCallback} from 'react';
-import {settingsStorage} from '../../lib/storage';
+import {settingsStorage, SEEK_INTERVAL_OPTIONS} from '../../lib/storage';
 import RNReactNativeHapticFeedback from 'react-native-haptic-feedback';
 import Constants from 'expo-constants';
 import DownloadLocationPreference from './components/DownloadLocationPreference';
@@ -10,6 +10,7 @@ import DownloadConcurrencyPreference from './components/DownloadConcurrencyPrefe
 import BufferPreference from './components/BufferPreference';
 import TmdbApiKeyPreference from './components/TmdbApiKeyPreference';
 import AppText from '../../components/ui/Text';
+import DropdownField from '../../components/ui/DropdownField';
 import SettingsSection from '../../components/ui/SettingsSection';
 import SettingsSwitchRow from '../../components/ui/SettingsSwitchRow';
 import Surface from '../../components/ui/Surface';
@@ -64,6 +65,10 @@ const Preferences = ({navigation}: any) => {
 
   const [hideSeekButtons, setHideSeekButtons] = useState<boolean>(
     settingsStorage.hideSeekButtons(),
+  );
+
+  const [seekInterval, setSeekInterval] = useState<number>(
+    settingsStorage.getSeekInterval(),
   );
 
   const [showEpisodeSidebar, setShowEpisodeSidebar] = useState<boolean>(
@@ -305,6 +310,34 @@ const Preferences = ({navigation}: any) => {
               setHideSeekButtons(next);
             }}
           />
+          <View
+            className="px-4 py-3"
+            style={{
+              borderBottomColor: colors.outlineVariant,
+              borderBottomWidth: 1,
+            }}>
+            <AppText role="bodyLarge" style={{color: colors.onSurface}}>
+              Seek interval
+            </AppText>
+            <AppText
+              role="bodySmall"
+              style={{color: colors.onSurfaceVariant, marginTop: 3}}>
+              Used by double tap, seek buttons and the TV remote
+            </AppText>
+            <View style={{width: '100%', minHeight: 56, marginTop: 12}}>
+              <DropdownField
+                placeholder="Seek interval"
+                options={SEEK_INTERVAL_OPTIONS}
+                value={seekInterval}
+                getKey={option => String(option)}
+                getLabel={option => `${option} seconds`}
+                onChange={option => {
+                  settingsStorage.setSeekInterval(option);
+                  setSeekInterval(option);
+                }}
+              />
+            </View>
+          </View>
           <SettingsSwitchRow
             title="Episode list button"
             description="Show button on the right edge to quickly open the episode list sidebar"
