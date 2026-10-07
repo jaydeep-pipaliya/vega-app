@@ -214,9 +214,22 @@ export const findSafEntryByName = async (
   return entries.find(entry => getSafEntryName(entry) === entryName);
 };
 
+// Extensions Vega itself writes for legacy downloads stored in the folder root.
+// Matching is limited to these so unrelated user files that merely share the
+// base name (e.g. Inception.nfo, Inception.jpg) are never adopted or deleted.
+export const LEGACY_VIDEO_EXTENSIONS = ['mp4', 'mkv', 'mov', 'avi'];
+export const LEGACY_SUBTITLE_EXTENSIONS = ['srt', 'vtt', 'ass'];
+
+const isLegacyDownloadName = (
+  entryName: string,
+  fileName: string,
+  extensions: string[],
+) => extensions.some(ext => entryName === `${fileName}.${ext}`);
+
 export const findDownloadedFileByBaseName = async (
   location: DownloadLocationConfig | null,
   fileName: string,
+  extensions: string[] = LEGACY_VIDEO_EXTENSIONS,
 ) => {
   if (!location) {
     return false;
@@ -225,13 +238,9 @@ export const findDownloadedFileByBaseName = async (
     if (location.type === 'path') {
       const files = await RNFS.readDir(location.path);
 
-      const file = files.find(fileItem => {
-        const nameWithoutExtension = fileItem.name
-          .split('.')
-          .slice(0, -1)
-          .join('.');
-        return nameWithoutExtension === fileName;
-      });
+      const file = files.find(fileItem =>
+        isLegacyDownloadName(fileItem.name, fileName, extensions),
+      );
 
       return file ? file.path : false;
     }
@@ -240,11 +249,9 @@ export const findDownloadedFileByBaseName = async (
       location.uri,
     );
 
-    const file = files.find(fileUri => {
-      const entryName = getSafEntryName(fileUri);
-      const nameWithoutExtension = entryName.split('.').slice(0, -1).join('.');
-      return nameWithoutExtension === fileName;
-    });
+    const file = files.find(fileUri =>
+      isLegacyDownloadName(getSafEntryName(fileUri), fileName, extensions),
+    );
 
     return file || false;
   } catch (error) {
@@ -321,8 +328,13 @@ export const copyFileToSaf = async ({
 export const deleteDownloadedFileByBaseName = async (
   location: DownloadLocationConfig | null,
   fileName: string,
+  extensions: string[] = LEGACY_VIDEO_EXTENSIONS,
 ) => {
-  const foundFile = await findDownloadedFileByBaseName(location, fileName);
+  const foundFile = await findDownloadedFileByBaseName(
+    location,
+    fileName,
+    extensions,
+  );
 
   if (!foundFile) {
     return false;
