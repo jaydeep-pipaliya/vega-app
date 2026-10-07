@@ -166,3 +166,73 @@ describe('HTTP download progress reporting', () => {
     expect(report).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Native HTTP download backend after a JS reload', () => {
+  const nativeContext = {
+    record: {
+      id: 'download-1',
+      url: 'https://example.com/video.mp4',
+      headers: {},
+    },
+    destination: {
+      directFinalDocumentUri: 'content://downloads/video.mp4',
+    },
+  } as never;
+  const activeError = Object.assign(new Error('Download is already active'), {
+    code: 'DOWNLOAD_ACTIVE',
+  });
+
+  const loadNativeBackend = (nativeModule: Record<string, jest.Mock>) => {
+    let backend!: typeof httpDownloadBackend;
+    jest.isolateModules(() => {
+      const ReactNative = require('react-native');
+      ReactNative.Platform.OS = 'android';
+      ReactNative.NativeModules.HttpDownloadModule = {
+        addListener: jest.fn(),
+        removeListeners: jest.fn(),
+        ...nativeModule,
+      };
+      backend =
+        require('../src/lib/downloadBackends/httpBackend').httpDownloadBackend;
+    });
+    return backend;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('cancels a job left over from the previous JS instance and resumes it', async () => {
+    const start = jest
+      .fn()
+      .mockRejectedValueOnce(activeError)
+      .mockResolvedValueOnce({
+        downloadedBytes: 100,
+        totalBytes: 100,
+        destinationUri: 'content://downloads/video.mp4',
+      });
+    const cancel = jest.fn(async () => undefined);
+    const backend = loadNativeBackend({start, cancel});
+
+    await backend.start(nativeContext);
+
+    expect(cancel).toHaveBeenCalledWith('download-1', false);
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(mockUpdateProgress).toHaveBeenCalledWith('download-1', 100, 100, 0);
+  });
+
+  it('does not cancel a job this JS instance is already running', async () => {
+    const start = jest
+      .fn()
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockRejectedValueOnce(activeError);
+    const cancel = jest.fn(async () => undefined);
+    const backend = loadNativeBackend({start, cancel});
+
+    backend.start(nativeContext).catch(() => undefined);
+    await expect(backend.start(nativeContext)).rejects.toBe(activeError);
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+});
