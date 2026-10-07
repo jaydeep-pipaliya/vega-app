@@ -41,6 +41,8 @@ type RoundButtonProps = {
   accentColor: string;
   palette: PlayerDelayPalette;
   disabled?: boolean;
+  /** Disabled, out of the focus order and invisible, but still laid out. */
+  hidden?: boolean;
   onPress: () => void;
   onLongPress?: () => void;
   onPressOut?: () => void;
@@ -55,6 +57,7 @@ const RoundButton = ({
   accentColor,
   palette,
   disabled,
+  hidden,
   onPress,
   onLongPress,
   onPressOut,
@@ -63,14 +66,20 @@ const RoundButton = ({
   const focusBorderColor = useTVFocusBorderColor(accentColor);
   const [focused, setFocused] = useState(false);
   const [pressed, setPressed] = useState(false);
+  const isDisabled = disabled || hidden;
+  // A hidden button that still has TV focus stays focusable until focus moves
+  // away, otherwise Android drops focus and nothing takes it.
+  const canFocus = !hidden || focused;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={{disabled}}
-      disabled={disabled}
-      focusable
-      isTVSelectable
+      accessibilityState={{disabled: isDisabled}}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      disabled={isDisabled}
+      focusable={canFocus}
+      isTVSelectable={canFocus}
       delayLongPress={350}
       onPress={onPress}
       onLongPress={onLongPress}
@@ -95,7 +104,7 @@ const RoundButton = ({
         borderWidth: 2,
         height: 38,
         justifyContent: 'center',
-        opacity: disabled ? 0.35 : 1,
+        opacity: hidden && !focused ? 0 : isDisabled ? 0.35 : 1,
         width: 38,
       }}>
       <MaterialIcons name={icon} size={20} color={palette.text} />
@@ -120,7 +129,8 @@ type PlayerDelayControlProps = {
 /**
  * One row like the track rows: the setting and its effect on the left, a
  * minus/plus stepper on the right. Each press moves 0.05s and holding repeats.
- * The reset button shows while the value is not zero.
+ * The reset button shows while the value is not zero. It stays mounted at
+ * zero so a focused reset keeps TV focus after it is pressed.
  */
 const PlayerDelayControl = ({
   title,
@@ -192,18 +202,17 @@ const PlayerDelayControl = ({
         </Text>
       </View>
       <View className="flex-row items-center">
-        {delayMs !== 0 ? (
-          <View style={{marginRight: 6}}>
-            <RoundButton
-              icon="restart-alt"
-              accessibilityLabel={`Reset ${title.toLowerCase()}`}
-              accentColor={accentColor}
-              palette={palette}
-              onPress={() => onChange(0)}
-              onTVFocus={onTVFocus}
-            />
-          </View>
-        ) : null}
+        <View style={{marginRight: 6}}>
+          <RoundButton
+            icon="restart-alt"
+            accessibilityLabel={`Reset ${title.toLowerCase()}`}
+            accentColor={accentColor}
+            palette={palette}
+            hidden={delayMs === 0}
+            onPress={() => onChange(0)}
+            onTVFocus={onTVFocus}
+          />
+        </View>
         <RoundButton
           icon="remove"
           accessibilityLabel={`${title}: 0.05 seconds earlier`}
