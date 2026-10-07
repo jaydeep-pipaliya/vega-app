@@ -687,7 +687,7 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
               Watch now
             </Button>
           </View>
-          {error ? (
+          {error && !heroData ? (
             <AppText
               role="bodySmall"
               style={{

@@ -180,7 +180,9 @@ export const useHeroMetadata = (heroLink: string, providerValue: string) =>
     queryKey: heroMetadataKey(heroLink, providerValue),
     queryFn: () => fetchHeroMetadata(heroLink, providerValue),
     enabled: !!heroLink && !!providerValue,
-    staleTime: 0, // Instantly revalidate in background
+    // Stored details still refresh once (initialDataUpdatedAt: 0), but a
+    // rotation back to a loaded hero must not refetch it every few seconds.
+    staleTime: HERO_PREFETCH_STALE_MS,
     gcTime: 60 * 60 * 1000, // 1 hour
     retry: 2,
     // Use cached data as initial data
