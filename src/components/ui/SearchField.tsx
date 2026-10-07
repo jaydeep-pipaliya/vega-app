@@ -1,6 +1,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import {
   Host,
+  IconButton as ComposeIconButton,
   RNHostView,
   Shape,
   Text,
@@ -19,6 +20,7 @@ interface SearchFieldProps {
   value: string;
   onChangeText: (value: string) => void;
   onSubmit: (value: string) => void;
+  onClear?: () => void;
   onFocusChange?: (focused: boolean) => void;
   placeholder?: string;
   nextFocusDown?: number | null;
@@ -40,6 +42,7 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
       value,
       onChangeText,
       onSubmit,
+      onClear,
       onFocusChange,
       placeholder = 'Search',
       nextFocusDown,
@@ -71,6 +74,13 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
       },
       [onChangeText],
     );
+
+    const handleClear = useCallback(() => {
+      nativeTextRef.current = '';
+      fieldRef.current?.setText('');
+      onChangeText('');
+      onClear?.();
+    }, [onChangeText, onClear]);
 
     const exitEditingToContainer = useCallback(() => {
       Keyboard.dismiss();
@@ -315,6 +325,8 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
             unfocusedLeadingIconColor: colors.onSurfaceVariant,
             focusedPlaceholderColor: colors.onSurfaceVariant,
             unfocusedPlaceholderColor: colors.onSurfaceVariant,
+            focusedTrailingIconColor: colors.onSurfaceVariant,
+            unfocusedTrailingIconColor: colors.onSurfaceVariant,
           }}
           modifiers={[fillMaxWidth()]}>
           <TextField.Placeholder>
@@ -331,6 +343,31 @@ const SearchField = forwardRef<SearchFieldRef, SearchFieldProps>(
               </View>
             </RNHostView>
           </TextField.LeadingIcon>
+          {Boolean(onClear && value.length > 0) && (
+            <TextField.TrailingIcon>
+              <ComposeIconButton onClick={handleClear}>
+                <RNHostView matchContents>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                    hitSlop={8}
+                    onPress={handleClear}
+                    style={{
+                      height: 24,
+                      width: 24,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <MaterialCommunityIcons
+                      name="close"
+                      size={20}
+                      color={colors.onSurfaceVariant}
+                    />
+                  </Pressable>
+                </RNHostView>
+              </ComposeIconButton>
+            </TextField.TrailingIcon>
+          )}
         </TextField>
       </Host>
     );

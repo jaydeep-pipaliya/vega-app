@@ -33,7 +33,17 @@ textField.Prefix = slotComponent;
 textField.Suffix = slotComponent;
 textField.SupportingText = slotComponent;
 
+const alertDialog = passthrough;
+alertDialog.Title = slotComponent;
+alertDialog.Content = slotComponent;
+alertDialog.Actions = slotComponent;
+alertDialog.Text = slotComponent;
+alertDialog.DismissButton = slotComponent;
+alertDialog.ConfirmButton = slotComponent;
+
 module.exports = {
+  AlertDialog: alertDialog,
+  BasicAlertDialog: passthrough,
   Host: passthrough,
   RNHostView: passthrough,
   Surface: passthrough,

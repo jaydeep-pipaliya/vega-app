@@ -37,9 +37,10 @@ jest.mock('react-native-mmkv-storage', () => ({
           mockStorageMap.set(prefix + key, value),
         removeItem: (key: string) => mockStorageMap.delete(prefix + key),
         getBool: jest.fn(),
-        getInt: jest.fn(),
+        getInt: (key: string) => mockStorageMap.get(prefix + key),
         setBool: jest.fn(),
-        setInt: jest.fn(),
+        setInt: (key: string, value: number) =>
+          mockStorageMap.set(prefix + key, value),
       };
     }
   },
@@ -200,5 +201,43 @@ describe('providerFetch redirects (android)', () => {
       providerFetch('alice', 'https://a.example/', getRequest),
     ).rejects.toThrow('Too many');
     expect(mockNativeFetch.mock.calls.length).toBe(11);
+  });
+
+  it('keeps each mirror selection through concurrent same-host redirects', async () => {
+    let finishFirst!: (response: any) => void;
+    mockNativeFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith('/nf')) return new Promise(resolve => { finishFirst = resolve; });
+      return ok(url);
+    });
+    const nf = providerFetch('alice', 'https://mirror.example/nf', {
+      ...getRequest, headers: [['Cookie', 't_hash_t=verified; ott=nf']],
+    });
+    // Let the first request enter native before the second updates the jar.
+    await Promise.resolve();
+    await providerFetch('alice', 'https://mirror.example/pv', {
+      ...getRequest, headers: [['Cookie', 't_hash_t=verified; ott=pv']],
+    });
+    finishFirst(redirectTo('https://mirror.example/nf', '/home'));
+    await nf;
+    const cookie = calledOptions(2).headers.find(([key]: [string, string]) => key === 'Cookie')[1];
+    expect(cookie).toContain('ott=nf');
+    expect(cookie).not.toContain('ott=pv');
+  });
+
+  it('applies the redirect response cookie rotation and deletion', async () => {
+    mockNativeFetch.mockResolvedValueOnce({
+      ...redirectTo('https://mirror.example/', '/home'),
+      cookies: [
+        ['https://mirror.example/', 't_hash_t=new; Path=/'],
+        ['https://mirror.example/', 'temporary=; Max-Age=0'],
+      ],
+    }).mockResolvedValueOnce(ok('https://mirror.example/home'));
+    await providerFetch('alice', 'https://mirror.example/', {
+      ...getRequest, headers: [['Cookie', 't_hash_t=old; temporary=1; ott=dp']],
+    });
+    const cookie = calledOptions(1).headers.find(([key]: [string, string]) => key === 'Cookie')[1];
+    expect(cookie).toContain('t_hash_t=new');
+    expect(cookie).toContain('ott=dp');
+    expect(cookie).not.toContain('temporary=');
   });
 });

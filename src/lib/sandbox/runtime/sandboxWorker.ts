@@ -242,6 +242,8 @@ const providerContext = Object.freeze({
     rpc<string>('getBaseUrl', {providerValue}),
   openWebView: (url: string, options?: unknown) =>
     rpc('openWebView', {url, options}),
+  getCookies: (url: string) =>
+    rpc<Record<string, string>>('getCookies', {url}),
   kvStore,
 });
 

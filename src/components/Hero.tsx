@@ -808,11 +808,16 @@ const Hero = memo(({isDrawerOpen, onOpenDrawer}: HeroProps) => {
                   value={searchText}
                   onChangeText={handleTextChange}
                   onSubmit={submitProviderSearch}
+                  onClear={() => {
+                    suppressSuggestionsRef.current = false;
+                    setSearchText('');
+                    setSuggestions([]);
+                  }}
                   placeholder={`Search in ${provider.display_name}...`}
                 />
               </View>
 
-              {searchText.length > 0 && (
+              {isTV && searchText.length > 0 && (
                 <Pressable
                   accessibilityLabel="Clear search"
                   accessibilityRole="button"

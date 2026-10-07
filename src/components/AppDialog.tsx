@@ -112,6 +112,7 @@ const AppDialog = ({
                 color={iconColor}
               />
               <ReactNativeText
+                testID="app-dialog-title"
                 style={{
                   color: colors.onSurface,
                   flex: 1,
@@ -125,15 +126,18 @@ const AppDialog = ({
 
             <ScrollView style={{marginBottom: 20, maxHeight: 240}}>
               {messageFormat === 'markdown' ? (
-                <Markdown
-                  style={{
-                    body: {color: colors.onSurfaceVariant, fontSize: 15},
-                    paragraph: {marginBottom: 8},
-                  }}>
-                  {message}
-                </Markdown>
+                <View testID="app-dialog-message">
+                  <Markdown
+                    style={{
+                      body: {color: colors.onSurfaceVariant, fontSize: 15},
+                      paragraph: {marginBottom: 8},
+                    }}>
+                    {message}
+                  </Markdown>
+                </View>
               ) : (
                 <ReactNativeText
+                  testID="app-dialog-message"
                   style={{
                     color: colors.onSurfaceVariant,
                     fontSize: 15,
@@ -152,6 +156,7 @@ const AppDialog = ({
               }}>
               {dismissAction ? (
                 <TVFocusable
+                  testID={dismissAction.testID}
                   hasTVPreferredFocus={confirmAction?.variant === 'destructive'}
                   onPress={() => handleAction(dismissAction)}
                   disabled={dismissAction.disabled}
@@ -177,6 +182,7 @@ const AppDialog = ({
 
               {confirmAction ? (
                 <TVFocusable
+                  testID={confirmAction.testID}
                   hasTVPreferredFocus={confirmAction.variant !== 'destructive'}
                   onPress={() => handleAction(confirmAction)}
                   disabled={confirmAction.disabled}
@@ -240,6 +246,7 @@ const AppDialog = ({
                   color={iconColor}
                 />
                 <ReactNativeText
+                  testID="app-dialog-title"
                   style={{
                     color: colors.onSurface,
                     flex: 1,
@@ -260,49 +267,65 @@ const AppDialog = ({
                   nestedScrollEnabled
                   style={{maxHeight: 360, width: 280}}
                   contentContainerStyle={{paddingRight: 8}}>
-                  <Markdown
-                    style={{
-                      body: {color: colors.onSurfaceVariant, fontSize: 14},
-                      bullet_list: {marginVertical: 4},
-                      code_inline: {
-                        backgroundColor: colors.surfaceContainerHighest,
-                        color: colors.onSurface,
-                      },
-                      fence: {
-                        backgroundColor: colors.surfaceContainerHighest,
-                        borderColor: colors.outlineVariant,
-                        color: colors.onSurface,
-                      },
-                      heading1: {
-                        color: colors.onSurface,
-                        fontSize: 20,
-                        marginVertical: 8,
-                      },
-                      heading2: {
-                        color: colors.onSurface,
-                        fontSize: 18,
-                        marginVertical: 7,
-                      },
-                      heading3: {
-                        color: colors.onSurface,
-                        fontSize: 16,
-                        marginVertical: 6,
-                      },
-                      link: {color: colors.primary},
-                      ordered_list: {marginVertical: 4},
-                      paragraph: {marginBottom: 8, marginTop: 0},
-                    }}>
-                    {message}
-                  </Markdown>
+                  <View testID="app-dialog-message">
+                    <Markdown
+                      style={{
+                        body: {color: colors.onSurfaceVariant, fontSize: 14},
+                        bullet_list: {marginVertical: 4},
+                        code_inline: {
+                          backgroundColor: colors.surfaceContainerHighest,
+                          color: colors.onSurface,
+                        },
+                        fence: {
+                          backgroundColor: colors.surfaceContainerHighest,
+                          borderColor: colors.outlineVariant,
+                          color: colors.onSurface,
+                        },
+                        heading1: {
+                          color: colors.onSurface,
+                          fontSize: 20,
+                          marginVertical: 8,
+                        },
+                        heading2: {
+                          color: colors.onSurface,
+                          fontSize: 18,
+                          marginVertical: 7,
+                        },
+                        heading3: {
+                          color: colors.onSurface,
+                          fontSize: 16,
+                          marginVertical: 6,
+                        },
+                        link: {color: colors.primary},
+                        ordered_list: {marginVertical: 4},
+                        paragraph: {marginBottom: 8, marginTop: 0},
+                      }}>
+                      {message}
+                    </Markdown>
+                  </View>
                 </ScrollView>
               </RNHostView>
             ) : (
-              <Text style={{typography: 'bodyMedium'}}>{message}</Text>
+              <RNHostView matchContents>
+                <ReactNativeText
+                  testID="app-dialog-message"
+                  style={{
+                    color: colors.onSurfaceVariant,
+                    fontSize: 14,
+                    lineHeight: 20,
+                  }}>
+                  {message}
+                </ReactNativeText>
+              </RNHostView>
             )}
           </AlertDialog.Text>
           {dismissAction ? (
             <AlertDialog.DismissButton>
               <TextButton
+                {...({
+                  testID: dismissAction.testID,
+                  onPress: () => handleAction(dismissAction),
+                } as any)}
                 enabled={!dismissAction.disabled}
                 onClick={() => handleAction(dismissAction)}
                 colors={{contentColor: colors.onSurfaceVariant}}>
@@ -317,6 +340,10 @@ const AppDialog = ({
           {confirmAction ? (
             <AlertDialog.ConfirmButton>
               <TextButton
+                {...({
+                  testID: confirmAction.testID,
+                  onPress: () => handleAction(confirmAction),
+                } as any)}
                 enabled={!confirmAction.disabled}
                 onClick={() => handleAction(confirmAction)}
                 colors={{

@@ -125,6 +125,14 @@ const Extensions = ({navigation, route}: Props) => {
   const [providerTest, setProviderTest] = useState<ProviderTestState | null>(
     null,
   );
+  const testAbortControllerRef = useRef<AbortController | null>(null);
+  const activeTestProviderKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      testAbortControllerRef.current?.abort();
+    };
+  }, []);
   const [settingsProvider, setSettingsProvider] =
     useState<ProviderExtension | null>(null);
   const [providerTestStatuses, setProviderTestStatuses] = useState<
@@ -382,8 +390,33 @@ const Extensions = ({navigation, route}: Props) => {
     setActiveExtensionProvider(provider);
   };
 
+  const handleCloseProviderTest = useCallback(() => {
+    if (testAbortControllerRef.current) {
+      testAbortControllerRef.current.abort();
+      testAbortControllerRef.current = null;
+    }
+    if (activeTestProviderKeyRef.current) {
+      const key = activeTestProviderKeyRef.current;
+      setProviderTestStatuses(current => {
+        if (current[key] === 'testing') {
+          const next = {...current};
+          delete next[key];
+          return next;
+        }
+        return current;
+      });
+      activeTestProviderKeyRef.current = null;
+    }
+    setProviderTest(null);
+  }, []);
+
   const handleTestProvider = async (provider: ProviderExtension) => {
+    testAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    testAbortControllerRef.current = controller;
+
     const providerKey = `${provider.source?.author || ''}:${provider.value}`;
+    activeTestProviderKeyRef.current = providerKey;
     setProviderTestStatuses(current => ({
       ...current,
       [providerKey]: 'testing',
@@ -393,6 +426,7 @@ const Extensions = ({navigation, route}: Props) => {
       steps: createProviderTestSteps(),
     });
     const handleProgress = (progress: ProviderDiagnosticProgress) => {
+      if (controller.signal.aborted) return;
       setProviderTest(current =>
         current
           ? {
@@ -410,7 +444,12 @@ const Extensions = ({navigation, route}: Props) => {
       );
     };
     try {
-      const result = await testProvider(provider.value, handleProgress);
+      const result = await testProvider(
+        provider.value,
+        handleProgress,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
       const playableTitle =
         result.episode?.title || result.directLink?.title || 'Direct stream';
       setProviderTest(current =>
@@ -433,6 +472,7 @@ const Extensions = ({navigation, route}: Props) => {
         [providerKey]: 'working',
       }));
     } catch (error) {
+      if (controller.signal.aborted) return;
       const stage =
         error instanceof ProviderDiagnosticError ? error.stage : 'unknown';
       const message = error instanceof Error ? error.message : String(error);
@@ -448,6 +488,11 @@ const Extensions = ({navigation, route}: Props) => {
         ...current,
         [providerKey]: 'failed',
       }));
+    } finally {
+      if (testAbortControllerRef.current === controller) {
+        testAbortControllerRef.current = null;
+        activeTestProviderKeyRef.current = null;
+      }
     }
   };
 
@@ -721,7 +766,7 @@ const Extensions = ({navigation, route}: Props) => {
         steps={providerTest?.steps || createProviderTestSteps()}
         resultMessage={providerTest?.resultMessage}
         primary={primary}
-        onClose={() => setProviderTest(null)}
+        onClose={handleCloseProviderTest}
       />
       <ProviderSettingsModal
         visible={settingsProvider !== null}

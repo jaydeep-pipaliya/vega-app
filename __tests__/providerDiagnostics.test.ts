@@ -143,4 +143,17 @@ describe('provider diagnostics', () => {
       detail: 'HTTP 503',
     });
   });
+
+  it('aborts early when AbortSignal is cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      testProvider('fixture', undefined, controller.signal),
+    ).rejects.toMatchObject({
+      name: 'ProviderDiagnosticError',
+      message: 'Provider test cancelled',
+    });
+    expect(mockManager.getCatalog).not.toHaveBeenCalled();
+  });
 });

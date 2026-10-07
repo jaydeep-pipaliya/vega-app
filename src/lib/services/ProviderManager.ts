@@ -6,6 +6,7 @@ import {extensionManager} from './ExtensionManager';
 import {extensionStorage} from '../storage/extensionStorage';
 import {providerKvStorage} from '../storage/StorageService';
 import {getSourceAuthHeaders} from '../storage/sourceTokenStorage';
+import {getProviderFilesUrl} from '../utils/helpers';
 import {MAX_STATE_BYTES} from '../sandbox/protocol';
 import {sandboxBridge, setSandboxStateHandler} from '../sandbox/sandboxBridge';
 import {
@@ -137,8 +138,10 @@ export class ProviderManager {
   }
   getCatalog = async ({
     providerValue,
+    signal,
   }: {
     providerValue: string;
+    signal?: AbortSignal;
   }): Promise<Catalog[]> => {
     const catalogModule = this.getModule(providerValue, 'catalog');
     if (!catalogModule) {
@@ -147,7 +150,7 @@ export class ProviderManager {
     try {
       const moduleExports = await this.executeModule<{
         catalog?: Catalog[] | (() => Promise<Catalog[]> | Catalog[]);
-      }>(catalogModule, providerValue);
+      }>(catalogModule, providerValue, undefined, {}, signal);
       let catalog = moduleExports?.catalog;
       if (typeof catalog === 'function') {
         catalog = await (catalog as any)();
@@ -158,6 +161,9 @@ export class ProviderManager {
         'catalog',
       );
     } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
       console.error('Error loading catalog:', error);
       throw new Error(
         getErrorMessage(
@@ -272,9 +278,11 @@ export class ProviderManager {
   getMetaData = async ({
     link,
     provider,
+    signal,
   }: {
     link: string;
     provider: string;
+    signal?: AbortSignal;
   }): Promise<Info> => {
     const getMetaDataModule = this.getModule(provider, 'meta');
     if (!getMetaDataModule) {
@@ -286,8 +294,12 @@ export class ProviderManager {
         provider,
         'getMeta',
         {link, provider},
+        signal,
       );
     } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
       if (getErrorMessage(error, '') !== 'Provider sandbox was torn down') {
         console.error('Error in meta data function:', error);
       }
@@ -369,9 +381,11 @@ export class ProviderManager {
   getEpisodes = async ({
     url,
     providerValue,
+    signal,
   }: {
     url: string;
     providerValue: string;
+    signal?: AbortSignal;
   }): Promise<EpisodeLink[]> => {
     const getEpisodeLinksModule = this.getModule(providerValue, 'episodes');
     if (!getEpisodeLinksModule) {
@@ -385,6 +399,7 @@ export class ProviderManager {
         providerValue,
         'getEpisodes',
         {url},
+        signal,
       );
       return this.requireArray<EpisodeLink>(
         episodes,
@@ -392,6 +407,9 @@ export class ProviderManager {
         'getEpisodes',
       );
     } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
       console.error('Error in episodes function:', error);
       const errorMessage = getErrorMessage(
         error,
@@ -431,7 +449,14 @@ export class ProviderManager {
         extensionStorage.getProviderSource();
       if (activeSource?.url) {
         try {
-          const url = `${activeSource.url}/dist/${providerValue}/settings.js`;
+          const path = extensionStorage
+            .getInstalledProviders()
+            .find(
+              p =>
+                p.value === providerValue &&
+                p.source?.author === activeSource.author,
+            )?.path;
+          const url = `${getProviderFilesUrl(activeSource.url, providerValue, path)}/settings.js`;
           const res = await axios.get(url, {
             timeout: 6000,
             headers: getSourceAuthHeaders(activeSource.author, url),

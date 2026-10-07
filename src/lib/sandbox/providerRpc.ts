@@ -4,6 +4,7 @@ import {openWebView} from '../services/wafResolver';
 import type {OpenWebViewOptions, OpenWebViewResult} from '../providers/types';
 import {bytesToBase64} from './base64';
 import {providerFetch} from './providerFetch';
+import {getJarCookieMap} from './providerCookieJar';
 import type {RpcOperation, SerializedRequest} from './protocol';
 import {validateProviderUrl} from './urlGuard';
 import {providerKvStorage} from '../storage/StorageService';
@@ -178,6 +179,9 @@ export const handleProviderRpc = async (
 
     case 'openWebView':
       return handleOpenWebView(author, args);
+
+    case 'getCookies':
+      return getJarCookieMap(author, validateProviderUrl(args?.url).toString());
 
     case 'crypto':
       return handleCrypto(args);

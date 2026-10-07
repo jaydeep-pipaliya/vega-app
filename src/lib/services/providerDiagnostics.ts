@@ -83,13 +83,23 @@ const runStage = async <T>(
   errorStage: DiagnosticStage,
   onProgress: ProviderDiagnosticProgressCallback | undefined,
   operation: () => Promise<T> | T,
+  signal?: AbortSignal,
 ): Promise<T> => {
+  if (signal?.aborted) {
+    throw new ProviderDiagnosticError(errorStage, 'Provider test cancelled');
+  }
   onProgress?.({stage: progressStage, status: 'running'});
   try {
     const result = await operation();
+    if (signal?.aborted) {
+      throw new ProviderDiagnosticError(errorStage, 'Provider test cancelled');
+    }
     onProgress?.({stage: progressStage, status: 'completed'});
     return result;
   } catch (error) {
+    if (signal?.aborted) {
+      throw new ProviderDiagnosticError(errorStage, 'Provider test cancelled');
+    }
     const stageError = getStageError(errorStage, error);
     onProgress?.({
       stage: progressStage,
@@ -103,6 +113,7 @@ const runStage = async <T>(
 const getPlayableLink = async (
   metadata: Info,
   providerValue: string,
+  signal?: AbortSignal,
 ): Promise<{
   episode?: EpisodeLink;
   directLink?: {title: string; link: string; type?: string};
@@ -123,6 +134,7 @@ const getPlayableLink = async (
       episodes = await providerManager.getEpisodes({
         url: season.episodesLink!,
         providerValue,
+        signal,
       });
     } catch (error) {
       throw getStageError('episodes', error);
@@ -145,23 +157,39 @@ const getPlayableLink = async (
 export const testProvider = async (
   providerValue: string,
   onProgress?: ProviderDiagnosticProgressCallback,
+  signal?: AbortSignal,
 ): Promise<ProviderDiagnosticResult> => {
   const controller = new AbortController();
+  const effectiveSignal = signal ?? controller.signal;
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener('abort', () => controller.abort(), {once: true});
+    }
+  }
+
+  if (effectiveSignal.aborted) {
+    throw new ProviderDiagnosticError('catalog', 'Provider test cancelled');
+  }
 
   const catalog = await runStage('catalog', 'catalog', onProgress, async () => {
-    const catalogs = await providerManager.getCatalog({providerValue});
+    const catalogs = await providerManager.getCatalog({
+      providerValue,
+      signal: effectiveSignal,
+    });
     return pickRandom(requireItems(catalogs, 'catalog', 'catalogs'));
-  });
+  }, effectiveSignal);
 
   const post = await runStage('posts', 'posts', onProgress, async () => {
     const posts = await providerManager.getPosts({
       filter: catalog.filter,
       page: 1,
       providerValue,
-      signal: controller.signal,
+      signal: effectiveSignal,
     });
     return pickRandom(requireItems(posts, 'posts', 'posts'));
-  });
+  }, effectiveSignal);
 
   const metadata = await runStage(
     'metadata',
@@ -171,6 +199,7 @@ export const testProvider = async (
       const result = await providerManager.getMetaData({
         link: post.link,
         provider: providerValue,
+        signal: effectiveSignal,
       });
       if (!result || !result.title) {
         throw new ProviderDiagnosticError(
@@ -180,21 +209,22 @@ export const testProvider = async (
       }
       return result;
     },
+    effectiveSignal,
   );
 
   const playable = await runStage('playback', 'metadata', onProgress, () =>
-    getPlayableLink(metadata, providerValue),
-  );
+    getPlayableLink(metadata, providerValue, effectiveSignal),
+  effectiveSignal);
 
   const streams = await runStage('streams', 'streams', onProgress, async () => {
     const result = await providerManager.getStream({
       link: playable.link,
       type: playable.type,
-      signal: controller.signal,
+      signal: effectiveSignal,
       providerValue,
     });
     return requireItems(result, 'streams', 'streams');
-  });
+  }, effectiveSignal);
 
   return {
     catalog,

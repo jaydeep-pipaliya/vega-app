@@ -58,30 +58,81 @@ const ProviderTestProgressDialog = ({
   return (
     <MaterialDialogSurface
       visible={visible}
-      dismissible={isFinished}
+      dismissible={true}
       onDismiss={onClose}>
-      <Text
+      <View
         style={{
-          color: colors.onSurface,
-          fontSize: 22,
-          fontWeight: '700',
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          marginBottom: 16,
         }}>
-        {hasFailed
-          ? 'Provider test failed'
-          : hasPassed
-            ? 'Provider test passed'
-            : 'Testing provider'}
-      </Text>
-      <Text
-        numberOfLines={1}
-        style={{
-          color: colors.onSurfaceVariant,
-          fontSize: 14,
-          marginBottom: 20,
-          marginTop: 4,
-        }}>
-        {providerName}
-      </Text>
+        <View style={{flex: 1, paddingRight: 12}}>
+          <Text
+            style={{
+              color: colors.onSurface,
+              fontSize: 22,
+              fontWeight: '700',
+            }}>
+            {hasFailed
+              ? 'Provider test failed'
+              : hasPassed
+                ? 'Provider test passed'
+                : 'Testing provider'}
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: colors.onSurfaceVariant,
+              fontSize: 14,
+              marginTop: 4,
+            }}>
+            {providerName}
+          </Text>
+        </View>
+        {isTV ? (
+          <TVFocusable
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            testID="close-provider-test-cross"
+            borderRadius={20}
+            style={{
+              alignItems: 'center',
+              backgroundColor: colors.surfaceContainerHighest,
+              borderRadius: 20,
+              height: 36,
+              justifyContent: 'center',
+              width: 36,
+            }}
+            onPress={onClose}>
+            <MaterialCommunityIcons
+              name="close"
+              size={20}
+              color={colors.onSurfaceVariant}
+            />
+          </TVFocusable>
+        ) : (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            testID="close-provider-test-cross"
+            style={{
+              alignItems: 'center',
+              backgroundColor: colors.surfaceContainerHighest,
+              borderRadius: 20,
+              height: 36,
+              justifyContent: 'center',
+              width: 36,
+            }}
+            onPress={onClose}>
+            <MaterialCommunityIcons
+              name="close"
+              size={20}
+              color={colors.onSurfaceVariant}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
 
       <View className="gap-3">
         {stepLabels.map(({stage, label}) => {

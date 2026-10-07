@@ -2,6 +2,7 @@ export type RpcOperation =
   | 'fetch'
   | 'getBaseUrl'
   | 'openWebView'
+  | 'getCookies'
   | 'crypto'
   | 'kvGet'
   | 'kvSet'

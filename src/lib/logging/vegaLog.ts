@@ -17,6 +17,7 @@ const DETAILED_DURATION_MS = 24 * 60 * 60 * 1000;
 const FLUSH_INTERVAL_MS = 1000;
 const MAX_BATCH = 200;
 const MAX_LINE_CHARS = 4000;
+const MAX_STACK_LINES = 6;
 
 // Android log levels.
 const DEBUG = 3;
@@ -33,7 +34,13 @@ let detailed = false;
 let installed = false;
 
 const formatArg = (arg: unknown): string => {
-  if (arg instanceof Error) return arg.stack || `${arg.name}: ${arg.message}`;
+  if (arg instanceof Error) {
+    // Bundle frames past the first few are promise plumbing and say nothing.
+    const lines = (arg.stack || `${arg.name}: ${arg.message}`).split('\n');
+    return lines.length > MAX_STACK_LINES
+      ? `${lines.slice(0, MAX_STACK_LINES).join('\n')}\n    … ${lines.length - MAX_STACK_LINES} more frames`
+      : lines.join('\n');
+  }
   if (typeof arg === 'string') return arg;
   try {
     return JSON.stringify(arg) ?? String(arg);
@@ -53,9 +60,36 @@ const flush = () => {
   } catch {}
 };
 
+// Library deprecation notices repeat on every screen view. They filled most of
+// the size-limited log file and pushed out the lines a bug report needs.
+const NOISE = [
+  'React Native Firebase namespaced API',
+  'InteractionManager has been deprecated',
+];
+
+// The same line repeated back to back is kept once, with a count.
+let lastMessage = '';
+let lastLevel = 0;
+let repeats = 0;
+
+const flushRepeats = () => {
+  if (repeats > 0) {
+    pending.push([lastLevel, 'VegaJS', `(previous line repeated ${repeats} more times)`]);
+    repeats = 0;
+  }
+};
+
 const record = (level: number, args: unknown[]) => {
   if (!VegaLog) return;
   let message = args.map(formatArg).join(' ');
+  if (NOISE.some(text => message.includes(text))) return;
+  if (message === lastMessage && level === lastLevel) {
+    repeats++;
+    return;
+  }
+  flushRepeats();
+  lastMessage = message;
+  lastLevel = level;
   if (message.length > MAX_LINE_CHARS)
     message = `${message.slice(0, MAX_LINE_CHARS)}… (${message.length} chars)`;
   pending.push([level, 'VegaJS', message]);
@@ -92,6 +126,7 @@ export const setDetailedLogging = (enabled: boolean): void => {
 
 export const shareLogs = async (extraHeader?: string): Promise<void> => {
   if (!VegaLog) throw new Error('Logs are unavailable on this device');
+  flushRepeats();
   flush();
   await VegaLog.share(extraHeader ?? null);
 };

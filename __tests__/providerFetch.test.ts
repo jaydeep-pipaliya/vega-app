@@ -31,9 +31,10 @@ jest.mock('react-native-mmkv-storage', () => ({
           mockStorageMap.set(prefix + key, value),
         removeItem: (key: string) => mockStorageMap.delete(prefix + key),
         getBool: jest.fn(),
-        getInt: jest.fn(),
+        getInt: (key: string) => mockStorageMap.get(prefix + key),
         setBool: jest.fn(),
-        setInt: jest.fn(),
+        setInt: (key: string, value: number) =>
+          mockStorageMap.set(prefix + key, value),
       };
     }
   },
@@ -105,6 +106,53 @@ describe('providerFetch cookies', () => {
       'cf_clearance=provider-token; wordpress_test_cookie=WP%20Cookie%20check',
     );
     expect(sentHeaders().cookie).toBeUndefined();
+  });
+
+  it('sends a provider supplied cookie on that request only', async () => {
+    // NetMirror: the server sets a valid token, the provider sends an empty
+    // placeholder and a stale ad hash by hand.
+    storeSetCookies('alice', 'https://net52.cc/', [
+      't_hash_t=valid; Max-Age=3600; Domain=net52.cc',
+    ]);
+
+    await providerFetch('alice', 'https://net52.cc/mobile/home', {
+      ...emptyRequest,
+      headers: [['cookie', 'addhash=stale; t_hash_t=']],
+    });
+
+    expect(sentHeaders().Cookie).toBe('addhash=stale; t_hash_t=');
+    // The jar keeps only what the server set.
+    expect(getJarCookieMap('alice', 'https://net52.cc/')).toEqual({
+      t_hash_t: 'valid',
+    });
+  });
+
+  it('gives server cookies without an expiry a 12 hour lifetime', () => {
+    jest.useFakeTimers({now: 1_000_000});
+    try {
+      storeSetCookies('alice', 'https://example.com/', ['PHPSESSID=abc']);
+      expect(getJarCookieMap('alice', 'https://example.com/')).toEqual({
+        PHPSESSID: 'abc',
+      });
+      jest.setSystemTime(1_000_000 + 12 * 60 * 60 * 1000 + 1);
+      expect(getJarCookieMap('alice', 'https://example.com/')).toEqual({});
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('drops cookies without an expiry from jars saved before version 3', () => {
+    mockStorageMap.set(
+      'provider_cookies::alice',
+      JSON.stringify({
+        'net52.cc': {
+          addhash: {value: 'stale', expiresAt: null, hostOnly: true},
+          kept: {value: '1', expiresAt: Date.now() + 60_000, hostOnly: true},
+        },
+      }),
+    );
+
+    expect(getJarCookieMap('alice', 'https://net52.cc/')).toEqual({kept: '1'});
   });
 
   it("saves Set-Cookie to the requesting author's jar only", async () => {

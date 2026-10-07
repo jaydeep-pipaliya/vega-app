@@ -40,6 +40,12 @@ const hostOf = (url: string): string | undefined => {
   }
 };
 
+// Jars before version 3 saved cookies from providers' own Cookie headers with
+// no expiry (a stale NetMirror `addhash`, for example). They cannot be told
+// apart from server cookies, so cookies without an expiry are dropped once.
+const JAR_VERSION = 3;
+const jarVersionKey = (author: string) => `${author}::jarVersion`;
+
 const readJar = (author: string): AuthorJar => {
   const raw = providerCookieStorage.getString(author);
   if (!raw) {
@@ -47,7 +53,21 @@ const readJar = (author: string): AuthorJar => {
   }
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as AuthorJar) : {};
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+    const jar = parsed as AuthorJar;
+    if (providerCookieStorage.getNumber(jarVersionKey(author)) !== JAR_VERSION) {
+      for (const domain of Object.keys(jar)) {
+        for (const name of Object.keys(jar[domain])) {
+          if (jar[domain][name].expiresAt === null) {
+            delete jar[domain][name];
+          }
+        }
+      }
+      writeJar(author, jar);
+    }
+    return jar;
   } catch {
     return {};
   }
@@ -74,10 +94,18 @@ const writeJar = (author: string, jar: AuthorJar): void => {
   } else {
     providerCookieStorage.setString(author, JSON.stringify(jar));
   }
+  providerCookieStorage.setNumber(jarVersionKey(author), JAR_VERSION);
 };
 
 const domainMatches = (host: string, domain: string, hostOnly: boolean) =>
   host === domain || (!hostOnly && host.endsWith(`.${domain}`));
+
+/**
+ * Lifetime of a cookie with no Expires or Max-Age. A browser drops these when
+ * it closes; the app has no such moment, so they get a fixed lifetime instead
+ * of living forever.
+ */
+const SESSION_COOKIE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 const putCookies = (
   authorRaw: string | undefined,
@@ -90,6 +118,7 @@ const putCookies = (
   }
   const author = providerAuthor(authorRaw);
   const jar = readJar(author);
+  const now = Date.now();
   for (const cookie of cookies) {
     if (!cookie.name) {
       continue;
@@ -100,8 +129,7 @@ const putCookies = (
       continue;
     }
     const domain = attrDomain || host;
-    const expired =
-      cookie.expiresAt != null && cookie.expiresAt <= Date.now();
+    const expiresAt = cookie.expiresAt ?? now + SESSION_COOKIE_MAX_AGE_MS;
     // A cookie replaces (or, when expired, removes) any same-named one this
     // host can see.
     for (const d of Object.keys(jar)) {
@@ -109,17 +137,18 @@ const putCookies = (
         delete jar[d][cookie.name];
       }
     }
-    if (!expired) {
+    if (expiresAt > now) {
       jar[domain] = jar[domain] ?? {};
       jar[domain][cookie.name] = {
         value: cookie.value,
-        expiresAt: cookie.expiresAt ?? null,
+        expiresAt,
         hostOnly: !attrDomain,
       };
     }
   }
   writeJar(author, jar);
 };
+
 
 /** Parses one Set-Cookie header value. */
 const parseSetCookie = (header: string): JarCookie | undefined => {
@@ -210,8 +239,10 @@ export const getJarCookieHeader = (
 
 /**
  * Cookie header for a provider request: the jar's cookies plus the ones the
- * provider set itself, which win on a name clash. The provider's cookies are
- * saved to its author's jar so later requests send them too.
+ * provider set itself, which win on a name clash. As in a browser, only server
+ * responses write the jar: the provider's cookies go on this request only.
+ * Saving them let a provider's stale or empty value replace the server's
+ * cookie for good (NetMirror's `addhash` and `t_hash_t=`).
  */
 export const buildRequestCookieHeader = (
   author: string | undefined,
@@ -220,11 +251,6 @@ export const buildRequestCookieHeader = (
 ): string => {
   if (supplied) {
     const map = parseCookieHeader(supplied);
-    putCookies(
-      author,
-      url,
-      Object.entries(map).map(([name, value]) => ({name, value})),
-    );
     const jar = getJarCookieMap(author, url);
     for (const name of Object.keys(map)) {
       delete jar[name];
@@ -232,6 +258,30 @@ export const buildRequestCookieHeader = (
     return toHeader({...map, ...jar});
   }
   return getJarCookieHeader(author, url);
+};
+
+/** Keep a redirect chain's cookies independent of concurrent mirror requests. */
+export const updateRedirectCookieHeader = (
+  url: string,
+  sentHeader: string | undefined,
+  responseCookies: string[],
+): string => {
+  const host = hostOf(url);
+  const cookies = parseCookieHeader(sentHeader ?? '');
+  for (const header of responseCookies) {
+    for (const part of splitSetCookie(header)) {
+      const cookie = parseSetCookie(part);
+      if (!cookie || !host) continue;
+      const domain = cookie.domain?.toLowerCase().replace(/^\./, '');
+      if (domain && !domainMatches(host, domain, false)) continue;
+      if (cookie.expiresAt != null && cookie.expiresAt <= Date.now()) {
+        delete cookies[cookie.name];
+      } else {
+        cookies[cookie.name] = cookie.value;
+      }
+    }
+  }
+  return toHeader(cookies);
 };
 
 /** Saves Set-Cookie header values from a response to this author's jar. */

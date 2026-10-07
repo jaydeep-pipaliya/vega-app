@@ -996,8 +996,15 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
     }
   }, [markEpisodes, stickyMenu.link, stickyMenuEpisodes]);
 
-  // Syncs only the long-pressed episode, like the single unwatched action.
-  const markSeasonAsUnwatched = useCallback(() => {
+  const markAllAsWatched = useCallback(() => {
+    markEpisodes(
+      stickyMenuEpisodes,
+      true,
+      stickyMenuEpisodes.find(item => item.link === stickyMenu.link),
+    );
+  }, [markEpisodes, stickyMenu.link, stickyMenuEpisodes]);
+
+  const markAllAsUnwatched = useCallback(() => {
     markEpisodes(
       stickyMenuEpisodes,
       false,
@@ -1897,14 +1904,40 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
                 backgroundColor: colors.surfaceContainerHighest,
                 borderRadius: 18,
               }}
-              onPress={markSeasonAsUnwatched}>
+              onPress={markAllAsWatched}>
+              <MaterialCommunityIcons
+                name="eye-check-outline"
+                size={24}
+                color={primary}
+              />
+              <Text style={{color: colors.onSurface}}>
+                Mark all as watched
+              </Text>
+            </TVFocusable>
+          )}
+          {stickyMenuEpisodes.length > 1 && (
+            <TVFocusable
+              accessibilityRole="button"
+              borderRadius={18}
+              focusScale={1}
+              focusBorderColor={focusBorderColor}
+              style={{
+                height: 48,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 12,
+                paddingHorizontal: 16,
+                backgroundColor: colors.surfaceContainerHighest,
+                borderRadius: 18,
+              }}
+              onPress={markAllAsUnwatched}>
               <MaterialCommunityIcons
                 name="eye-off-outline"
                 size={24}
                 color={primary}
               />
               <Text style={{color: colors.onSurface}}>
-                Mark season as unwatched
+                Mark all as unwatched
               </Text>
             </TVFocusable>
           )}

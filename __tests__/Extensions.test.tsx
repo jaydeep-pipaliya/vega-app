@@ -1,3 +1,75 @@
+jest.mock('react-native-mmkv-storage', () => ({
+  MMKVLoader: class {
+    withInstanceID() {
+      return this;
+    }
+    initialize() {
+      return {
+        getString: jest.fn(),
+        setString: jest.fn(),
+        getBool: jest.fn(),
+        setBool: jest.fn(),
+        getInt: jest.fn(),
+        setInt: jest.fn(),
+        getItem: jest.fn(),
+        setItem: jest.fn(),
+        removeItem: jest.fn(),
+        clearStore: jest.fn(),
+      };
+    }
+  },
+}));
+
+jest.mock('react-native-reanimated', () => {
+  const {View} = require('react-native');
+  return {
+    __esModule: true,
+    default: {
+      View,
+      createAnimatedComponent: (comp: unknown) => comp,
+    },
+    useAnimatedStyle: () => ({}),
+    useSharedValue: (value: unknown) => ({value}),
+    withRepeat: (value: unknown) => value,
+    withTiming: (value: unknown) => value,
+    cancelAnimation: jest.fn(),
+  };
+});
+
+jest.mock('@react-navigation/native', () => ({
+  useFocusEffect: jest.fn(),
+  useIsFocused: jest.fn(() => true),
+}));
+
+jest.mock('react-native-safe-area-context', () => {
+  const SafeAreaProvider = ({children}: {children: unknown}) => children;
+  SafeAreaProvider.displayName = 'SafeAreaProvider';
+  return {
+    useSafeAreaInsets: () => ({top: 0, bottom: 0, left: 0, right: 0}),
+    SafeAreaProvider,
+  };
+});
+
+jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: {
+    MD5: 'MD5',
+    SHA1: 'SHA-1',
+    SHA256: 'SHA-256',
+    SHA384: 'SHA-384',
+    SHA512: 'SHA-512',
+  },
+}));
+
+jest.mock('react-native-markdown-display', () => {
+  const React = require('react');
+  const {Text} = require('react-native');
+  return {
+    __esModule: true,
+    default: ({children}: {children: React.ReactNode}) =>
+      React.createElement(Text, null, children),
+  };
+});
+
 import React from 'react';
 import renderer, {act} from 'react-test-renderer';
 import Extensions from '../src/screens/settings/Extensions';
@@ -12,6 +84,7 @@ const existingProvider = {
   disabled: false,
   type: 'global' as const,
   installed: true,
+  hasSettings: false,
 };
 
 const newProvider = {
@@ -23,6 +96,7 @@ const newProvider = {
   disabled: false,
   type: 'english' as const,
   installed: false,
+  hasSettings: false,
 };
 
 const alternateSourceProvider = {
@@ -219,7 +293,7 @@ describe('Extensions provider installation', () => {
     ).toBe('Error');
     expect(
       tree!.root.findByProps({testID: 'app-dialog-message'}).props.children,
-    ).toBe('Failed to install provider. Please try again.');
+    ).toBe('fixture download failed');
   });
 
   it('activates the first provider installed during initial setup', async () => {
@@ -395,6 +469,7 @@ describe('Extensions provider installation', () => {
     expect(mockTestProvider).toHaveBeenCalledWith(
       'existing',
       expect.any(Function),
+      expect.anything(),
     );
     for (const stage of [
       'catalog',
@@ -497,5 +572,47 @@ describe('Extensions provider installation', () => {
     });
 
     expect(mockUninstallProvider).toHaveBeenCalledWith('existing', 'fixture');
+  });
+
+  it('stops provider test when cross button is pressed', async () => {
+    let capturedSignal: AbortSignal | undefined;
+    mockTestProvider.mockImplementation(
+      (_provider, onProgress, signal) => {
+        capturedSignal = signal;
+        onProgress({stage: 'catalog', status: 'running'});
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      },
+    );
+
+    await act(async () => {
+      tree = renderer.create(
+        <Extensions
+          navigation={{navigate: jest.fn()} as never}
+          route={{} as never}
+        />,
+      );
+    });
+
+    act(() => {
+      tree!.root
+        .findByProps({testID: 'test-provider-fixture:existing'})
+        .props.onPress();
+    });
+
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(false);
+
+    await act(async () => {
+      tree!.root
+        .findByProps({testID: 'close-provider-test-cross'})
+        .props.onPress();
+    });
+
+    expect(capturedSignal!.aborted).toBe(true);
+    expect(
+      tree!.root.findAllByProps({testID: 'close-provider-test-cross'}),
+    ).toHaveLength(0);
   });
 });

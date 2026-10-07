@@ -210,7 +210,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
             </TVFocusable>
           </View>
           <Text className="text-sm font-medium" style={{color: colors.onSurface}}>
-            Enter a repo URL (GitHub, Codeberg, Bitbucket, GitLab) or author name. Use author@cb, author@bb or author@gl for non-GitHub hosts.
+            Enter a repo URL (GitHub, Codeberg, Bitbucket, GitLab), an https link to a manifest.json, or author name. Use author@cb, author@bb or author@gl for non-GitHub hosts.
           </Text>
           <Text
             className="text-sm mt-[4px]"
@@ -276,7 +276,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
                     borderWidth: isTokenFocused ? 2.5 : 1,
                     color: colors.onSurface,
                   }}
-                  placeholder="GitHub token"
+                  placeholder="Access token"
                   placeholderTextColor={colors.onSurfaceVariant}
                   selectionColor={colors.primary}
                   value={token}

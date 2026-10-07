@@ -1,7 +1,11 @@
 import {NativeModules, Platform} from 'react-native';
 import axios, {type AxiosRequestConfig} from 'axios';
 import {headers as commonHeaders} from '../providers/headers';
-import {buildRequestCookieHeader, storeSetCookies} from './providerCookieJar';
+import {
+  buildRequestCookieHeader,
+  storeSetCookies,
+  updateRedirectCookieHeader,
+} from './providerCookieJar';
 import {bytesToBase64, base64ToBytes} from './base64';
 import {providerRateLimiter} from './rateLimiter';
 import {
@@ -236,8 +240,16 @@ export const providerFetch = async (
         if (nextUrl.host !== hopUrl.host) {
           deleteHeader(headers, 'authorization');
         }
+        const hopCookie = nextUrl.hostname === hopUrl.hostname
+          ? updateRedirectCookieHeader(
+              hopUrl.toString(),
+              headers.Cookie,
+              ((res.cookies || []) as Array<[string, string]>)
+                .filter(pair => pair && pair.length >= 2)
+                .map(pair => pair[1]),
+            )
+          : buildRequestCookieHeader(author, nextUrl.toString());
         deleteHeader(headers, 'cookie');
-        const hopCookie = buildRequestCookieHeader(author, nextUrl.toString());
         if (hopCookie) {
           headers.Cookie = hopCookie;
         }

@@ -216,6 +216,12 @@ const Search = () => {
     setSearchText(text);
   }, []);
 
+  const handleClear = useCallback(() => {
+    suppressSuggestionsRef.current = false;
+    setSearchText('');
+    setSuggestions([]);
+  }, []);
+
   const handleSearch = useCallback(
     (text: string) => {
       Keyboard.dismiss();
@@ -326,21 +332,18 @@ const Search = () => {
               value={searchText}
               onChangeText={handleTextChange}
               onSubmit={handleSearch}
+              onClear={handleClear}
               placeholder="Search anime..."
               nextFocusDown={firstItemNode}
-              nextFocusRight={searchText.length > 0 ? clearBtnNode : undefined}
+              nextFocusRight={isTV && searchText.length > 0 ? clearBtnNode : undefined}
               onNodeHandle={setSearchFieldNode}
             />
           </View>
-          {searchText.length > 0 && (
+          {isTV && searchText.length > 0 && (
             <IconButton
               icon="close"
               label="Clear search"
-              onPress={() => {
-                suppressSuggestionsRef.current = false;
-                setSearchText('');
-                setSuggestions([]);
-              }}
+              onPress={handleClear}
               size={18}
               nextFocusLeft={searchFieldNode}
               nextFocusDown={firstItemNode}
