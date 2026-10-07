@@ -66,3 +66,68 @@ describe('hlsDownloader2 playlist checks', () => {
     );
   });
 });
+
+describe('hlsDownloader2 audio renditions', () => {
+  const master = (...media: string[]) =>
+    [
+      '#EXTM3U',
+      ...media,
+      '#EXT-X-STREAM-INF:BANDWIDTH=2000000,AUDIO="aud"',
+      'video/index.m3u8',
+    ].join('\n');
+
+  const fetchedUrls = () => mockAxiosGet.mock.calls.map(call => call[0]);
+
+  beforeEach(() => {
+    mockAxiosGet.mockReset();
+    mockDownloadFile.mockClear();
+  });
+
+  it('keeps the audio inside the video when the default rendition has no URI', async () => {
+    mockAxiosGet.mockImplementation(async (url: string) => ({
+      data:
+        url === 'https://example.com/video.m3u8'
+          ? master(
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES',
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Spanish",LANGUAGE="es",URI="audio/es.m3u8"',
+            )
+          : playlist(),
+    }));
+
+    await expect(download()).rejects.toThrow('HTTP status 404');
+    expect(fetchedUrls()).not.toContain('https://example.com/audio/es.m3u8');
+  });
+
+  it('downloads the default rendition when it has its own playlist', async () => {
+    mockAxiosGet.mockImplementation(async (url: string) => ({
+      data:
+        url === 'https://example.com/video.m3u8'
+          ? master(
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Spanish",LANGUAGE="es",URI="audio/es.m3u8"',
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",DEFAULT=YES,URI="audio/en.m3u8"',
+            )
+          : playlist(),
+    }));
+
+    await expect(download()).rejects.toThrow('HTTP status 404');
+    expect(fetchedUrls()).toContain('https://example.com/audio/en.m3u8');
+    expect(fetchedUrls()).not.toContain('https://example.com/audio/es.m3u8');
+  });
+
+  it('falls back to the autoselect rendition when none is default', async () => {
+    mockAxiosGet.mockImplementation(async (url: string) => ({
+      data:
+        url === 'https://example.com/video.m3u8'
+          ? master(
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Commentary",LANGUAGE="en",URI="audio/commentary.m3u8"',
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",LANGUAGE="en",AUTOSELECT=YES',
+            )
+          : playlist(),
+    }));
+
+    await expect(download()).rejects.toThrow('HTTP status 404');
+    expect(fetchedUrls()).not.toContain(
+      'https://example.com/audio/commentary.m3u8',
+    );
+  });
+});

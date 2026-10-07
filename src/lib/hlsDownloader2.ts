@@ -177,15 +177,21 @@ const parseM3U8Playlist = async (
               (candidate: string) =>
                 candidate.startsWith('#EXT-X-MEDIA:') &&
                 tagAttribute(candidate, 'TYPE') === 'AUDIO' &&
-                tagAttribute(candidate, 'GROUP-ID') === bestAudioGroup &&
-                !!tagAttribute(candidate, 'URI'),
+                tagAttribute(candidate, 'GROUP-ID') === bestAudioGroup,
             )
           : [];
         const rendition =
           renditions.find(
             (candidate: string) => tagAttribute(candidate, 'DEFAULT') === 'YES',
-          ) || renditions[0];
-        if (rendition) {
+          ) ||
+          renditions.find(
+            (candidate: string) =>
+              tagAttribute(candidate, 'AUTOSELECT') === 'YES',
+          ) ||
+          renditions[0];
+        // A rendition without a URI is carried in the video itself; fetching
+        // another one would replace it with the wrong language.
+        if (rendition && tagAttribute(rendition, 'URI')) {
           const audioUrl = resolveUrl(tagAttribute(rendition, 'URI')!, url);
           console.log('Found separate audio rendition:', audioUrl);
           // Any audio problem falls back to the video alone, as before.
