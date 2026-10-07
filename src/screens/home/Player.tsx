@@ -70,6 +70,7 @@ import {
   useVideoSettings,
 } from '../../lib/hooks/useStream';
 import {useStreamTrackSelections} from '../../lib/hooks/useStreamTrackSelections';
+import {useStreamResumePosition} from '../../lib/hooks/useStreamResumePosition';
 import {
   usePlayerProgress,
   usePlayerSettings,
@@ -1236,6 +1237,14 @@ const Player = ({route}: Props): React.JSX.Element => {
     }
   }, [videoPositionRef, watchedDuration]);
 
+  // A server switch continues from the live position, not the saved one.
+  const {getStartPosition, markStreamLoaded} = useStreamResumePosition({
+    episodeKey: getEpisodeIdentity(activeEpisode),
+    stream: selectedStream,
+    savedPosition: watchedDuration,
+    videoPositionRef,
+  });
+
   // Selected tracks, reset to the defaults whenever the stream changes
   const {
     selectedAudioTrack,
@@ -1415,7 +1424,7 @@ const Player = ({route}: Props): React.JSX.Element => {
               torrentManager.prepareVideoFile(
                 hash,
                 fileIndex,
-                watchedDurationRef.current > 0,
+                getStartPosition() > 0,
                 settingsStorage.isTorrentFullDownload(),
               ),
             getStreamUrl: (hash, fileIndex) =>
@@ -1444,8 +1453,8 @@ const Player = ({route}: Props): React.JSX.Element => {
             const {streamUrl, preparation} = resolved;
             console.log('Torrent stream URL:', streamUrl);
             setTorrentStartMs(
-              watchedDurationRef.current > 5
-                ? Math.floor(watchedDurationRef.current * 1000)
+              getStartPosition() > 5
+                ? Math.floor(getStartPosition() * 1000)
                 : undefined,
             );
             setProcessedStreamUrl(streamUrl);
@@ -2584,8 +2593,6 @@ const Player = ({route}: Props): React.JSX.Element => {
       });
     }
   }, []);
-  const watchedDurationRef = useRef(watchedDuration);
-  watchedDurationRef.current = watchedDuration;
 
   const handleVideoLoadCallback = useCallback(
     (e: any) => {
@@ -2620,7 +2627,8 @@ const Player = ({route}: Props): React.JSX.Element => {
           .setStreamDuration(torrentHash, Number(e.duration))
           .catch(() => {});
       }
-      const wd = watchedDurationRef.current;
+      const wd = getStartPosition();
+      markStreamLoaded();
       // A source opened at its start position is already there.
       const loadedAt = Number(e?.currentTime) || 0;
       if (wd > 5 && Math.abs(loadedAt - wd) > 2) {
@@ -2629,7 +2637,14 @@ const Player = ({route}: Props): React.JSX.Element => {
       }
       playerRef?.current?.resume();
     },
-    [handleVideoLoad, processVideoTracks, processAudioTracks, setTextTracks],
+    [
+      handleVideoLoad,
+      processVideoTracks,
+      processAudioTracks,
+      setTextTracks,
+      getStartPosition,
+      markStreamLoaded,
+    ],
   );
 
   // Memoized video player props
