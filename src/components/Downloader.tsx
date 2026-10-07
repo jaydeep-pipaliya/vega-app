@@ -17,7 +17,10 @@ import { useTVFocusBorderColor } from '../lib/tv/useTVFocusBorderColor';
 import { isTV } from '../lib/tv';
 import { TVFocusable } from './tv';
 import { providerManager } from '../lib/services/ProviderManager';
-import { deleteDownloadedFileByBaseName } from '../lib/downloadLocation';
+import {
+  deleteDownloadedFileByBaseName,
+  LEGACY_SUBTITLE_EXTENSIONS,
+} from '../lib/downloadLocation';
 import { deleteDownloadOutput } from '../lib/downloadDestination';
 import {
   createDownloadDirectoryName,
@@ -360,6 +363,7 @@ const DownloadComponent = ({
         : await deleteDownloadedFileByBaseName(
           settingsStorage.getDownloadLocationConfig(),
           createSubtitleFileName(fileName, subTitle),
+          LEGACY_SUBTITLE_EXTENSIONS,
         );
 
       if (deleted) {
