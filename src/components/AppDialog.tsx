@@ -307,12 +307,16 @@ const AppDialog = ({
               </RNHostView>
             ) : (
               <RNHostView matchContents>
+                {/* matchContents measures with no width limit, so unbounded
+                    text is laid out as one long line and Compose clips both
+                    ends. A fixed width (same as the title) makes it wrap. */}
                 <ReactNativeText
                   testID="app-dialog-message"
                   style={{
                     color: colors.onSurfaceVariant,
                     fontSize: 14,
                     lineHeight: 20,
+                    width: 280,
                   }}>
                   {message}
                 </ReactNativeText>

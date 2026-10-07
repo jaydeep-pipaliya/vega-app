@@ -210,7 +210,7 @@ export const AddSourceModal: React.FC<AddSourceModalProps> = ({
             </TVFocusable>
           </View>
           <Text className="text-sm font-medium" style={{color: colors.onSurface}}>
-            Enter a repo URL (GitHub, Codeberg, Bitbucket, GitLab), an https link to a manifest.json, or author name. Use author@cb, author@bb or author@gl for non-GitHub hosts.
+            Enter an author name, repo URL or manifest URL.
           </Text>
           <Text
             className="text-sm mt-[4px]"

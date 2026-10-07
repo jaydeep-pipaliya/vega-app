@@ -239,9 +239,10 @@ const ProviderSourceManager = ({
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: '#171717',
-            borderColor: isTV ? colors.outlineVariant : primary,
+            // TV keeps a faint resting outline; focus adds its own border.
+            borderColor: colors.outlineVariant,
             borderRadius: 20,
-            borderWidth: isTV ? 1 : 2,
+            borderWidth: isTV ? 1 : 0,
           }}>
           <MaterialCommunityIcons name="plus" size={28} color={primary} />
         </TVFocusable>
