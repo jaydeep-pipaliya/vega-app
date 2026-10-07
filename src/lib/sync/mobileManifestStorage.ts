@@ -91,16 +91,41 @@ export const readMobileSyncManifests = async (
   );
 };
 
+const readManifestFile = async (
+  fileUri: string,
+): Promise<VegaSyncManifest | null> => {
+  try {
+    return parseSyncManifest(
+      await FileSystem.StorageAccessFramework.readAsStringAsync(fileUri),
+    );
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Decides whether the manifest already in the folder under this device id may
+ * be replaced. Returning false means another install wrote it.
+ */
+export type CanOverwriteSyncManifest = (current: VegaSyncManifest) => boolean;
+
 const writeMobileSyncManifestNow = async (
   location: SafDownloadLocation,
   manifest: VegaSyncManifest,
-): Promise<void> => {
+  canOverwrite?: CanOverwriteSyncManifest,
+): Promise<boolean> => {
   const directory = await getSyncDirectory(location, true);
   if (!directory) {
     throw new Error('Unable to create Vega sync directory');
   }
   const fileName = `vega-${manifest.deviceId}.json`;
   const existing = await findChild(directory, fileName);
+  if (existing && canOverwrite) {
+    const current = await readManifestFile(existing);
+    if (current?.deviceId === manifest.deviceId && !canOverwrite(current)) {
+      return false;
+    }
+  }
   const fileUri =
     existing ||
     (await FileSystem.StorageAccessFramework.createFileAsync(
@@ -115,16 +140,26 @@ const writeMobileSyncManifestNow = async (
   if (!parseSyncManifest(written)) {
     throw new Error('Vega sync manifest verification failed');
   }
+  return true;
 };
 
+/**
+ * Writes the manifest of this device. Resolves false, without writing, when
+ * canOverwrite rejects the manifest already stored under the same device id.
+ * The check runs inside the write queue, after earlier writes finished.
+ */
 export const writeMobileSyncManifest = (
   location: SafDownloadLocation,
   manifest: VegaSyncManifest,
-): Promise<void> => {
+  canOverwrite?: CanOverwriteSyncManifest,
+): Promise<boolean> => {
   const write = manifestWriteQueue.then(() =>
-    writeMobileSyncManifestNow(location, manifest),
+    writeMobileSyncManifestNow(location, manifest, canOverwrite),
   );
-  manifestWriteQueue = write.catch(() => undefined);
+  manifestWriteQueue = write.then(
+    () => undefined,
+    () => undefined,
+  );
   return write;
 };
 

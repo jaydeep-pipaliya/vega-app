@@ -124,4 +124,23 @@ describe('mobile sync manifest storage', () => {
       JSON.stringify(manifest(3)),
     );
   });
+
+  it('leaves a manifest of the same device id alone when canOverwrite rejects it', async () => {
+    mockReadAsString.mockImplementation(async () =>
+      JSON.stringify(manifest(7)),
+    );
+    const canOverwrite = jest.fn(
+      (current: VegaSyncManifest) => current.revision === 1,
+    );
+
+    const written = await writeMobileSyncManifest(
+      location,
+      manifest(2),
+      canOverwrite,
+    );
+
+    expect(written).toBe(false);
+    expect(canOverwrite).toHaveBeenCalledWith(manifest(7));
+    expect(mockWriteAsString).not.toHaveBeenCalled();
+  });
 });
