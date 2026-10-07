@@ -92,6 +92,7 @@ export const useStreamData = () => {
     link: string,
     type: string,
     providerValue: string,
+    options?: {signal?: AbortSignal; isDownload?: boolean},
   ) => {
     const controller = new AbortController();
 
@@ -99,8 +100,9 @@ export const useStreamData = () => {
       const stream = await providerManager.getStream({
         link,
         type,
-        signal: controller.signal,
+        signal: options?.signal ?? controller.signal,
         providerValue,
+        isDownload: options?.isDownload,
       });
 
       return stream || [];
