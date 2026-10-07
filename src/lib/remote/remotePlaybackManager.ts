@@ -455,10 +455,14 @@ class RemotePlaybackManager {
     if (!this.lastRequest) return;
     const {device, payload} = this.lastRequest;
     const position = useRemoteStore.getState().currentTime;
-    await this.startRemotePlayback(device, {
-      ...payload,
-      initialPosition: position > 0 ? position : payload.initialPosition,
-    });
+    await this.queueLoad(
+      device,
+      {
+        ...payload,
+        initialPosition: position > 0 ? position : payload.initialPosition,
+      },
+      true,
+    );
   }
 
   /**
@@ -515,13 +519,22 @@ class RemotePlaybackManager {
     device: RemoteDevice,
     payload: RemoteMediaPayload,
   ): Promise<void> {
+    return this.queueLoad(device, payload, false);
+  }
+
+  /** Reloads of the same media pass keepDelays so the user's delays survive. */
+  private queueLoad(
+    device: RemoteDevice,
+    payload: RemoteMediaPayload,
+    keepDelays: boolean,
+  ): Promise<void> {
     if (isTV) return Promise.resolve();
     this.cancelQueuedSeek();
     const operationToken = ++this.loadGeneration;
     this.wakeSupersededOperations();
     // Source changes supersede old work immediately, then wait for its cleanup.
     return this.enqueueOperation(() =>
-      this.loadRemotePlayback(device, payload, operationToken),
+      this.loadRemotePlayback(device, payload, operationToken, keepDelays),
     );
   }
 
@@ -529,6 +542,7 @@ class RemotePlaybackManager {
     device: RemoteDevice,
     payload: RemoteMediaPayload,
     operationToken: number,
+    keepDelays: boolean,
   ): Promise<void> {
     if (operationToken !== this.loadGeneration)
       throw new RemotePlaybackCanceledError();
@@ -543,11 +557,13 @@ class RemotePlaybackManager {
 
     const previousPayload = this.activePayload;
     const previousSessionId = this.currentSessionId;
-    // Delays belong to one title; a quality, audio or delay reload keeps them.
+    // Delays belong to one source; a quality, audio or delay reload keeps them.
     if (
-      !previousPayload ||
-      previousPayload.title !== payload.title ||
-      previousPayload.subtitle !== payload.subtitle
+      !keepDelays &&
+      (!previousPayload ||
+        previousPayload.sourceUrl !== payload.sourceUrl ||
+        previousPayload.title !== payload.title ||
+        previousPayload.subtitle !== payload.subtitle)
     ) {
       useRemoteStore.getState().setDelays(0, 0);
     }
@@ -2211,11 +2227,15 @@ class RemotePlaybackManager {
 
     const operationToken = this.loadGeneration + 1;
     try {
-      await this.startRemotePlayback(device, {
-        ...previousPayload,
-        sourceUrl: newSourceUrl,
-        initialPosition: currentPosition,
-      });
+      await this.queueLoad(
+        device,
+        {
+          ...previousPayload,
+          sourceUrl: newSourceUrl,
+          initialPosition: currentPosition,
+        },
+        true,
+      );
       this.assertPlaybackOperation(operationToken);
       useRemoteStore.getState().setActiveQualityId(quality.id);
     } catch (e: any) {

@@ -265,3 +265,23 @@ it('seeks progressive DLNA to the saved movie position after loading', async () 
     (dlna.loadMedia as jest.Mock).mock.invocationCallOrder[0],
   ).toBeLessThan((dlna.seek as jest.Mock).mock.invocationCallOrder[0]);
 });
+it('resets remote delays for a new source even when the titles match', async () => {
+  const episode = {title: 'Show', subtitle: 'Show'};
+  const delays = () => {
+    const {subtitleDelayMs, audioDelayMs} = useRemoteStore.getState();
+    return [subtitleDelayMs, audioDelayMs];
+  };
+  await manager.startRemotePlayback(device, {
+    ...episode,
+    sourceUrl: 'http://source/e1.mp4',
+  });
+  await manager.applyDelays(500, -200);
+  expect(delays()).toEqual([500, -200]);
+  await manager.switchQuality({id: '720p'} as any, 'http://source/e1-720.mp4');
+  expect(delays()).toEqual([500, -200]);
+  await manager.startRemotePlayback(device, {
+    ...episode,
+    sourceUrl: 'http://source/e2.mp4',
+  });
+  expect(delays()).toEqual([0, 0]);
+});
