@@ -235,7 +235,7 @@ export const scheduleQueuedDownloads = async (): Promise<void> => {
     );
     const queued = getQueuedDownloads();
     queued.slice(0, availableSlots).forEach(record => {
-      startDownload(record.id, record.downloadLocation!).catch(() => undefined);
+      startOrResumeQueuedDownload(record).catch(() => undefined);
     });
     queued.slice(availableSlots).forEach(record => {
       getDownloadNotificationColor(record)
@@ -261,8 +261,14 @@ export const startQueuedDownloadNow = async (
   if (record.status !== 'queued' || !record.downloadLocation) {
     return;
   }
-  await startDownload(downloadId, record.downloadLocation);
+  await startOrResumeQueuedDownload(record);
 };
+
+// A paused download that still has a live job waits in the queue to resume.
+const startOrResumeQueuedDownload = (record: DownloadItem): Promise<void> =>
+  activeDownloads.has(record.id)
+    ? resumeLiveDownload(record.id)
+    : startDownload(record.id, record.downloadLocation!);
 
 export const startDownload = async (
   downloadId: string,
@@ -488,6 +494,29 @@ export const resumeDownload = async (downloadId: string): Promise<void> => {
       canResume: false,
     });
     await scheduleQueuedDownloads();
+    return;
+  }
+  // Pausing gave this download's slot to the queue. Wait for a free slot
+  // instead of exceeding the concurrency limit.
+  if (
+    !occupiedDownloadSlots.has(downloadId) &&
+    occupiedDownloadSlots.size >= settingsStorage.getDownloadConcurrency()
+  ) {
+    useDownloadsStore.getState().updateDownload(downloadId, {
+      status: 'queued',
+      canPause: false,
+      canResume: false,
+    });
+    await scheduleQueuedDownloads();
+    return;
+  }
+  await resumeLiveDownload(downloadId);
+};
+
+const resumeLiveDownload = async (downloadId: string): Promise<void> => {
+  const record = getRecord(downloadId);
+  const backend = getDownloadBackend(record.sourceType);
+  if (!backend.resume) {
     return;
   }
   if (record.errorCode !== 'NETWORK_INTERRUPTED') {
