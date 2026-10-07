@@ -70,6 +70,10 @@ import {
   ResumeTarget,
 } from './EpisodeResumeCard';
 import SeasonSearchSortBar from './season/SeasonSearchSortBar';
+import EpisodeSelectionBar, {
+  EpisodeSelectCheck,
+} from './season/EpisodeSelectionBar';
+import {useEpisodeSelection} from './season/useEpisodeSelection';
 
 const CONTROL_TEXT = '#F5F0EF';
 const CONTROL_TEXT_MUTED = '#D4CBC9';
@@ -214,6 +218,8 @@ interface EpisodeCardRowProps {
   onShowDetails?: () => void;
   detailsPreferred?: boolean;
   downloadComponent?: React.ReactNode;
+  /** Replaces the download button while selecting episodes. */
+  selectionMark?: React.ReactNode;
 }
 
 const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
@@ -232,6 +238,7 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
   onShowDetails,
   detailsPreferred,
   downloadComponent,
+  selectionMark,
 }) => {
   const focusBorderColor = useTVFocusBorderColor();
   const playControlRef = useRef<View>(null);
@@ -279,7 +286,7 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
               onShowDetails={onShowDetails}
             />
           </TouchableOpacity>
-          {downloadComponent}
+          {selectionMark ?? downloadComponent}
         </View>
       </View>
     );
@@ -370,7 +377,7 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
         )}
 
         <View style={{marginLeft: 8}}>
-          {downloadComponent}
+          {selectionMark ?? downloadComponent}
         </View>
       </View>
     </TVFocusGuide>
@@ -679,6 +686,22 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       sortOrder === 'desc' ? [...validDirectLinks].reverse() : validDirectLinks,
     [validDirectLinks, sortOrder],
   );
+
+  // Select mode: pick episodes and copy their download links (#566).
+  const selectableItems = useMemo(
+    () => [...validEpisodes, ...validDirectLinks],
+    [validEpisodes, validDirectLinks],
+  );
+  const fetchDownloadStreams = useCallback(
+    (link: string, signal: AbortSignal) =>
+      fetchStreams(link, type, providerValue, {signal, isDownload: true}),
+    [fetchStreams, type, providerValue],
+  );
+  const selection = useEpisodeSelection({
+    items: selectableItems,
+    resetKey: activeSeason?.episodesLink || activeSeason?.title,
+    fetchStreams: fetchDownloadStreams,
+  });
 
   // Memoized completion checker
   const isCompleted = useCallback((link: string) => {
@@ -1076,6 +1099,12 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
           episodeData: playableEpisodes,
         });
       };
+      const selectCheck = selection.active ? (
+        <EpisodeSelectCheck
+          selected={selection.selected.has(item.link)}
+          color={primary}
+        />
+      ) : null;
 
       return (
         <EpisodeCardRow
@@ -1093,12 +1122,18 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               detailsPressRef.current = null;
               return;
             }
+            if (selection.active) {
+              selection.toggle(item.link);
+              return;
+            }
             handleEpisodePress();
           }}
           onBeforePlay={rememberPlayerFocus}
           onPlayControlRef={registerPlayControl}
           onLongPress={() =>
-            onLongPressHandler(true, item.link, 'series')
+            selection.active
+              ? selection.toggle(item.link)
+              : onLongPressHandler(true, item.link, 'series')
           }
           onShowDetailsPressIn={() => {
             detailsPressRef.current = item.link;
@@ -1121,6 +1156,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
                 }
               : undefined
           }
+          selectionMark={selectCheck}
           downloadComponent={
             <Downloader
               downloadId={downloadId}
@@ -1178,6 +1214,9 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       restoreDetailsLink,
       quickDownload,
       synopsis,
+      selection.active,
+      selection.selected,
+      selection.toggle,
     ],
   );
 
@@ -1218,6 +1257,12 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
           episodeData: playableDirectLinks,
         });
       };
+      const selectCheck = selection.active ? (
+        <EpisodeSelectCheck
+          selected={selection.selected.has(item.link)}
+          color={primary}
+        />
+      ) : null;
 
       return (
         <EpisodeCardRow
@@ -1235,12 +1280,18 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               detailsPressRef.current = null;
               return;
             }
+            if (selection.active) {
+              selection.toggle(item.link);
+              return;
+            }
             handleEpisodePress();
           }}
           onBeforePlay={rememberPlayerFocus}
           onPlayControlRef={registerPlayControl}
           onLongPress={() =>
-            onLongPressHandler(true, item.link, item?.type || 'series')
+            selection.active
+              ? selection.toggle(item.link)
+              : onLongPressHandler(true, item.link, item?.type || 'series')
           }
           onShowDetailsPressIn={() => {
             detailsPressRef.current = item.link;
@@ -1263,6 +1314,7 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
                 }
               : undefined
           }
+          selectionMark={selectCheck}
           downloadComponent={
             <Downloader
               downloadId={downloadId}
@@ -1326,6 +1378,9 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
       restoreDetailsLink,
       quickDownload,
       synopsis,
+      selection.active,
+      selection.selected,
+      selection.toggle,
     ],
   );
 
@@ -1597,6 +1652,18 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
             ranges={episodeRanges}
             selectedStart={selectedRange.start}
             onSelect={selectRange}
+          />
+        )}
+
+        {selection.active && (
+          <EpisodeSelectionBar
+            selectedCount={selection.selectedCount}
+            allSelected={selection.allSelected}
+            progress={selection.progress}
+            onExit={selection.exit}
+            onToggleSelectAll={selection.toggleAll}
+            onCopyLinks={selection.copyLinks}
+            onCancelCopy={selection.cancelCopy}
           />
         )}
       </TVFocusGuide>
@@ -1941,6 +2008,31 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               </Text>
             </TVFocusable>
           )}
+          <TVFocusable
+            accessibilityRole="button"
+            borderRadius={18}
+            focusScale={1}
+            focusBorderColor={focusBorderColor}
+            style={{
+              height: 48,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingHorizontal: 16,
+              backgroundColor: colors.surfaceContainerHighest,
+              borderRadius: 18,
+            }}
+            onPress={() => {
+              setStickyMenu({active: false});
+              selection.start(stickyMenu.link);
+            }}>
+            <MaterialCommunityIcons
+              name="checkbox-multiple-marked-outline"
+              size={22}
+              color={primary}
+            />
+            <Text style={{color: colors.onSurface}}>Select episodes</Text>
+          </TVFocusable>
           <TVFocusable
             accessibilityRole="button"
             borderRadius={18}
