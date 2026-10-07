@@ -50,4 +50,19 @@ describe('moveItem', () => {
   ])('moves %i to %i', (from, to, expected) => {
     expect(moveItem(['a', 'b', 'c', 'd'], from, to)).toEqual(expected);
   });
+
+  // A drag whose start index was reset (-1) must not move the last item.
+  it.each([
+    [-1, 1],
+    [1, -1],
+    [4, 0],
+    [0, 4],
+  ])('leaves the list alone for out-of-range %i to %i', (from, to) => {
+    expect(moveItem(['a', 'b', 'c', 'd'], from, to)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
 });

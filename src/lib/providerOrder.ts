@@ -33,9 +33,17 @@ export const sortInstalledProviders = (
   });
 };
 
-/** Copy of the list with one item moved from one index to another. */
+/**
+ * Copy of the list with one item moved from one index to another. Indexes
+ * outside the list leave it unchanged.
+ */
 export const moveItem = <T>(list: T[], from: number, to: number): T[] => {
   const next = [...list];
+  const inRange = (i: number) =>
+    Number.isInteger(i) && i >= 0 && i < list.length;
+  if (!inRange(from) || !inRange(to)) {
+    return next;
+  }
   const [item] = next.splice(from, 1);
   next.splice(to, 0, item);
   return next;
