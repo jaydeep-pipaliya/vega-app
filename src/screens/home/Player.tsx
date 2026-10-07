@@ -124,6 +124,12 @@ import {
   isSeekAwayFromEnd,
   shouldAutoPlayNext,
 } from '../../lib/player/autoNext';
+import {useSleepTimer} from '../../lib/hooks/useSleepTimer';
+import {
+  SLEEP_TIMER_OPTIONS,
+  formatSleepRemaining,
+  getSleepOptionLabel,
+} from '../../lib/player/sleepTimer';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Player'>;
 
@@ -953,6 +959,27 @@ const Player = ({route}: Props): React.JSX.Element => {
 
   const [isPaused, setIsPaused] = useState(false);
   const [autoNextVisible, setAutoNextVisible] = useState(false);
+  const [showSleepTimer] = useState(() => settingsStorage.showSleepTimer());
+  const {
+    sleepTimer,
+    sleepMinutesLeft,
+    selectSleepOption,
+    checkSleepTimer,
+    consumeEpisodeEnd,
+  } = useSleepTimer(reason => {
+    if (reason === 'deadline') {
+      setAutoNextVisible(false);
+      if (isCasting) remotePlaybackManager.pause().catch(() => {});
+      else if (isTV) setIsPaused(true);
+      else playerRef.current?.pause();
+    }
+    setToast(
+      reason === 'episode'
+        ? 'Sleep timer: stopped at end of episode'
+        : 'Sleep timer: playback paused',
+      3000,
+    );
+  });
   const handleTogglePlayPause = useCallback(() => {
     if (isTV) {
       setIsPaused(prev => !prev);
@@ -996,6 +1023,7 @@ const Player = ({route}: Props): React.JSX.Element => {
   const handleProgressWithTime = useCallback(
     (e: {currentTime: number; seekableDuration: number}) => {
       handleProgress(e);
+      checkSleepTimer();
       playbackTimeRef.current = e.currentTime;
       if (liveTimelineRef.current) {
         setCurrentPlaybackTime(e.currentTime);
@@ -1011,7 +1039,7 @@ const Player = ({route}: Props): React.JSX.Element => {
         setCurrentPlaybackTime(e.currentTime);
       }
     },
-    [handleProgress, videoPositionRef],
+    [handleProgress, videoPositionRef, checkSleepTimer],
   );
 
   // The TV timeline shows the running time, so it needs every progress tick.
@@ -1608,6 +1636,7 @@ const Player = ({route}: Props): React.JSX.Element => {
   }, [currentEpisodeIndex, route.params?.episodeList]);
 
   const handleVideoEnd = useCallback(() => {
+    if (consumeEpisodeEnd()) return;
     const allowed = shouldAutoPlayNext({
       enabled: settingsStorage.isAutoPlayNextEpisodeEnabled(),
       hasNext: hasNextEpisode,
@@ -1615,7 +1644,7 @@ const Player = ({route}: Props): React.JSX.Element => {
       isMovie: route.params?.type === 'movie',
     });
     if (allowed) setAutoNextVisible(true);
-  }, [hasNextEpisode, isCasting, route.params?.type]);
+  }, [hasNextEpisode, isCasting, route.params?.type, consumeEpisodeEnd]);
 
   // Going back in the video means the viewer is not done with it yet.
   const handleVideoSeek = useCallback(
@@ -3322,6 +3351,37 @@ const Player = ({route}: Props): React.JSX.Element => {
               </Text>
             </BottomControlButton>
 
+            {/* Sleep timer */}
+            {showSleepTimer && (
+              <BottomControlButton
+                className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+                {...getTVFocusProps('sleep')}
+                onPress={() => {
+                  setActiveTab('sleep');
+                  setShowSettings(!showSettings);
+                }}>
+                <MaterialCommunityIcons
+                  name="power-sleep"
+                  size={24}
+                  color={
+                    sleepTimer.option === 'off'
+                      ? BOTTOM_CONTROL_ICON_COLOR
+                      : primary
+                  }
+                />
+                <Text
+                  className="text-white text-xs"
+                  style={BOTTOM_CONTROL_LABEL_STYLE}
+                  numberOfLines={1}>
+                  {sleepMinutesLeft !== null
+                    ? `${sleepMinutesLeft}m`
+                    : sleepTimer.option === 'episode'
+                      ? 'Ep end'
+                      : 'Sleep'}
+                </Text>
+              </BottomControlButton>
+            )}
+
             {/* PIP */}
             {!Platform.isTV && (
               <TouchableOpacity
@@ -3963,6 +4023,41 @@ const Player = ({route}: Props): React.JSX.Element => {
                         icon="speed"
                         onPress={() => {
                           selectPlaybackRate(rate);
+                          setShowSettings(false);
+                        }}
+                      />
+                    ))}
+                  </ScrollView>
+                )}
+
+                {/* Sleep Tab */}
+                {activeTab === 'sleep' && (
+                  <ScrollView className="w-full h-full p-1 px-4">
+                    <Text className="mb-2 text-lg font-bold text-center text-white">
+                      Sleep Timer
+                    </Text>
+                    {SLEEP_TIMER_OPTIONS.map(option => (
+                      <PlayerMenuRow
+                        onTVFocus={() => setSettingsCloseFocused(false)}
+                        key={String(option)}
+                        ref={
+                          sleepTimer.option === option
+                            ? preferredMenuRowRef
+                            : undefined
+                        }
+                        title={getSleepOptionLabel(option)}
+                        detail={
+                          sleepTimer.option === option
+                            ? formatSleepRemaining(sleepMinutesLeft) ||
+                              undefined
+                            : undefined
+                        }
+                        selected={sleepTimer.option === option}
+                        hasTVPreferredFocus={sleepTimer.option === option}
+                        accentColor={primary}
+                        icon="bedtime"
+                        onPress={() => {
+                          selectSleepOption(option);
                           setShowSettings(false);
                         }}
                       />

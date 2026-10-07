@@ -131,6 +131,15 @@ describe('settings defaults', () => {
     );
   });
 
+  it('shows the sleep timer button by default and can hide it', () => {
+    expect(settingsStorage.showSleepTimer()).toBe(true);
+
+    settingsStorage.setShowSleepTimer(false);
+
+    expect(settingsStorage.showSleepTimer()).toBe(false);
+    expect(mockBooleanValues.get(SettingsKeys.SHOW_SLEEP_TIMER)).toBe(false);
+  });
+
   it('persists the skip in-app webview preference', () => {
     settingsStorage.setSkipInAppWebview(true);
 

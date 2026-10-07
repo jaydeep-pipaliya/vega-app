@@ -34,6 +34,7 @@ export enum SettingsKeys {
   HIDE_SEEK_BUTTONS = 'hideSeekButtons',
   SHOW_PLAYER_EPISODE_SIDEBAR = 'showPlayerEpisodeSidebar',
   AUTO_PLAY_NEXT_EPISODE = 'autoPlayNextEpisode',
+  SHOW_SLEEP_TIMER = 'showSleepTimer',
   ENABLE_2X_GESTURE = 'enable2xGesture',
   ENABLE_SWIPE_GESTURE = 'enableSwipeGesture',
   FORWARD_BUFFER_MB = 'forwardBufferMB',
@@ -327,6 +328,14 @@ export class SettingsStorage {
 
   setAutoPlayNextEpisode(enabled: boolean): void {
     mainStorage.setBool(SettingsKeys.AUTO_PLAY_NEXT_EPISODE, enabled);
+  }
+
+  showSleepTimer(): boolean {
+    return mainStorage.getBool(SettingsKeys.SHOW_SLEEP_TIMER, true);
+  }
+
+  setShowSleepTimer(show: boolean): void {
+    mainStorage.setBool(SettingsKeys.SHOW_SLEEP_TIMER, show);
   }
 
   isEnable2xGestureEnabled(): boolean {

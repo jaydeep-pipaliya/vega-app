@@ -38,6 +38,7 @@ const BACKUP_SETTINGS: Record<string, SettingType> = {
   [SettingsKeys.HIDE_SEEK_BUTTONS]: 'bool',
   [SettingsKeys.SHOW_PLAYER_EPISODE_SIDEBAR]: 'bool',
   [SettingsKeys.AUTO_PLAY_NEXT_EPISODE]: 'bool',
+  [SettingsKeys.SHOW_SLEEP_TIMER]: 'bool',
   [SettingsKeys.ENABLE_2X_GESTURE]: 'bool',
   [SettingsKeys.ENABLE_SWIPE_GESTURE]: 'bool',
   [SettingsKeys.SEEK_INTERVAL]: 'number',
