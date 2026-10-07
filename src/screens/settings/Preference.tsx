@@ -75,6 +75,9 @@ const Preferences = ({navigation}: any) => {
     settingsStorage.showPlayerEpisodeSidebar(),
   );
 
+  const [showSleepTimer, setShowSleepTimer] = useState<boolean>(
+    settingsStorage.showSleepTimer(),
+  );
   const [autoPlayNextEpisode, setAutoPlayNextEpisode] = useState<boolean>(
     settingsStorage.isAutoPlayNextEpisodeEnabled(),
   );
@@ -358,6 +361,15 @@ const Preferences = ({navigation}: any) => {
             onValueChange={next => {
               settingsStorage.setAutoPlayNextEpisode(next);
               setAutoPlayNextEpisode(next);
+            }}
+          />
+          <SettingsSwitchRow
+            title="Sleep timer"
+            description="Show the sleep timer button in the player"
+            value={showSleepTimer}
+            onValueChange={next => {
+              settingsStorage.setShowSleepTimer(next);
+              setShowSleepTimer(next);
             }}
           />
           <SettingsSwitchRow

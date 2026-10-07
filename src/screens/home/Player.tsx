@@ -959,6 +959,7 @@ const Player = ({route}: Props): React.JSX.Element => {
 
   const [isPaused, setIsPaused] = useState(false);
   const [autoNextVisible, setAutoNextVisible] = useState(false);
+  const [showSleepTimer] = useState(() => settingsStorage.showSleepTimer());
   const {
     sleepTimer,
     sleepMinutesLeft,
@@ -3351,33 +3352,35 @@ const Player = ({route}: Props): React.JSX.Element => {
             </BottomControlButton>
 
             {/* Sleep timer */}
-            <BottomControlButton
-              className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
-              {...getTVFocusProps('sleep')}
-              onPress={() => {
-                setActiveTab('sleep');
-                setShowSettings(!showSettings);
-              }}>
-              <MaterialCommunityIcons
-                name="power-sleep"
-                size={24}
-                color={
-                  sleepTimer.option === 'off'
-                    ? BOTTOM_CONTROL_ICON_COLOR
-                    : primary
-                }
-              />
-              <Text
-                className="text-white text-xs"
-                style={BOTTOM_CONTROL_LABEL_STYLE}
-                numberOfLines={1}>
-                {sleepMinutesLeft !== null
-                  ? `${sleepMinutesLeft}m`
-                  : sleepTimer.option === 'episode'
-                    ? 'Ep end'
-                    : 'Sleep'}
-              </Text>
-            </BottomControlButton>
+            {showSleepTimer && (
+              <BottomControlButton
+                className="min-w-0 flex-1 flex-row items-center justify-center gap-1"
+                {...getTVFocusProps('sleep')}
+                onPress={() => {
+                  setActiveTab('sleep');
+                  setShowSettings(!showSettings);
+                }}>
+                <MaterialCommunityIcons
+                  name="power-sleep"
+                  size={24}
+                  color={
+                    sleepTimer.option === 'off'
+                      ? BOTTOM_CONTROL_ICON_COLOR
+                      : primary
+                  }
+                />
+                <Text
+                  className="text-white text-xs"
+                  style={BOTTOM_CONTROL_LABEL_STYLE}
+                  numberOfLines={1}>
+                  {sleepMinutesLeft !== null
+                    ? `${sleepMinutesLeft}m`
+                    : sleepTimer.option === 'episode'
+                      ? 'Ep end'
+                      : 'Sleep'}
+                </Text>
+              </BottomControlButton>
+            )}
 
             {/* PIP */}
             {!Platform.isTV && (
