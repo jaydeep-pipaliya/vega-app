@@ -197,7 +197,9 @@ export class ExtensionManager {
         // A path that leaves the source folder is unsafe; skip that entry.
         .filter(
           (item: any) =>
-            item?.path === undefined || isValidProviderPath(item.path),
+            item?.path == null ||
+            item.path === '' ||
+            isValidProviderPath(item.path),
         )
         .map((item: any) => ({
           value: item.value,
