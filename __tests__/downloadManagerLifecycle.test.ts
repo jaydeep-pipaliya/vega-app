@@ -547,6 +547,64 @@ describe('download manager foreground lifecycle', () => {
     resolvers.forEach(resolve => resolve());
   });
 
+  it('waits for a free slot before resuming a paused download', async () => {
+    mockDownloadConcurrency = 1;
+    mockBackendResume.mockReset().mockResolvedValue(undefined);
+    const resolvers = new Map<string, () => void>();
+    mockBackendStart.mockImplementation(
+      ({record}) =>
+        new Promise<void>(resolve => {
+          resolvers.set(record.id, resolve);
+        }),
+    );
+    for (const [index, id] of ['paused', 'running'].entries()) {
+      useDownloadsStore.getState().enqueueDownload({
+        id,
+        title: id,
+        type: 'movie',
+        url: `https://example.com/${id}.mp4`,
+        sourceType: 'http',
+        videoType: 'mp4',
+        downloadLocation: location,
+        createdAt: index + 1,
+      });
+    }
+
+    await scheduleQueuedDownloads();
+    await flushAsyncWork();
+    useDownloadsStore.getState().updateDownload('paused', {
+      status: 'downloading',
+      canPause: true,
+    });
+    await pauseDownload('paused');
+    await flushAsyncWork();
+    expect(mockBackendStart.mock.calls[1][0].record.id).toBe('running');
+
+    await resumeDownload('paused');
+    await flushAsyncWork();
+
+    expect(mockBackendResume).not.toHaveBeenCalled();
+    expect(useDownloadsStore.getState().downloads.paused.status).toBe('queued');
+
+    resolvers.get('running')?.();
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    expect(mockBackendResume).toHaveBeenCalledWith('paused');
+    expect(mockBackendStart).toHaveBeenCalledTimes(2);
+    expect(useDownloadsStore.getState().downloads.paused).toMatchObject({
+      status: 'downloading',
+      canPause: true,
+      canResume: false,
+    });
+
+    resolvers.get('paused')?.();
+    await flushAsyncWork();
+    expect(useDownloadsStore.getState().downloads.paused.status).toBe(
+      'completed',
+    );
+  });
+
   it('starts a queued download immediately even when normal slots are full', async () => {
     const resolvers = new Map<string, () => void>();
     mockBackendStart.mockImplementation(
