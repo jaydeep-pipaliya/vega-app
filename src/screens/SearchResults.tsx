@@ -27,7 +27,11 @@ interface SearchPageData {
 
 const SearchResults = ({route, navigation}: Props): React.ReactElement => {
   const colors = useM3Colors();
-  const installedProviders = useContentStore(state => state.installedProviders);
+  const storeProviders = useContentStore(state => state.installedProviders);
+  // Reordering providers in the drawer makes a new array with the same
+  // providers. Only a real install or removal should restart the searches.
+  const providersKey = storeProviders.map(p => p.value).sort().join('|');
+  const installedProviders = useMemo(() => storeProviders, [providersKey]);
   const [searchData, setSearchData] = useState<SearchPageData[]>([]);
   const [emptyResults, setEmptyResults] = useState<SearchPageData[]>([]);
   const [editQuery, setEditQuery] = useState(route.params.filter);

@@ -1,5 +1,7 @@
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {View, Text, ScrollView, TouchableOpacity, BackHandler} from 'react-native';
+import {View, Text, BackHandler} from 'react-native';
+// The gesture handler ScrollView lets a held row take over from scrolling.
+import {ScrollView} from 'react-native-gesture-handler';
 import React, {useEffect} from 'react';
 import useContentStore from '../lib/zustand/contentStore';
 import {MaterialIcons} from '@expo/vector-icons';
@@ -7,6 +9,8 @@ import {useM3Colors} from '../theme/M3PaletteContext';
 import {isTV} from '../lib/tv';
 import {TVFocusable, TVFocusGuide} from './tv';
 import {useTVFocusBorderColor} from '../lib/tv/useTVFocusBorderColor';
+import ProviderIcon from './ProviderIcon';
+import ReorderableProviderList from './ReorderableProviderList';
 
 interface ProviderDrawerProps {
   onClose: () => void;
@@ -51,7 +55,9 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
   }, [handleClose, isOpen]);
 
   return (
-    <View className="flex-1" style={{backgroundColor: isTV ? '#121214' : 'rgba(0,0,0,0.85)'}}>
+    <View
+      className="flex-1"
+      style={{backgroundColor: isTV ? '#121214' : 'rgba(0,0,0,0.85)'}}>
       <View
         style={{
           borderBottomColor: 'rgba(255,255,255,0.1)',
@@ -96,13 +102,18 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
         trapFocusUp={true}
         trapFocusDown={true}
         style={{flex: 1}}>
-        <ScrollView showsVerticalScrollIndicator={false} className="flex-1 px-2">
-          {installedProviders.map((item, index) => {
-            const isSelected = provider.value === item.value;
-            // One preferred item only: the selected provider, else the first.
-            const isPreferred = hasSelectedProvider ? isSelected : index === 0;
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          className="flex-1 px-2">
+          {/* TV keeps a plain list: rows are picked with the remote. */}
+          {isTV &&
+            installedProviders.map((item, index) => {
+              const isSelected = provider.value === item.value;
+              // One preferred item only: the selected provider, else the first.
+              const isPreferred = hasSelectedProvider
+                ? isSelected
+                : index === 0;
 
-            if (isTV) {
               return (
                 <TVFocusable
                   key={item.value}
@@ -119,24 +130,28 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
                     borderRadius: 12,
                     flexDirection: 'row',
                     justifyContent: 'space-between',
-                    marginVertical: 4,
+                    marginVertical: 3,
                     paddingHorizontal: 16,
-                    paddingVertical: 14,
+                    paddingVertical: 13,
                   }}>
                   {({focused}) => (
                     <>
-                      <View style={{alignItems: 'center', flexDirection: 'row'}}>
-                        <MaterialIcons
-                          name="movie"
-                          size={22}
+                      <View
+                        style={{alignItems: 'center', flexDirection: 'row'}}>
+                        <ProviderIcon
+                          uri={item.icon}
+                          name={item.display_name}
+                          size={24}
+                          background="rgba(255, 255, 255, 0.08)"
                           color={focused || isSelected ? primary : '#888'}
                         />
                         <Text
                           style={{
-                            color: focused || isSelected ? '#FFFFFF' : '#B0B0B0',
-                            fontSize: 16,
+                            color:
+                              focused || isSelected ? '#FFFFFF' : '#B0B0B0',
+                            fontSize: 16.5,
                             fontWeight: focused || isSelected ? '700' : '500',
-                            marginLeft: 12,
+                            marginLeft: 10,
                           }}>
                           {item.display_name}
                         </Text>
@@ -148,39 +163,18 @@ const ProviderDrawer = ({onClose, isOpen = true}: ProviderDrawerProps) => {
                   )}
                 </TVFocusable>
               );
-            }
-
-            return (
-              <TouchableOpacity
-                key={item.value}
-                onPress={() => {
-                  setProvider(item);
-                  onClose();
-                }}
-                className={`flex-row items-center justify-between p-4 my-1 rounded-lg ${
-                  isSelected ? 'bg-white/10' : 'bg-transparent'
-                }`}>
-                <View className="flex-row items-center">
-                  <MaterialIcons
-                    name="movie"
-                    size={20}
-                    color={isSelected ? primary : '#888'}
-                  />
-                  <Text
-                    className={`ml-3 text-base ${
-                      isSelected
-                        ? 'text-white font-medium'
-                        : 'text-gray-400'
-                    }`}>
-                    {item.display_name}
-                  </Text>
-                </View>
-                {isSelected && (
-                  <MaterialIcons name="check" size={20} color={primary} />
-                )}
-              </TouchableOpacity>
-            );
-          })}
+            })}
+          {!isTV && (
+            <ReorderableProviderList
+              providers={installedProviders}
+              selectedValue={provider.value}
+              primary={primary}
+              onSelect={item => {
+                setProvider(item);
+                onClose();
+              }}
+            />
+          )}
           <View className="h-16" />
         </ScrollView>
       </TVFocusGuide>

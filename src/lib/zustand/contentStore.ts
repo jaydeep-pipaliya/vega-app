@@ -3,6 +3,8 @@ import {persist, createJSONStorage} from 'zustand/middleware';
 import {MMKVLoader} from 'react-native-mmkv-storage';
 // import {ProvidersList, providersList} from '../constants';
 import {extensionStorage, ProviderExtension} from '../storage/extensionStorage';
+import {settingsStorage} from '../storage/SettingsStorage';
+import {sortInstalledProviders} from '../providerOrder';
 
 const storage = new MMKVLoader().initialize();
 
@@ -33,18 +35,21 @@ const useContentStore = create<Content>()(
         installedAt: 0,
         lastUpdated: 0,
       },
-      installedProviders: extensionStorage
-        .getInstalledProviders()
-        .sort((a, b) => a.display_name.localeCompare(b.display_name)),
+      installedProviders: sortInstalledProviders(
+        extensionStorage.getInstalledProviders(),
+        settingsStorage.getProviderOrder(),
+      ),
       availableProviders: [],
       activeExtensionProvider: null,
 
       setProvider: (provider: ProviderExtension) => set({provider}),
 
+      // Kept in the order the user dragged them to in the provider drawer.
       setInstalledProviders: (providers: ProviderExtension[]) =>
         set({
-          installedProviders: providers.sort((a, b) =>
-            a.display_name.localeCompare(b.display_name),
+          installedProviders: sortInstalledProviders(
+            providers,
+            settingsStorage.getProviderOrder(),
           ),
         }),
 

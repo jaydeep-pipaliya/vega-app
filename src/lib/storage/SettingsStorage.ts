@@ -44,6 +44,9 @@ export enum SettingsKeys {
   // Quality settings
   EXCLUDED_QUALITIES = 'excludedQualities',
 
+  // Provider list order picked in the provider drawer
+  PROVIDER_ORDER = 'providerOrder',
+
   // Download settings
   DOWNLOAD_LOCATION = 'downloadLocation',
   DOWNLOAD_CONCURRENCY = 'downloadConcurrency',
@@ -360,6 +363,15 @@ export class SettingsStorage {
 
   setExcludedQualities(qualities: string[]): void {
     mainStorage.setArray(SettingsKeys.EXCLUDED_QUALITIES, qualities);
+  }
+
+  /** Installed provider keys in the user's order (see providerOrderKey). */
+  getProviderOrder(): string[] {
+    return mainStorage.getArray<string>(SettingsKeys.PROVIDER_ORDER) || [];
+  }
+
+  setProviderOrder(keys: string[]): void {
+    mainStorage.setArray(SettingsKeys.PROVIDER_ORDER, keys);
   }
 
   getDownloadLocationConfig(): DownloadLocationConfig | null {
