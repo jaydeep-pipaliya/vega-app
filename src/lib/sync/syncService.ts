@@ -39,6 +39,7 @@ import {
 
 const DEVICE_ID_KEY = 'vega-sync-device-id';
 const REVISION_KEY = 'vega-sync-revision';
+const PUBLISHED_REVISION_KEY = 'vega-sync-published-revision';
 const TOMBSTONES_KEY = 'vega-sync-tombstones';
 const HISTORY_KEY = 'vega-sync-history';
 const PUBLISH_DELAY_MS = 1000;
@@ -329,12 +330,47 @@ const applyRemoteHistory = (history: Record<string, SyncedHistory>) => {
   }
 };
 
+// Our manifest file must still hold the revision this install wrote last.
+// Android Auto Backup restores MMKV, device id included, onto a new phone.
+// Both phones then write vega-<id>.json and erase each other's changes. A
+// different revision in the file shows that another install wrote it.
+// Installs from before this check have no published revision; they pass.
+const isOwnPublishedManifest = (current: VegaSyncManifest): boolean => {
+  const published = mainStorage.getNumber(PUBLISHED_REVISION_KEY);
+  return published === undefined || current.revision === published;
+};
+
+const writeOwnManifest = async (
+  location: Parameters<typeof writeMobileSyncManifest>[0],
+  manifest: VegaSyncManifest,
+): Promise<boolean> => {
+  const written = await writeMobileSyncManifest(
+    location,
+    manifest,
+    isOwnPublishedManifest,
+  );
+  if (written !== false) {
+    mainStorage.setNumber(PUBLISHED_REVISION_KEY, manifest.revision);
+  }
+  return written !== false;
+};
+
 export const publishSyncManifest = async (): Promise<void> => {
   const location = settingsStorage.getDownloadLocationConfig();
   if (!location || !isSafDownloadLocation(location)) {
     return;
   }
-  await writeMobileSyncManifest(location, buildManifest());
+  const manifest = buildManifest();
+  if (await writeOwnManifest(location, manifest)) {
+    return;
+  }
+  // The file belongs to the other install now. Leave it in place, so the
+  // next sync merges its changes, and publish under a new device id. A
+  // queued write built before the id changed only needs the new id.
+  if (mainStorage.getString(DEVICE_ID_KEY) === manifest.deviceId) {
+    mainStorage.setString(DEVICE_ID_KEY, Crypto.randomUUID());
+  }
+  await writeOwnManifest(location, buildManifest());
 };
 
 const schedulePublish = () => {
