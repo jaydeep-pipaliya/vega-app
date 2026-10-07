@@ -13,7 +13,11 @@ import {MaterialIcons} from '@expo/vector-icons';
 import type {ProviderExtension} from '../lib/storage/extensionStorage';
 import {settingsStorage} from '../lib/storage/SettingsStorage';
 import useContentStore from '../lib/zustand/contentStore';
-import {moveItem, providerOrderKey} from '../lib/providerOrder';
+import {
+  moveItem,
+  providerOrderKey,
+  sortInstalledProviders,
+} from '../lib/providerOrder';
 import ProviderIcon from './ProviderIcon';
 
 const LONG_PRESS_MS = 300;
@@ -41,9 +45,15 @@ const ReorderableProviderList = ({
   const rowHeight = useSharedValue(56);
   const dragFrom = useSharedValue(-1);
   const dragY = useSharedValue(0);
+  const [dragging, setDragging] = useState(false);
 
-  // Follow installs, removals and updates made elsewhere.
-  useLayoutEffect(() => setOrder(providers), [providers]);
+  // Follow installs, removals and updates made elsewhere. Not mid-drag: the
+  // new order would reset the drag and drop the wrong row.
+  useLayoutEffect(() => {
+    if (!dragging) {
+      setOrder(providers);
+    }
+  }, [providers, dragging]);
 
   // Rows already sit in their new places when the drag settles, so the
   // offsets are cleared only once the new order has rendered.
@@ -53,12 +63,18 @@ const ReorderableProviderList = ({
   }, [order, dragFrom, dragY]);
 
   const commit = (from: number, to: number) => {
-    if (from === to) {
+    setDragging(false);
+    if (from < 0 || from === to) {
       dragFrom.value = -1;
       dragY.value = 0;
       return;
     }
-    const next = moveItem(order, from, to);
+    // Apply the move to the latest list, so changes made during the drag
+    // are kept.
+    const next = sortInstalledProviders(
+      providers,
+      moveItem(order, from, to).map(providerOrderKey),
+    );
     setOrder(next);
     settingsStorage.setProviderOrder(next.map(providerOrderKey));
     useContentStore.getState().setInstalledProviders(next);
@@ -83,6 +99,7 @@ const ReorderableProviderList = ({
           dragY={dragY}
           onSelect={onSelect}
           onDrop={commit}
+          onDragChange={setDragging}
           onLayout={index === 0 ? onRowLayout : undefined}
         />
       ))}
@@ -101,6 +118,7 @@ interface ProviderRowProps {
   dragY: SharedValue<number>;
   onSelect: (provider: ProviderExtension) => void;
   onDrop: (from: number, to: number) => void;
+  onDragChange: (dragging: boolean) => void;
   onLayout?: (event: LayoutChangeEvent) => void;
 }
 
@@ -124,6 +142,7 @@ const ProviderRow = ({
   dragY,
   onSelect,
   onDrop,
+  onDragChange,
   onLayout,
 }: ProviderRowProps) => {
   const pressed = useSharedValue(0);
@@ -139,6 +158,7 @@ const ProviderRow = ({
     .onStart(() => {
       dragFrom.value = index;
       dragY.value = 0;
+      runOnJS(onDragChange)(true);
       runOnJS(triggerHaptic)();
     })
     .onUpdate(event => {
@@ -146,6 +166,12 @@ const ProviderRow = ({
     })
     .onEnd(() => {
       const from = dragFrom.value;
+      if (from < 0) {
+        // The drag was reset under us; drop nothing.
+        dragY.value = 0;
+        runOnJS(onDrop)(-1, -1);
+        return;
+      }
       const to = targetIndex();
       // Slide into the free slot, then save the new order.
       dragY.value = withTiming(
@@ -161,6 +187,7 @@ const ProviderRow = ({
       if (!success && dragFrom.value === index) {
         dragFrom.value = -1;
         dragY.value = 0;
+        runOnJS(onDragChange)(false);
       }
     });
 
