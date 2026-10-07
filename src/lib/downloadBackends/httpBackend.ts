@@ -193,6 +193,8 @@ const startNativeDownload = async ({
     }),
   );
 
+  // A job this JS instance did not start is left over from before a JS reload.
+  const ownedByThisSession = activeNativeDownloads.has(record.id);
   activeNativeDownloads.add(record.id);
   useDownloadsStore.getState().updateDownload(record.id, {
     backendJobId: record.id,
@@ -201,14 +203,32 @@ const startNativeDownload = async ({
     canResume: false,
   });
 
-  try {
-    const result = await nativeHttpModule.start(
+  const destinationUri = destination.directFinalDocumentUri;
+  const start = () =>
+    nativeHttpModule.start(
       record.id,
       record.url,
-      destination.directFinalDocumentUri,
+      destinationUri,
       record.headers || {},
       settingsStorage.getDownloadConnections(),
     );
+
+  try {
+    let result;
+    try {
+      result = await start();
+    } catch (error) {
+      if (
+        ownedByThisSession ||
+        (error as {code?: unknown} | null)?.code !== 'DOWNLOAD_ACTIVE'
+      ) {
+        throw error;
+      }
+      // The native job outlived a JS reload. Stop it, keeping the partial
+      // file, and start again so the transfer resumes from where it stopped.
+      await nativeHttpModule.cancel(record.id, false);
+      result = await start();
+    }
     useDownloadsStore
       .getState()
       .updateProgress(record.id, result.downloadedBytes, result.totalBytes, 0);
