@@ -817,6 +817,8 @@ const Player = ({route}: Props): React.JSX.Element => {
   }, []);
 
   // Custom hooks for stream management
+  const [loadedLocalEpisodeKey, setLoadedLocalEpisodeKey] = useState<string>();
+  const connectedRemoteDevice = useRemoteStore(state => state.connectedDevice);
   const {
     streamData,
     selectedStream,
@@ -831,6 +833,16 @@ const Player = ({route}: Props): React.JSX.Element => {
     routeParams: route.params,
     provider: provider.value,
     enabled: localDecision === 'online',
+    // Let the local loading overlay clear before provider work starts.
+    // Receivers need online sources without loading a local player first.
+    localPlaybackReady:
+      loadedLocalEpisodeKey === activeEpisodeKey ||
+      (!isTV &&
+        (Boolean(remoteMediaClient) ||
+          Boolean(connectedRemoteDevice) ||
+          castRequested ||
+          Boolean((route.params as any)?.alwaysCast) ||
+          settingsStorage.isAlwaysCastMode())),
   });
 
   // Custom hooks for video settings
@@ -1340,7 +1352,9 @@ const Player = ({route}: Props): React.JSX.Element => {
     setAudioDelayMs(0);
   }, [selectedStream.link]);
 
-  const [processedStreamUrl, setProcessedStreamUrl] = useState<string>('');
+  const [processedStreamUrl, setProcessedStreamUrl] = useState<string>(() =>
+    isTorrentStream(selectedStream) ? '' : selectedStream.link,
+  );
   // Resume point handed to the player with a torrent source, fixed per stream so
   // progress updates never reload it. Starting there skips buffering the opening
   // seconds, which on a torrent means downloading pieces that are then skipped.
@@ -1358,7 +1372,6 @@ const Player = ({route}: Props): React.JSX.Element => {
       Boolean(selectedStream?.link && isLocalPath(selectedStream.link)),
     [selectedStream?.link, selectedStream?.server, selectedStream?.type],
   );
-  const connectedRemoteDevice = useRemoteStore(state => state.connectedDevice);
   const isRemoteActive =
     !Platform.isTV &&
     (Boolean(remoteMediaClient) ||
@@ -2709,6 +2722,9 @@ const Player = ({route}: Props): React.JSX.Element => {
 
   const handleVideoLoadCallback = useCallback(
     (e: any) => {
+      if (isLocalOrDownloadedStream) {
+        setLoadedLocalEpisodeKey(activeEpisodeKey);
+      }
       handleVideoLoad(e?.naturalSize);
       // ExoPlayer drops a video track this device cannot decode (for example
       // 10-bit HEVC) and plays the audio over a black screen. It reports a
@@ -2752,6 +2768,8 @@ const Player = ({route}: Props): React.JSX.Element => {
     },
     [
       handleVideoLoad,
+      activeEpisodeKey,
+      isLocalOrDownloadedStream,
       processVideoTracks,
       processAudioTracks,
       setTextTracks,

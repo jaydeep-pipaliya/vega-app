@@ -17,6 +17,7 @@ interface UseStreamOptions {
   routeParams: any;
   provider: string;
   enabled?: boolean;
+  localPlaybackReady?: boolean;
 }
 
 export const isLocalPath = (path?: string): boolean => {
@@ -379,6 +380,7 @@ export const useStream = ({
   routeParams,
   provider,
   enabled = true,
+  localPlaybackReady = true,
 }: UseStreamOptions) => {
   const [selectedStream, setSelectedStream] = useState<Stream>(() => {
     const path = getCompletedDownloadPathSync(activeEpisode, routeParams);
@@ -389,6 +391,8 @@ export const useStream = ({
   const [externalSubs, setExternalSubs] = useState<any[]>([]);
 
   const activeEpisodeKey = getEpisodeIdentity(activeEpisode);
+  const activeEpisodeKeyRef = useRef(activeEpisodeKey);
+  activeEpisodeKeyRef.current = activeEpisodeKey;
   const previousEpisodeKeyRef = useRef(activeEpisodeKey);
 
   useEffect(() => {
@@ -438,6 +442,12 @@ export const useStream = ({
       const localStream: Stream | null = downloadedPath
         ? { server: 'Downloaded', link: downloadedPath, type: 'mp4' }
         : null;
+
+      // Start a discovered download before waiting for optional online servers.
+      // A fetch from a previous episode must not replace the current selection.
+      if (localStream && activeEpisodeKeyRef.current === activeEpisodeKey) {
+        setSelectedStream(current => current.link ? current : localStream);
+      }
 
       let remoteLink =
         (!isLocalPath(activeEpisode?.link) && activeEpisode?.link) ||
@@ -515,6 +525,7 @@ export const useStream = ({
     },
     enabled:
       enabled &&
+      (!localPlaceholder || localPlaybackReady) &&
       Boolean(
         activeEpisode?.link || activeEpisode?.id || activeEpisode?.title,
       ),
@@ -541,14 +552,16 @@ export const useStream = ({
         if (!current?.link) return streamData[0];
         // A locally-picked (or auto-resumed) video file will never match an
         // online stream link — that's expected, not staleness. Leave it be.
-        if (current?.type === 'local') return current;
+        if (current?.type === 'local' || isLocalPath(current?.link)) return current;
         const stillExists = streamData.find(s => s.link === current.link);
         return stillExists ? current : streamData[0];
       });
     }
   }, [streamData]);
 
-  // Extract downloaded and online external subtitles
+  const isPlayingLocal = isLocalPath(selectedStream?.link);
+
+  // Keep fetched subtitles available for selection during local playback too.
   useEffect(() => {
     const downloadedSubs = getDownloadedSubtitlesForMedia(
       activeEpisode,
@@ -591,12 +604,12 @@ export const useStream = ({
 
   // Handle errors
   useEffect(() => {
-    if (error) {
+    if (error && !isPlayingLocal) {
       console.error('Stream fetch error:', error);
       const errorMessage = error?.message || 'No stream found, try again later';
       ToastAndroid.show(errorMessage, ToastAndroid.SHORT);
     }
-  }, [error]);
+  }, [error, isPlayingLocal]);
 
   const switchToNextStream = () => {
     if (streamData && streamData.length > 0) {
@@ -619,8 +632,8 @@ export const useStream = ({
     setSelectedStream,
     externalSubs,
     setExternalSubs,
-    isLoading,
-    error,
+    isLoading: isLoading && !isPlayingLocal,
+    error: isPlayingLocal ? null : error,
     refetch,
     switchToNextStream,
   };

@@ -1,5 +1,17 @@
 import {beforeEach, describe, expect, it, jest} from '@jest/globals';
 
+const mockFinalizeHls =
+  jest.fn<(...args: unknown[]) => Promise<{duration: number}>>();
+const mockWriteFile = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockCopyFile = jest.fn<(...args: unknown[]) => Promise<void>>();
+jest.mock('react-native', () => ({
+  NativeModules: {
+    HttpDownloadModule: {
+      finalizeHls: (...args: unknown[]) => mockFinalizeHls(...args),
+    },
+  },
+}));
+
 const mockAxiosGet = jest.fn<(url: string) => Promise<{data: unknown}>>();
 // A permanent HTTP error fails at once; network errors would be retried.
 const mockDownloadFile = jest.fn((_options: {fromUrl: string}) => ({
@@ -16,6 +28,8 @@ jest.mock('@dr.pogodin/react-native-fs', () => ({
   exists: jest.fn(async () => true),
   mkdir: jest.fn(async () => undefined),
   unlink: jest.fn(async () => undefined),
+  writeFile: (...args: unknown[]) => mockWriteFile(...args),
+  copyFile: (...args: unknown[]) => mockCopyFile(...args),
   downloadFile: (options: {fromUrl: string}) => mockDownloadFile(options),
 }));
 
@@ -130,4 +144,115 @@ describe('hlsDownloader2 audio renditions', () => {
       'https://example.com/audio/commentary.m3u8',
     );
   });
+});
+
+describe('hlsDownloader2 MP4 finalization', () => {
+  beforeEach(() => {
+    mockAxiosGet.mockReset();
+    mockDownloadFile.mockReset();
+    mockDownloadFile.mockImplementation(() => ({
+      jobId: 1,
+      promise: Promise.resolve({statusCode: 200}),
+    }));
+    mockFinalizeHls.mockReset();
+    mockFinalizeHls.mockResolvedValue({duration: 10});
+    mockWriteFile.mockReset();
+    mockWriteFile.mockResolvedValue(undefined);
+    mockCopyFile.mockReset();
+    mockCopyFile.mockResolvedValue(undefined);
+  });
+
+  it('remuxes muxed TS even without a separate audio track before publishing the MP4', async () => {
+    mockAxiosGet.mockResolvedValue({data: playlist()});
+    const completed = jest.fn();
+    await hlsDownloader2({
+      videoUrl: 'https://example.com/video.m3u8',
+      downloadId: 'ts',
+      path: '/saved/movie.mp4',
+      title: 'Movie',
+      onCompleted: completed,
+    });
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      '/cache/hls_segments/video.m3u8',
+      expect.stringContaining('#EXTINF:10,\nvideo_0.ts\n#EXT-X-ENDLIST'),
+      'utf8',
+    );
+    expect(mockFinalizeHls).toHaveBeenCalledWith(
+      '/cache/hls_segments/video.m3u8',
+      null,
+      '/cache/hls_segments/finalized.mp4',
+    );
+    expect(mockCopyFile).toHaveBeenCalledWith(
+      '/cache/hls_segments/finalized.mp4',
+      '/saved/movie.mp4',
+    );
+    expect(completed).toHaveBeenCalledWith('/saved/movie.mp4');
+  });
+
+  it('keeps fMP4 initialization changes and discontinuities in the local playlist', async () => {
+    mockAxiosGet.mockResolvedValue({
+      data: [
+        '#EXTM3U',
+        '#EXT-X-MAP:URI="init-a.mp4"',
+        '#EXTINF:3,',
+        'one.m4s',
+        '#EXT-X-DISCONTINUITY',
+        '#EXT-X-MAP:URI="init-b.mp4"',
+        '#EXTINF:4,',
+        'two.m4s',
+        '#EXT-X-ENDLIST',
+      ].join('\n'),
+    });
+    await download();
+    const text = mockWriteFile.mock.calls[0][1] as string;
+    expect(text).toContain(
+      '#EXT-X-MAP:URI="video_init_0.mp4"\n#EXTINF:3,\nvideo_0.ts',
+    );
+    expect(text).toContain(
+      '#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="video_init_1.mp4"\n#EXTINF:4,\nvideo_1.ts',
+    );
+    const fetched = mockDownloadFile.mock.calls.map(c => c[0].fromUrl);
+    expect(fetched).toEqual(
+      expect.arrayContaining([
+        'https://example.com/init-a.mp4',
+        'https://example.com/init-b.mp4',
+      ]),
+    );
+  });
+
+  it('passes both offline playlists to the finalizer for separate audio', async () => {
+    mockAxiosGet.mockImplementation(async url => ({
+      data: url.endsWith('/video.m3u8')
+        ? [
+            '#EXTM3U',
+            '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",DEFAULT=YES,URI="audio.m3u8"',
+            '#EXT-X-STREAM-INF:BANDWIDTH=10,AUDIO="aud"',
+            'track.m3u8',
+          ].join('\n')
+        : playlist(),
+    }));
+    await download();
+    expect(mockFinalizeHls).toHaveBeenCalledWith(
+      '/cache/hls_segments/video.m3u8',
+      '/cache/hls_segments/audio.m3u8',
+      '/cache/hls_segments/finalized.mp4',
+    );
+  });
+
+  it('does not publish raw segments when finalization fails', async () => {
+    mockAxiosGet.mockResolvedValue({data: playlist()});
+    mockFinalizeHls.mockRejectedValue(new Error('remux failed'));
+    await expect(download()).rejects.toThrow('remux failed');
+    expect(mockCopyFile).not.toHaveBeenCalled();
+  });
+
+  it.each([0, -1, NaN])(
+    'rejects an invalid finalized duration %s',
+    async duration => {
+      mockAxiosGet.mockResolvedValue({data: playlist()});
+      mockFinalizeHls.mockResolvedValue({duration});
+      await expect(download()).rejects.toThrow('no valid duration');
+      expect(mockCopyFile).not.toHaveBeenCalled();
+    },
+  );
 });

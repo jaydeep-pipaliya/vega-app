@@ -10,11 +10,11 @@ interface NativeFileFetcher {
     headers: Record<string, string>,
   ): Promise<{statusCode: number}>;
   cancelFetches(tag: string): void;
-  muxAudioVideo(
-    videoPath: string,
-    audioPath: string,
+  finalizeHls(
+    videoPlaylistPath: string,
+    audioPlaylistPath: string | null,
     outputPath: string,
-  ): Promise<void>;
+  ): Promise<{duration: number}>;
 }
 
 // Segments go through the app's OkHttp client so DNS over HTTPS, WARP and
@@ -26,12 +26,14 @@ const nativeFetcher = NativeModules.HttpDownloadModule as
 const canFetchNatively =
   typeof nativeFetcher?.fetchToFile === 'function' &&
   typeof nativeFetcher?.cancelFetches === 'function';
-const canMuxNatively = typeof nativeFetcher?.muxAudioVideo === 'function';
+const canFinalizeHls = typeof nativeFetcher?.finalizeHls === 'function';
 
 interface SegmentInfo {
   duration: number;
   url: string;
   index: number;
+  discontinuity: boolean;
+  initSegmentUrl?: string;
 }
 
 interface M3U8Data {
@@ -46,7 +48,7 @@ interface M3U8Data {
 /** Reads one attribute from an HLS tag line, quoted or not. */
 const tagAttribute = (line: string, name: string): string | undefined => {
   const match = line.match(new RegExp(`[:,]${name}=("([^"]*)"|[^,]*)`));
-  return match ? match[2] ?? match[1] : undefined;
+  return match ? (match[2] ?? match[1]) : undefined;
 };
 
 const MAX_SEGMENT_ATTEMPTS = 5;
@@ -88,7 +90,9 @@ const resolveUrl = (targetUrl: string, baseUrl: string): string => {
   }
 };
 
-const normalizeHeaders = (headers?: Record<string, string>): Record<string, string> => {
+const normalizeHeaders = (
+  headers?: Record<string, string>,
+): Record<string, string> => {
   const result: Record<string, string> = {
     'User-Agent': DEFAULT_USER_AGENT,
     ...(headers || {}),
@@ -108,7 +112,8 @@ const parseM3U8Playlist = async (
       timeout: 15000,
     });
 
-    const content = typeof response.data === 'string' ? response.data : String(response.data);
+    const content =
+      typeof response.data === 'string' ? response.data : String(response.data);
     console.log('M3U8 content preview:', content.substring(0, 300));
     const lines = content.split('\n').map((line: string) => line.trim());
 
@@ -117,6 +122,7 @@ const parseM3U8Playlist = async (
     let totalDuration = 0;
     let isLive = false;
     let segmentIndex = 0;
+    let discontinuity = false;
 
     // Check if this is a master playlist (contains #EXT-X-STREAM-INF)
     const hasMasterPlaylist = lines.some((line: string) =>
@@ -216,6 +222,8 @@ const parseM3U8Playlist = async (
 
       if (line.includes('#EXT-X-ENDLIST')) {
         isLive = false;
+      } else if (line === '#EXT-X-DISCONTINUITY') {
+        discontinuity = true;
       } else if (line.startsWith('#EXT-X-KEY:')) {
         // Segments are joined as raw bytes, so encrypted or byte range
         // playlists would save a file that cannot be played.
@@ -250,8 +258,11 @@ const parseM3U8Playlist = async (
             duration,
             url: resolvedSegmentUrl,
             index: segmentIndex++,
+            discontinuity,
+            initSegmentUrl,
           });
           totalDuration += duration;
+          discontinuity = false;
         }
       }
     }
@@ -317,33 +328,42 @@ const downloadSegment = async (
   }
 };
 
-const mergeSegments = async (
-  segmentPaths: string[],
-  outputPath: string,
-): Promise<void> => {
-  let isFirstFile = true;
-  let mergedCount = 0;
+type DownloadTrack = {
+  name: string;
+  data: M3U8Data;
+  paths: string[];
+  initPaths: Map<string, string>;
+};
 
-  for (const segmentPath of segmentPaths) {
-    if (!segmentPath) continue;
-    if (await RNFS.exists(segmentPath)) {
-      if (isFirstFile) {
-        await RNFS.copyFile(segmentPath, outputPath);
-        isFirstFile = false;
-      } else {
-        const content = await RNFS.readFile(segmentPath, 'base64');
-        await RNFS.appendFile(outputPath, content, 'base64');
-      }
-      mergedCount++;
-
-      // Clean up segment file immediately
-      await RNFS.unlink(segmentPath).catch(() => undefined);
+// Feed the downloaded segments to the HLS demuxer, preserving their durations,
+// initialization changes and timestamp discontinuities. Raw concatenation loses
+// this information and does not create an MP4 duration or seek index.
+const writeLocalPlaylist = async (track: DownloadTrack, tempDir: string) => {
+  const lines = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:7',
+    '#EXT-X-PLAYLIST-TYPE:VOD',
+    `#EXT-X-TARGETDURATION:${Math.ceil(track.data.segments.reduce((max, segment) => Math.max(max, segment.duration), 0))}`,
+    '#EXT-X-MEDIA-SEQUENCE:0',
+  ];
+  let previousInit: string | undefined;
+  for (const segment of track.data.segments) {
+    if (segment.discontinuity) lines.push('#EXT-X-DISCONTINUITY');
+    if (segment.initSegmentUrl && segment.initSegmentUrl !== previousInit) {
+      const initPath = track.initPaths.get(segment.initSegmentUrl)!;
+      lines.push(
+        `#EXT-X-MAP:URI="${initPath.substring(initPath.lastIndexOf('/') + 1)}"`,
+      );
+      previousInit = segment.initSegmentUrl;
     }
+    lines.push(`#EXTINF:${segment.duration},`);
+    const segmentPath = track.paths[segment.index];
+    lines.push(segmentPath.substring(segmentPath.lastIndexOf('/') + 1));
   }
-
-  if (mergedCount === 0 || !(await RNFS.exists(outputPath))) {
-    throw new Error('Failed to merge HLS segments: no downloaded segments available');
-  }
+  lines.push('#EXT-X-ENDLIST');
+  const playlistPath = `${tempDir}/${track.name}.m3u8`;
+  await RNFS.writeFile(playlistPath, lines.join('\n') + '\n', 'utf8');
+  return playlistPath;
 };
 
 export const hlsDownloader2 = async ({
@@ -394,30 +414,35 @@ export const hlsDownloader2 = async ({
       `Found ${m3u8Data.segments.length} segments, total duration: ${m3u8Data.totalDuration}s`,
     );
 
-    // Builds without the native muxer keep the old video-only download.
-    const audioData = canMuxNatively ? m3u8Data.audio : undefined;
+    if (!canFinalizeHls) {
+      throw new Error('HLS MP4 finalization is unavailable; update the app');
+    }
+    const audioData = m3u8Data.audio;
 
-    // Each track is merged on its own: an init segment (fMP4 EXT-X-MAP) first,
-    // then its segments in order.
-    type Track = {name: string; data: M3U8Data; paths: string[]};
-    const tracks: Track[] = [{name: 'video', data: m3u8Data, paths: []}];
+    // Download each track separately, retaining initialization changes for
+    // the local HLS playlists used by the finalizer.
+    const tracks: DownloadTrack[] = [
+      {name: 'video', data: m3u8Data, paths: [], initPaths: new Map()},
+    ];
     if (audioData) {
-      tracks.push({name: 'audio', data: audioData, paths: []});
+      tracks.push({
+        name: 'audio',
+        data: audioData,
+        paths: [],
+        initPaths: new Map(),
+      });
     }
     const jobs: {url: string; path: string}[] = [];
     for (const track of tracks) {
-      if (track.data.initSegmentUrl) {
-        const initPath = `${tempDir}/${track.name}_init.mp4`;
-        console.log(`Downloading ${track.name} init segment...`);
-        await downloadSegment(
-          downloadId,
-          track.data.initSegmentUrl,
-          initPath,
-          headers,
-        );
-        track.paths.push(initPath);
-      }
       for (const segment of track.data.segments) {
+        if (
+          segment.initSegmentUrl &&
+          !track.initPaths.has(segment.initSegmentUrl)
+        ) {
+          const initPath = `${tempDir}/${track.name}_init_${track.initPaths.size}.mp4`;
+          track.initPaths.set(segment.initSegmentUrl, initPath);
+          jobs.push({url: segment.initSegmentUrl, path: initPath});
+        }
         const segmentPath = `${tempDir}/${track.name}_${segment.index}.ts`;
         track.paths.push(segmentPath);
         jobs.push({url: segment.url, path: segmentPath});
@@ -489,34 +514,27 @@ export const hlsDownloader2 = async ({
       throw new Error('Download cancelled by user');
     }
 
-    console.log('Merging segments...');
-    if (audioData) {
-      // Join each track, then put both in one MP4 without re-encoding. The
-      // muxed file is written locally first because the destination can be a
-      // SAF document.
-      const videoPath = `${tempDir}/video_merged`;
-      const audioPath = `${tempDir}/audio_merged`;
-      const muxedPath = `${tempDir}/muxed.mp4`;
-      await mergeSegments(tracks[0].paths, videoPath);
-      await mergeSegments(tracks[1].paths, audioPath);
-      if (cancelledDownloads.has(downloadId)) {
-        throw new Error('Download cancelled by user');
-      }
-      let output = muxedPath;
-      try {
-        await nativeFetcher!.muxAudioVideo!(videoPath, audioPath, muxedPath);
-      } catch (error) {
-        // Keep the video rather than failing the whole download.
-        console.warn('Joining audio failed, saving video only:', error);
-        output = videoPath;
-      }
-      if (await RNFS.exists(path)) {
-        await RNFS.unlink(path).catch(() => undefined);
-      }
-      await RNFS.copyFile(output, path);
-    } else {
-      await mergeSegments(tracks[0].paths, path);
+    console.log('Finalizing HLS as MP4...');
+    const videoPlaylist = await writeLocalPlaylist(tracks[0], tempDir);
+    const audioPlaylist = tracks[1]
+      ? await writeLocalPlaylist(tracks[1], tempDir)
+      : null;
+    const muxedPath = `${tempDir}/finalized.mp4`;
+    const result = await nativeFetcher!.finalizeHls!(
+      videoPlaylist,
+      audioPlaylist,
+      muxedPath,
+    );
+    if (!Number.isFinite(result.duration) || result.duration <= 0) {
+      throw new Error('Finalized HLS file has no valid duration');
     }
+    if (cancelledDownloads.has(downloadId)) {
+      throw new Error('Download cancelled by user');
+    }
+    if (await RNFS.exists(path)) {
+      await RNFS.unlink(path).catch(() => undefined);
+    }
+    await RNFS.copyFile(muxedPath, path);
 
     // Clean up temp directory
     if (await RNFS.exists(tempDir)) {
@@ -575,4 +593,3 @@ export const cancelHlsDownload = (downloadId: string) => {
 // Check if a download is in progress
 export const isHlsDownloadInProgress = (downloadId: string): boolean =>
   activeDownloads.has(downloadId) && !cancelledDownloads.has(downloadId);
-

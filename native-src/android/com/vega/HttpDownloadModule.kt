@@ -337,6 +337,49 @@ class HttpDownloadModule(
         }.apply { isDaemon = true }.start()
     }
 
+    /** Saves a real, indexed MP4 from local HLS playlists, including muxed TS video. */
+    @ReactMethod
+    fun finalizeHls(videoPlaylistPath: String, audioPlaylistPath: String?, outputPath: String, promise: Promise) {
+        executor.execute {
+            try {
+                File(outputPath).delete()
+                val args = mutableListOf("-hide_banner", "-loglevel", "error", "-y")
+                fun input(path: String) {
+                    args.addAll(listOf(
+                        "-fflags", "+genpts", "-protocol_whitelist", "file,crypto,data",
+                        "-allowed_extensions", "ALL", "-allowed_segment_extensions", "ALL",
+                        "-extension_picky", "0", "-i", path,
+                    ))
+                }
+                input(videoPlaylistPath)
+                if (!audioPlaylistPath.isNullOrBlank()) {
+                    input(audioPlaylistPath)
+                    args.addAll(listOf("-map", "0:v:0", "-map", "1:a:0"))
+                } else {
+                    args.addAll(listOf("-map", "0:v:0?", "-map", "0:a:0?"))
+                }
+                args.addAll(listOf(
+                    "-c", "copy", "-avoid_negative_ts", "make_zero",
+                    "-f", "mp4", "-movflags", "+faststart", outputPath,
+                ))
+                val session = FFmpegKit.executeWithArguments(args.toTypedArray())
+                if (!ReturnCode.isSuccess(session.returnCode)) {
+                    throw IOException("HLS finalization failed: ${session.allLogsAsString?.takeLast(500)?.trim()}")
+                }
+                val info = com.arthenica.ffmpegkit.FFprobeKit.getMediaInformation(outputPath).mediaInformation
+                val duration = info?.duration?.toDoubleOrNull()
+                if (duration == null || !duration.isFinite() || duration <= 0 || File(outputPath).length() == 0L) {
+                    throw IOException("Finalized HLS MP4 has no valid duration")
+                }
+                VegaLog.i("HttpDownloadModule", "Finalized HLS MP4: duration=${duration}s bytes=${File(outputPath).length()}")
+                promise.resolve(Arguments.createMap().apply { putDouble("duration", duration) })
+            } catch (error: Exception) {
+                File(outputPath).delete()
+                promise.reject("HLS_FINALIZE_FAILED", error.message ?: error.toString(), error)
+            }
+        }
+    }
+
     @ReactMethod
     fun getUriSize(uriString: String, promise: Promise) {
         try {

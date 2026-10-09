@@ -97,10 +97,10 @@ index 1ac0fd0..6540a53 100644
      }
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java
 new file mode 100644
-index 0000000..f3a530a
+index 0000000..245a32c
 --- /dev/null
 +++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ChainedMatroskaDataSource.java
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,430 @@
 +package com.brentvatne.exoplayer;
 +
 +import android.net.Uri;
@@ -124,13 +124,15 @@ index 0000000..f3a530a
 + *
 + * <p>Media3 follows a Cues entry from the first SeekHead, but it does not follow a SeekHead entry
 + * that points to a second SeekHead. Some versions of mkvmerge write the Cues entry only in that
-+ * second SeekHead. This wrapper discovers the chained entry with two small range reads and
++ * second SeekHead. This wrapper follows a bounded chain with small range reads and
 + * rewrites the bytes exposed to Media3 so the first entry points directly to Cues. The source file
 + * and remote response are never modified.
 + */
 +final class ChainedMatroskaDataSource implements DataSource {
 +    private static final int PROBE_LENGTH = 128 * 1024;
 +    private static final int SEEK_ENTRY_SCAN_LENGTH = 96;
++    private static final int MAX_SEEK_HEAD_HOPS = 8;
++    private static final byte[] SEEK_HEAD_ID = bytes(0x11, 0x4D, 0x9B, 0x74);
 +
 +    private static final byte[] SEGMENT_ID = bytes(0x18, 0x53, 0x80, 0x67);
 +    private static final byte[] SEEK_ID_FOR_SEEK_HEAD =
@@ -251,22 +253,8 @@ index 0000000..f3a530a
 +            return NO_PATCH;
 +        }
 +
-+        long chainedSeekHeadOffset = segmentContentOffset + chainedPosition.value;
-+        byte[] chainedSeekHead = readRange(sourceSpec, chainedSeekHeadOffset, PROBE_LENGTH);
-+        int cuesSeekIdOffset = indexOf(
-+                chainedSeekHead,
-+                SEEK_ID_FOR_CUES,
-+                0,
-+                chainedSeekHead.length);
-+        if (cuesSeekIdOffset < 0) {
-+            return NO_PATCH;
-+        }
-+
-+        UnsignedElement cuesPosition = findUnsignedElement(
-+                chainedSeekHead,
-+                cuesSeekIdOffset + SEEK_ID_FOR_CUES.length,
-+                Math.min(chainedSeekHead.length, cuesSeekIdOffset + SEEK_ENTRY_SCAN_LENGTH),
-+                SEEK_POSITION_ID);
++        UnsignedElement cuesPosition = findChainedCues(
++                sourceSpec, segmentContentOffset, chainedPosition.value);
 +        if (cuesPosition == null || !fitsUnsigned(cuesPosition.value, chainedPosition.payloadLength)) {
 +            return NO_PATCH;
 +        }
@@ -277,6 +265,55 @@ index 0000000..f3a530a
 +                CUES_ID,
 +                chainedPosition.payloadOffset,
 +                encodeUnsigned(cuesPosition.value, chainedPosition.payloadLength));
++    }
++
++    @Nullable
++    private UnsignedElement findChainedCues(
++            DataSpec sourceSpec, long segmentContentOffset, long relativePosition)
++            throws IOException {
++        java.util.Set<Long> visited = new java.util.HashSet<>();
++        for (int hop = 0; hop < MAX_SEEK_HEAD_HOPS; hop++) {
++            if (relativePosition < 0
++                    || relativePosition > Long.MAX_VALUE - segmentContentOffset
++                    || !visited.add(relativePosition)) {
++                return null;
++            }
++            byte[] seekHead = readRange(
++                    sourceSpec, segmentContentOffset + relativePosition, PROBE_LENGTH);
++            if (indexOf(seekHead, SEEK_HEAD_ID, 0, SEEK_HEAD_ID.length) != 0) {
++                return null;
++            }
++            int sizeOffset = SEEK_HEAD_ID.length;
++            int sizeLength = vintLength(seekHead, sizeOffset);
++            if (sizeLength < 1) {
++                return null;
++            }
++            int contentOffset = sizeOffset + sizeLength;
++            long contentLength = decodeVint(seekHead, sizeOffset, sizeLength, true);
++            int end = (int) Math.min(seekHead.length, contentOffset + contentLength);
++            int cuesId = indexOf(seekHead, SEEK_ID_FOR_CUES, contentOffset, end);
++            if (cuesId >= 0) {
++                return findUnsignedElement(
++                        seekHead,
++                        cuesId + SEEK_ID_FOR_CUES.length,
++                        Math.min(end, cuesId + SEEK_ENTRY_SCAN_LENGTH),
++                        SEEK_POSITION_ID);
++            }
++            int nextId = indexOf(seekHead, SEEK_ID_FOR_SEEK_HEAD, contentOffset, end);
++            if (nextId < 0) {
++                return null;
++            }
++            UnsignedElement nextPosition = findUnsignedElement(
++                    seekHead,
++                    nextId + SEEK_ID_FOR_SEEK_HEAD.length,
++                    Math.min(end, nextId + SEEK_ENTRY_SCAN_LENGTH),
++                    SEEK_POSITION_ID);
++            if (nextPosition == null) {
++                return null;
++            }
++            relativePosition = nextPosition.value;
++        }
++        return null;
 +    }
 +
 +    private byte[] readRange(DataSpec sourceSpec, long position, int requestedLength)
@@ -430,7 +467,15 @@ index 0000000..f3a530a
 +
 +    private static boolean isMatroska(Uri uri) {
 +        String path = uri.getPath();
-+        return path != null && path.toLowerCase(Locale.US).endsWith(".mkv");
++        if (path != null && path.toLowerCase(Locale.US).endsWith(".mkv")) {
++            return true;
++        }
++        // Signed object URLs often carry the filename only in Content-Disposition.
++        String query = uri.getEncodedQuery();
++        return query != null && java.util.regex.Pattern
++                .compile("(?i)\\.mkv(?:$|[\\\"';&#\\s])")
++                .matcher(Uri.decode(query))
++                .find();
 +    }
 +
 +    private static byte[] bytes(int... values) {
@@ -872,6 +917,10 @@ index 96a7887..7a44634 100644
                  okHttpDataSourceFactory.setUserAgent(getUserAgent(context))
              }
          } else {
+@@ -78,2 +75,2 @@ object DataSourceUtil {
+-        return okHttpDataSourceFactory
++        return RangeFallbackHttpDataSource.Factory(okHttpDataSourceFactory)
+     }
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DelayRenderersFactory.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/DelayRenderersFactory.java
 new file mode 100644
 index 0000000..9bd4e29
@@ -1126,10 +1175,10 @@ index bb945fe..2a9f5e7 100644
                  playerView.requestLayout()
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ParallelDataSource.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ParallelDataSource.java
 new file mode 100644
-index 0000000..414f663
+index 0000000..f24c9dd
 --- /dev/null
 +++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ParallelDataSource.java
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,647 @@
 +package com.brentvatne.exoplayer;
 +
 +import android.net.Uri;
@@ -1264,12 +1313,14 @@ index 0000000..414f663
 +            }
 +        }
 +
-+        long length = single.open(dataSpec);
++        // A failed open still needs close() to release the upstream's open state.
 +        singleOpen = true;
++        long length = single.open(dataSpec);
 +        endPosition = length == C.LENGTH_UNSET ? C.LENGTH_UNSET : position + length;
 +        // Measure only an open that reads to the end of a known file on a server that supports
 +        // byte ranges, so a switch can continue exactly where it left off.
 +        measuring = state != null
++                && !RangeFallbackHttpDataSource.requiresBoundedRanges(dataSpec.uri)
 +                && dataSpec.length == C.LENGTH_UNSET
 +                && length != C.LENGTH_UNSET
 +                && hostLimit(dataSpec.uri).get() > 1
@@ -1345,8 +1396,8 @@ index 0000000..414f663
 +        DataSpec rest = spec.buildUpon().setPosition(position).setLength(length).build();
 +        for (int attempt = 1; ; attempt++) {
 +            try {
-+                single.open(rest);
 +                singleOpen = true;
++                single.open(rest);
 +                return;
 +            } catch (HttpDataSource.InvalidResponseCodeException e) {
 +                // The server may still count the parallel requests for a moment.
@@ -1354,11 +1405,7 @@ index 0000000..414f663
 +                        || attempt >= MAX_REOPEN_ATTEMPTS) {
 +                    throw e;
 +                }
-+                try {
-+                    single.close();
-+                } catch (IOException ignored) {
-+                    // Closing after a failed open only releases resources.
-+                }
++                closeSingleQuietly();
 +                try {
 +                    Thread.sleep(1000L << (attempt - 1));
 +                } catch (InterruptedException interrupted) {
@@ -1407,7 +1454,8 @@ index 0000000..414f663
 +    }
 +
 +    private static boolean suitable(DataSpec dataSpec) {
-+        if (!enabled || dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET) {
++        if (!enabled || dataSpec.httpMethod != DataSpec.HTTP_METHOD_GET
++                || RangeFallbackHttpDataSource.requiresBoundedRanges(dataSpec.uri)) {
 +            return false;
 +        }
 +        String scheme = dataSpec.uri.getScheme();
@@ -1852,6 +1900,168 @@ index 5e36ef2..3eba51d 100644
          return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
              @SuppressLint("InlinedApi")
              val result = AppOpsManagerCompat.noteOpNoThrow(
+diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/RangeFallbackHttpDataSource.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/RangeFallbackHttpDataSource.java
+new file mode 100644
+index 0000000..9cfa61a
+--- /dev/null
++++ b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/RangeFallbackHttpDataSource.java
+@@ -0,0 +1,156 @@
++package com.brentvatne.exoplayer;
++
++import android.net.Uri;
++import androidx.annotation.Nullable;
++import androidx.media3.common.C;
++import androidx.media3.datasource.DataSpec;
++import androidx.media3.datasource.HttpDataSource;
++import androidx.media3.datasource.TransferListener;
++import java.io.EOFException;
++import java.io.IOException;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** Learns bounded-range loading only after a rejected GET succeeds with a valid HTTP 206. */
++final class RangeFallbackHttpDataSource implements HttpDataSource {
++    static final long CHUNK_SIZE = 1024 * 1024;
++    private static final Pattern RANGE = Pattern.compile("bytes (\\d+)-(\\d+)/(\\d+)");
++    private static final Map<String, Long> BOUNDED_URLS = new ConcurrentHashMap<>();
++    private final HttpDataSource upstream;
++    private DataSpec spec;
++    private long position, remaining, chunkRemaining, totalLength;
++    private boolean bounded, upstreamOpen;
++
++    private RangeFallbackHttpDataSource(HttpDataSource upstream) { this.upstream = upstream; }
++
++    static boolean requiresBoundedRanges(Uri uri) {
++        return BOUNDED_URLS.containsKey(uri.toString());
++    }
++
++    @Override
++    public long open(DataSpec dataSpec) throws HttpDataSourceException {
++        spec = dataSpec;
++        position = dataSpec.position;
++        bounded = false;
++        Long knownLength = BOUNDED_URLS.get(spec.uri.toString());
++        if (spec.httpMethod == DataSpec.HTTP_METHOD_GET && knownLength != null
++                && position < knownLength) {
++            totalLength = knownLength;
++            bounded = true;
++            remaining = requestedRemaining();
++            openChunk(Math.min(CHUNK_SIZE, remaining), false);
++            return remaining;
++        }
++        upstreamOpen = true;
++        try {
++            return upstream.open(spec);
++        } catch (InvalidResponseCodeException original) {
++            // A 403 alone does not establish range support. Probe only a failed large GET.
++            if (original.responseCode != 403 || spec.httpMethod != DataSpec.HTTP_METHOD_GET
++                    || (spec.length != C.LENGTH_UNSET && spec.length <= CHUNK_SIZE)) throw original;
++            try {
++                closeUpstream();
++                long probeLength = spec.length == C.LENGTH_UNSET
++                        ? CHUNK_SIZE : Math.min(CHUNK_SIZE, spec.length);
++                openChunk(probeLength, true);
++                remaining = requestedRemaining();
++                bounded = true;
++                if (BOUNDED_URLS.size() >= 128) BOUNDED_URLS.clear();
++                BOUNDED_URLS.put(spec.uri.toString(), totalLength);
++                return remaining;
++            } catch (HttpDataSourceException probeFailure) {
++                try { closeUpstream(); } catch (HttpDataSourceException closeFailure) {
++                    probeFailure.addSuppressed(closeFailure);
++                }
++                original.addSuppressed(probeFailure);
++                throw original;
++            }
++        }
++    }
++
++    private long requestedRemaining() {
++        long available = totalLength - position;
++        return spec.length == C.LENGTH_UNSET ? available : Math.min(available, spec.length);
++    }
++
++    private void openChunk(long length, boolean learn) throws HttpDataSourceException {
++        upstreamOpen = true;
++        upstream.open(spec.buildUpon().setPosition(position).setLength(length).build());
++        long[] range = responseRange();
++        if (upstream.getResponseCode() != 206 || range == null || range[0] != position
++                || range[2] <= position || range[1] < position || range[1] >= range[2]
++                || range[1] - position != Math.min(length, range[2] - position) - 1
++                || (!learn && range[2] != totalLength)) {
++            BOUNDED_URLS.remove(spec.uri.toString());
++            throw HttpDataSourceException.createForIOException(
++                    new IOException("Server did not return the requested bounded range"),
++                    spec, HttpDataSourceException.TYPE_OPEN);
++        }
++        totalLength = range[2];
++        chunkRemaining = range[1] - range[0] + 1;
++    }
++
++    @Nullable
++    private long[] responseRange() {
++        for (Map.Entry<String, List<String>> header : upstream.getResponseHeaders().entrySet()) {
++            if (header.getKey() == null || !header.getKey().equalsIgnoreCase("Content-Range")
++                    || header.getValue().size() != 1) continue;
++            Matcher match = RANGE.matcher(header.getValue().get(0).trim());
++            if (!match.matches()) return null;
++            try {
++                return new long[]{Long.parseLong(match.group(1)), Long.parseLong(match.group(2)),
++                        Long.parseLong(match.group(3))};
++            } catch (NumberFormatException e) { return null; }
++        }
++        return null;
++    }
++
++    @Override
++    public int read(byte[] buffer, int offset, int length) throws HttpDataSourceException {
++        if (!bounded) return upstream.read(buffer, offset, length);
++        if (length == 0) return 0;
++        if (remaining == 0) return C.RESULT_END_OF_INPUT;
++        if (chunkRemaining == 0) {
++            closeUpstream();
++            openChunk(Math.min(CHUNK_SIZE, remaining), false);
++        }
++        int read = upstream.read(buffer, offset, (int) Math.min(length, chunkRemaining));
++        if (read == C.RESULT_END_OF_INPUT) {
++            throw HttpDataSourceException.createForIOException(
++                    new EOFException("Bounded response ended before the requested bytes"),
++                    spec, HttpDataSourceException.TYPE_READ);
++        }
++        position += read;
++        remaining -= read;
++        chunkRemaining -= read;
++        return read;
++    }
++
++    @Override public void addTransferListener(TransferListener listener) { upstream.addTransferListener(listener); }
++    @Override public void setRequestProperty(String name, String value) { upstream.setRequestProperty(name, value); }
++    @Override public void clearRequestProperty(String name) { upstream.clearRequestProperty(name); }
++    @Override public void clearAllRequestProperties() { upstream.clearAllRequestProperties(); }
++    @Nullable @Override public Uri getUri() { return upstream.getUri(); }
++    @Override public int getResponseCode() { return upstream.getResponseCode(); }
++    @Override public Map<String, List<String>> getResponseHeaders() { return upstream.getResponseHeaders(); }
++
++    private void closeUpstream() throws HttpDataSourceException {
++        if (upstreamOpen) { upstreamOpen = false; upstream.close(); }
++    }
++    @Override public void close() throws HttpDataSourceException { closeUpstream(); }
++
++    static final class Factory implements HttpDataSource.Factory {
++        private final HttpDataSource.Factory upstream;
++        Factory(HttpDataSource.Factory upstream) { this.upstream = upstream; }
++        @Override public HttpDataSource createDataSource() {
++            return new RangeFallbackHttpDataSource(upstream.createDataSource());
++        }
++        @Override public Factory setDefaultRequestProperties(Map<String, String> headers) {
++            upstream.setDefaultRequestProperties(headers);
++            return this;
++        }
++    }
++}
 diff --git a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java b/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
 index e16ac96..169eb24 100644
 --- a/node_modules/react-native-video/android/src/main/java/com/brentvatne/exoplayer/ReactExoplayerView.java
