@@ -219,3 +219,46 @@ it('still shows foreground loading when no local file exists', async () => {
   expect(streams.selectedStream.link).toBe(remote.link);
   expect(streams.isLoading).toBe(false);
 });
+
+const brokenDownload = {
+  ...episode,
+  link: 'content://downloads/video.mp4',
+  sourceLink: episode.link,
+} as typeof episode;
+
+it('falls back to remote servers when the downloaded file fails to load', async () => {
+  probeEpisode = brokenDownload;
+  localPlaybackReady = false;
+  mockGetStream.mockResolvedValue([remote]);
+  await mount();
+  expect(mockGetStream).not.toHaveBeenCalled();
+  let handled = false;
+  act(() => {
+    handled = streams.switchToNextStream();
+  });
+  expect(handled).toBe(true);
+  await flush();
+  expect(mockGetStream).toHaveBeenCalledTimes(1);
+  expect(streams.selectedStream.link).toBe(remote.link);
+});
+
+it('surfaces an error when the download fails and no remote server loads', async () => {
+  probeEpisode = brokenDownload;
+  localPlaybackReady = false;
+  mockGetStream.mockRejectedValue(new Error('Provider offline'));
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  await mount();
+  jest.useFakeTimers();
+  act(() => {
+    streams.switchToNextStream();
+  });
+  // Let the hook's provider retries run out.
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(10000);
+  });
+  jest.useRealTimers();
+  expect(mockGetStream).toHaveBeenCalledTimes(3);
+  expect(streams.selectedStream.link).toBe('');
+  expect(streams.error).not.toBeNull();
+});

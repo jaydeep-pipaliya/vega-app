@@ -394,6 +394,11 @@ export const useStream = ({
   const activeEpisodeKeyRef = useRef(activeEpisodeKey);
   activeEpisodeKeyRef.current = activeEpisodeKey;
   const previousEpisodeKeyRef = useRef(activeEpisodeKey);
+  // Set when the downloaded file fails to play; online servers replace it.
+  const [failedLocalEpisodeKey, setFailedLocalEpisodeKey] = useState<string>();
+  const localFailed = failedLocalEpisodeKey === activeEpisodeKey;
+  const localFailedRef = useRef(localFailed);
+  localFailedRef.current = localFailed;
 
   useEffect(() => {
     if (previousEpisodeKeyRef.current === activeEpisodeKey) {
@@ -464,10 +469,10 @@ export const useStream = ({
       }
 
       if (!remoteLink) {
-        if (localStream) {
+        if (localStream && !localFailedRef.current) {
           return [localStream];
         }
-        if (isLocalPath(activeEpisode?.link)) {
+        if (localStream || isLocalPath(activeEpisode?.link)) {
           throw new Error('Downloaded file not found on device');
         }
         return [];
@@ -499,7 +504,7 @@ export const useStream = ({
           clearTimeout(timeoutId);
         }
       } catch (err) {
-        if (localStream) {
+        if (localStream && !localFailedRef.current) {
           console.warn(
             'Remote stream refresh failed; using local downloaded file:',
             err,
@@ -510,7 +515,7 @@ export const useStream = ({
       }
 
       let finalStreams = remoteStreams;
-      if (localStream) {
+      if (localStream && !localFailedRef.current) {
         finalStreams = [localStream, ...remoteStreams];
       }
 
@@ -525,7 +530,7 @@ export const useStream = ({
     },
     enabled:
       enabled &&
-      (!localPlaceholder || localPlaybackReady) &&
+      (!localPlaceholder || localPlaybackReady || localFailed) &&
       Boolean(
         activeEpisode?.link || activeEpisode?.id || activeEpisode?.title,
       ),
@@ -549,7 +554,10 @@ export const useStream = ({
   useEffect(() => {
     if (streamData && streamData.length > 0) {
       setSelectedStream(current => {
-        if (!current?.link) return streamData[0];
+        // Keep a failed download cleared so the fetch error can show.
+        if (!current?.link) {
+          return localFailedRef.current ? current : streamData[0];
+        }
         // A locally-picked (or auto-resumed) video file will never match an
         // online stream link — that's expected, not staleness. Leave it be.
         if (current?.type === 'local' || isLocalPath(current?.link)) return current;
@@ -558,6 +566,17 @@ export const useStream = ({
       });
     }
   }, [streamData]);
+
+  // Replace a download that failed to play with the first online server.
+  useEffect(() => {
+    if (!localFailed || !isLocalPath(selectedStream?.link)) return;
+    const online = streamData.find(s => !isLocalPath(s.link));
+    if (online) {
+      setSelectedStream(online);
+    } else if (error) {
+      setSelectedStream({ server: '', link: '', type: '' });
+    }
+  }, [localFailed, selectedStream, streamData, error]);
 
   const isPlayingLocal = isLocalPath(selectedStream?.link);
 
@@ -622,6 +641,17 @@ export const useStream = ({
         );
         return true;
       }
+    }
+    if (isLocalPath(selectedStream?.link) && !localFailedRef.current) {
+      // No server is listed yet while the download plays; fetch them now.
+      localFailedRef.current = true;
+      setFailedLocalEpisodeKey(activeEpisodeKey);
+      refetch();
+      ToastAndroid.show(
+        'Downloaded file could not be played, Trying online servers',
+        ToastAndroid.SHORT,
+      );
+      return true;
     }
     return false;
   };
