@@ -220,6 +220,8 @@ interface EpisodeCardRowProps {
   downloadComponent?: React.ReactNode;
   /** Replaces the download button while selecting episodes. */
   selectionMark?: React.ReactNode;
+  /** Set only in select mode; the row then toggles selection. */
+  selected?: boolean;
 }
 
 const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
@@ -239,8 +241,16 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
   detailsPreferred,
   downloadComponent,
   selectionMark,
+  selected,
 }) => {
   const focusBorderColor = useTVFocusBorderColor();
+  const selectionA11y =
+    selected === undefined
+      ? undefined
+      : {
+          accessibilityLabel: `${selected ? 'Deselect' : 'Select'} ${displayTitle}`,
+          accessibilityState: {selected},
+        };
   const playControlRef = useRef<View>(null);
   const itemLink: string = item.link;
   useEffect(() => {
@@ -274,7 +284,8 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
               gap: 12,
             }}
             onPress={onPress}
-            onLongPress={onLongPress}>
+            onLongPress={onLongPress}
+            {...selectionA11y}>
             <EpisodeRowContent
               title={displayTitle}
               description={item.description}
@@ -319,6 +330,7 @@ const EpisodeCardRow: React.FC<EpisodeCardRowProps> = ({
             onPress();
           }}
           onLongPress={onLongPress}
+          {...selectionA11y}
           style={{
             flex: 1,
             minHeight: 76,
@@ -1157,6 +1169,9 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               : undefined
           }
           selectionMark={selectCheck}
+          selected={
+            selection.active ? selection.selected.has(item.link) : undefined
+          }
           downloadComponent={
             <Downloader
               downloadId={downloadId}
@@ -1315,6 +1330,9 @@ const SeasonListContent: React.FC<SeasonListProps> = ({
               : undefined
           }
           selectionMark={selectCheck}
+          selected={
+            selection.active ? selection.selected.has(item.link) : undefined
+          }
           downloadComponent={
             <Downloader
               downloadId={downloadId}
