@@ -531,10 +531,33 @@ export const hlsDownloader2 = async ({
     if (cancelledDownloads.has(downloadId)) {
       throw new Error('Download cancelled by user');
     }
+
+    // Only the finalized MP4 is needed now. Delete the segments before moving
+    // it so the cache never holds the segments and two copies of the movie.
+    const intermediateFiles = [
+      ...tracks.flatMap(track => [
+        ...track.paths,
+        ...Array.from(track.initPaths.values()),
+      ]),
+      videoPlaylist,
+      ...(audioPlaylist ? [audioPlaylist] : []),
+    ];
+    for (const file of intermediateFiles) {
+      await RNFS.unlink(file).catch(() => undefined);
+    }
+
     if (await RNFS.exists(path)) {
       await RNFS.unlink(path).catch(() => undefined);
     }
-    await RNFS.copyFile(muxedPath, path);
+    // moveFile renames within a filesystem and copies across filesystems. If
+    // it fails, copy instead so the result is never worse than before.
+    try {
+      await RNFS.moveFile(muxedPath, path);
+    } catch (error) {
+      console.warn('Moving the finalized MP4 failed, copying it:', error);
+      await RNFS.unlink(path).catch(() => undefined);
+      await RNFS.copyFile(muxedPath, path);
+    }
 
     // Clean up temp directory
     if (await RNFS.exists(tempDir)) {

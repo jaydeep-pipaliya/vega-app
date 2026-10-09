@@ -4,6 +4,10 @@ const mockFinalizeHls =
   jest.fn<(...args: unknown[]) => Promise<{duration: number}>>();
 const mockWriteFile = jest.fn<(...args: unknown[]) => Promise<void>>();
 const mockCopyFile = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockMoveFile = jest.fn<(...args: unknown[]) => Promise<void>>();
+const mockUnlink = jest.fn<(...args: unknown[]) => Promise<void>>(
+  async () => undefined,
+);
 jest.mock('react-native', () => ({
   NativeModules: {
     HttpDownloadModule: {
@@ -27,9 +31,10 @@ jest.mock('@dr.pogodin/react-native-fs', () => ({
   CachesDirectoryPath: '/cache',
   exists: jest.fn(async () => true),
   mkdir: jest.fn(async () => undefined),
-  unlink: jest.fn(async () => undefined),
+  unlink: (...args: unknown[]) => mockUnlink(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
   copyFile: (...args: unknown[]) => mockCopyFile(...args),
+  moveFile: (...args: unknown[]) => mockMoveFile(...args),
   downloadFile: (options: {fromUrl: string}) => mockDownloadFile(options),
 }));
 
@@ -160,6 +165,9 @@ describe('hlsDownloader2 MP4 finalization', () => {
     mockWriteFile.mockResolvedValue(undefined);
     mockCopyFile.mockReset();
     mockCopyFile.mockResolvedValue(undefined);
+    mockMoveFile.mockReset();
+    mockMoveFile.mockResolvedValue(undefined);
+    mockUnlink.mockClear();
   });
 
   it('remuxes muxed TS even without a separate audio track before publishing the MP4', async () => {
@@ -182,10 +190,11 @@ describe('hlsDownloader2 MP4 finalization', () => {
       null,
       '/cache/hls_segments/finalized.mp4',
     );
-    expect(mockCopyFile).toHaveBeenCalledWith(
+    expect(mockMoveFile).toHaveBeenCalledWith(
       '/cache/hls_segments/finalized.mp4',
       '/saved/movie.mp4',
     );
+    expect(mockCopyFile).not.toHaveBeenCalled();
     expect(completed).toHaveBeenCalledWith('/saved/movie.mp4');
   });
 
@@ -239,11 +248,66 @@ describe('hlsDownloader2 MP4 finalization', () => {
     );
   });
 
+  it('deletes the segments before moving the finalized MP4 into place', async () => {
+    mockAxiosGet.mockResolvedValue({
+      data: [
+        '#EXTM3U',
+        '#EXT-X-MAP:URI="init.mp4"',
+        '#EXTINF:3,',
+        'one.m4s',
+        '#EXTINF:4,',
+        'two.m4s',
+        '#EXT-X-ENDLIST',
+      ].join('\n'),
+    });
+    await download();
+    const deleted = mockUnlink.mock.calls.map(call => call[0]);
+    expect(deleted).toEqual(
+      expect.arrayContaining([
+        '/cache/hls_segments/video_0.ts',
+        '/cache/hls_segments/video_1.ts',
+        '/cache/hls_segments/video_init_0.mp4',
+        '/cache/hls_segments/video.m3u8',
+      ]),
+    );
+    expect(deleted).not.toContain('/cache/hls_segments/finalized.mp4');
+    expect(mockMoveFile).toHaveBeenCalledWith(
+      '/cache/hls_segments/finalized.mp4',
+      '/cache/movie.mp4',
+    );
+    const segmentsDeleted =
+      mockUnlink.mock.invocationCallOrder[
+        deleted.indexOf('/cache/hls_segments/video_1.ts')
+      ];
+    expect(segmentsDeleted).toBeLessThan(
+      mockMoveFile.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('copies the finalized MP4 when moving it fails', async () => {
+    mockAxiosGet.mockResolvedValue({data: playlist()});
+    mockMoveFile.mockRejectedValue(new Error('EXDEV'));
+    const completed = jest.fn();
+    await hlsDownloader2({
+      videoUrl: 'https://example.com/video.m3u8',
+      downloadId: 'fallback',
+      path: '/saved/movie.mp4',
+      title: 'Movie',
+      onCompleted: completed,
+    });
+    expect(mockCopyFile).toHaveBeenCalledWith(
+      '/cache/hls_segments/finalized.mp4',
+      '/saved/movie.mp4',
+    );
+    expect(completed).toHaveBeenCalledWith('/saved/movie.mp4');
+  });
+
   it('does not publish raw segments when finalization fails', async () => {
     mockAxiosGet.mockResolvedValue({data: playlist()});
     mockFinalizeHls.mockRejectedValue(new Error('remux failed'));
     await expect(download()).rejects.toThrow('remux failed');
     expect(mockCopyFile).not.toHaveBeenCalled();
+    expect(mockMoveFile).not.toHaveBeenCalled();
   });
 
   it.each([0, -1, NaN])(
@@ -253,6 +317,7 @@ describe('hlsDownloader2 MP4 finalization', () => {
       mockFinalizeHls.mockResolvedValue({duration});
       await expect(download()).rejects.toThrow('no valid duration');
       expect(mockCopyFile).not.toHaveBeenCalled();
+      expect(mockMoveFile).not.toHaveBeenCalled();
     },
   );
 });
