@@ -33,7 +33,7 @@ jest.mock('@dr.pogodin/react-native-fs', () => ({
   downloadFile: (options: {fromUrl: string}) => mockDownloadFile(options),
 }));
 
-import {hlsDownloader2} from '../src/lib/hlsDownloader2';
+import {cancelHlsDownload, hlsDownloader2} from '../src/lib/hlsDownloader2';
 
 const download = () =>
   hlsDownloader2({
@@ -255,4 +255,68 @@ describe('hlsDownloader2 MP4 finalization', () => {
       expect(mockCopyFile).not.toHaveBeenCalled();
     },
   );
+
+  const separateAudio = () =>
+    mockAxiosGet.mockImplementation(async url => ({
+      data: url.endsWith('/video.m3u8')
+        ? [
+            '#EXTM3U',
+            '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",DEFAULT=YES,URI="audio.m3u8"',
+            '#EXT-X-STREAM-INF:BANDWIDTH=10,AUDIO="aud"',
+            'track.m3u8',
+          ].join('\n')
+        : playlist(),
+    }));
+
+  it('keeps the video when muxing the separate audio fails', async () => {
+    separateAudio();
+    mockFinalizeHls
+      .mockRejectedValueOnce(new Error('audio mux failed'))
+      .mockResolvedValueOnce({duration: 10});
+    const completed = jest.fn();
+    await hlsDownloader2({
+      videoUrl: 'https://example.com/video.m3u8',
+      downloadId: 'audio-fallback',
+      path: '/saved/movie.mp4',
+      title: 'Movie',
+      onCompleted: completed,
+    });
+    expect(mockFinalizeHls).toHaveBeenCalledTimes(2);
+    expect(mockFinalizeHls).toHaveBeenLastCalledWith(
+      '/cache/hls_segments/video.m3u8',
+      null,
+      '/cache/hls_segments/finalized.mp4',
+    );
+    expect(completed).toHaveBeenCalledWith('/saved/movie.mp4');
+  });
+
+  it('validates the duration of the video-only retry', async () => {
+    separateAudio();
+    mockFinalizeHls
+      .mockRejectedValueOnce(new Error('audio mux failed'))
+      .mockResolvedValueOnce({duration: 0});
+    await expect(download()).rejects.toThrow('no valid duration');
+    expect(mockCopyFile).not.toHaveBeenCalled();
+  });
+
+  it('fails when the video-only retry fails too', async () => {
+    separateAudio();
+    mockFinalizeHls
+      .mockRejectedValueOnce(new Error('audio mux failed'))
+      .mockRejectedValueOnce(new Error('video mux failed'));
+    await expect(download()).rejects.toThrow('video mux failed');
+    expect(mockFinalizeHls).toHaveBeenCalledTimes(2);
+    expect(mockCopyFile).not.toHaveBeenCalled();
+  });
+
+  it('does not retry without audio when the download was cancelled', async () => {
+    separateAudio();
+    mockFinalizeHls.mockImplementationOnce(async () => {
+      cancelHlsDownload('movie');
+      throw new Error('audio mux failed');
+    });
+    await expect(download()).rejects.toThrow('audio mux failed');
+    expect(mockFinalizeHls).toHaveBeenCalledTimes(1);
+    expect(mockCopyFile).not.toHaveBeenCalled();
+  });
 });

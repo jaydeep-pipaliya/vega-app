@@ -520,13 +520,25 @@ export const hlsDownloader2 = async ({
       ? await writeLocalPlaylist(tracks[1], tempDir)
       : null;
     const muxedPath = `${tempDir}/finalized.mp4`;
-    const result = await nativeFetcher!.finalizeHls!(
-      videoPlaylist,
-      audioPlaylist,
-      muxedPath,
-    );
-    if (!Number.isFinite(result.duration) || result.duration <= 0) {
-      throw new Error('Finalized HLS file has no valid duration');
+    const finalize = async (audio: string | null) => {
+      const result = await nativeFetcher!.finalizeHls!(
+        videoPlaylist,
+        audio,
+        muxedPath,
+      );
+      if (!Number.isFinite(result.duration) || result.duration <= 0) {
+        throw new Error('Finalized HLS file has no valid duration');
+      }
+    };
+    try {
+      await finalize(audioPlaylist);
+    } catch (error) {
+      if (!audioPlaylist || cancelledDownloads.has(downloadId)) {
+        throw error;
+      }
+      // Keep the video rather than failing the whole download.
+      console.warn('Muxing separate audio failed, keeping video only:', error);
+      await finalize(null);
     }
     if (cancelledDownloads.has(downloadId)) {
       throw new Error('Download cancelled by user');
